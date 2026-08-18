@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Feddit Bot Control Panel</title>
+<style>
+  :root {
+    --bg: #14171a; --panel: #1c2126; --panel2: #232a31; --line: #333c44;
+    --text: #e6e9ec; --dim: #97a1ab; --accent: #4a9eff; --good: #4caf50;
+    --bad: #e05252; --warn: #e0a83a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  header {
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .status { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--dim); }
+  .status b { color: var(--text); font-weight: 600; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: baseline; }
+  .dot.good { background: var(--good); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); } .dot.unknown { background: #666; }
+  .layout { display: grid; grid-template-columns: 280px 1fr; gap: 0; height: calc(100vh - 52px); }
+  .sidebar { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; }
+  .sidebar-head { padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); }
+  .plist { list-style: none; margin: 0; padding: 0; }
+  .plist li {
+    padding: 10px 12px; border-bottom: 1px solid var(--line); cursor: pointer;
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  }
+  .plist li:hover { background: var(--panel2); }
+  .plist li.active { background: var(--panel2); border-left: 3px solid var(--accent); padding-left: 9px; }
+  .plist .pname { font-weight: 600; }
+  .plist .pmeta { font-size: 11.5px; color: var(--dim); }
+  .badge { font-size: 10.5px; padding: 1px 6px; border-radius: 9px; border: 1px solid var(--line); color: var(--dim); }
+  .badge.on { color: var(--good); border-color: var(--good); }
+  .badge.off { color: var(--dim); }
+  .badge.notoken { color: var(--warn); border-color: var(--warn); }
+  .main { overflow-y: auto; padding: 18px 22px; }
+  .empty { color: var(--dim); margin-top: 40px; text-align: center; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 18px; }
+  .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }
+  .field.full { grid-column: 1 / -1; }
+  label { font-size: 12px; color: var(--dim); }
+  input, textarea, select {
+    background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 5px; padding: 7px 9px; font: inherit; width: 100%;
+  }
+  textarea { resize: vertical; min-height: 60px; }
+  textarea.persona { min-height: 160px; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 13px; }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+  .hint { font-size: 11px; color: var(--dim); }
+  button {
+    background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 5px; padding: 7px 13px; font: inherit; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #04121f; font-weight: 600; }
+  button.danger { border-color: var(--bad); color: var(--bad); }
+  button.danger:hover { background: var(--bad); color: #fff; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .section { border: 1px solid var(--line); border-radius: 7px; padding: 14px 16px; margin-bottom: 16px; background: var(--panel); }
+  .section h2 { font-size: 13px; margin: 0 0 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); }
+  .tokline { font-family: ui-monospace, monospace; font-size: 12px; color: var(--dim); }
+  .warnbox { background: #3a2e12; border: 1px solid var(--warn); color: #f0d9a0; padding: 9px 11px; border-radius: 6px; font-size: 12.5px; margin-top: 8px; }
+  .out { background: #0e1114; border: 1px solid var(--line); border-radius: 6px; padding: 11px 13px; white-space: pre-wrap; min-height: 40px; font-size: 13.5px; }
+  .toast { position: fixed; bottom: 18px; right: 18px; background: var(--panel2); border: 1px solid var(--line); padding: 10px 14px; border-radius: 6px; max-width: 380px; box-shadow: 0 4px 18px rgba(0,0,0,.5); }
+  .toast.err { border-color: var(--bad); }
+  .toast.ok { border-color: var(--good); }
+  .activity { list-style: none; margin: 0; padding: 0; font-size: 12px; color: var(--dim); }
+  .activity li { padding: 3px 0; border-bottom: 1px solid var(--line); }
+  small.mono { font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Feddit Bot Control Panel</h1>
+  <div class="status" id="status">
+    <span><span class="dot unknown"></span>ollama</span>
+    <span><span class="dot unknown"></span>feddit</span>
+  </div>
+  <button id="refreshStatus" style="margin-left:auto">Refresh status</button>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <strong>Profiles</strong>
+      <button id="newBtn">+ New</button>
+    </div>
+    <ul class="plist" id="plist"></ul>
+  </aside>
+  <main class="main" id="main">
+    <div class="empty">Select a profile, or create one.</div>
+  </main>
+</div>
+
+<script>
+'use strict';
+const $ = (s, r = document) => r.querySelector(s);
+const api = async (path, opts = {}) => {
+  const res = await fetch(path, {
+    method: opts.method || 'GET',
+    headers: opts.body ? { 'Content-Type': 'application/json' } : undefined,
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  let data = null;
+  try { data = await res.json(); } catch { /* */ }
+  if (!res.ok) throw new Error((data && data.error) || ('HTTP ' + res.status));
+  return data;
+};
+function toast(msg, kind) {
+  const t = document.createElement('div');
+  t.className = 'toast ' + (kind || '');
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), kind === 'err' ? 6000 : 3500);
+}
+
+let state = { profiles: [], selected: null, defaultModel: '', status: null };
+
+// ---- status -----------------------------------------------------------------
+async function loadStatus() {
+  try {
+    const s = await api('/api/status');
+    state.status = s;
+    state.defaultModel = s.defaultModel;
+    renderStatus(s);
+  } catch (e) {
+    $('#status').innerHTML = '<span style="color:var(--bad)">status error: ' + e.message + '</span>';
+  }
+}
+function renderStatus(s) {
+  const oll = s.ollama || {};
+  const fed = s.feddit || {};
+  const resident = (oll.resident || []).map(r => r.name);
+  const residentTxt = resident.length ? resident.join(', ') : '(none resident)';
+  const ollDot = oll.up ? 'good' : 'bad';
+  const fedDot = fed.up ? 'good' : 'bad';
+  // Warn if the resident model is NOT the shared default (Cy may be evicted).
+  const defaultResident = resident.includes(s.defaultModel);
+  const modelDot = !oll.up ? 'unknown' : (defaultResident ? 'good' : 'warn');
+  $('#status').innerHTML =
+    '<span title="' + (oll.error || '') + '"><span class="dot ' + ollDot + '"></span>ollama ' + (oll.up ? 'up' : 'down') + (oll.busy ? ' <b>(busy)</b>' : '') + '</span>' +
+    '<span title="resident model"><span class="dot ' + modelDot + '"></span>model: <b>' + esc(residentTxt) + '</b></span>' +
+    '<span title="' + (fed.error || '') + '"><span class="dot ' + fedDot + '"></span>feddit ' + (fed.up ? 'reachable' : 'unreachable') + '</span>';
+}
+
+// ---- profile list -----------------------------------------------------------
+async function loadProfiles() {
+  const d = await api('/api/profiles');
+  state.profiles = d.profiles;
+  renderList();
+}
+function renderList() {
+  const ul = $('#plist');
+  ul.innerHTML = '';
+  for (const p of state.profiles) {
+    const li = document.createElement('li');
+    if (state.selected === p.id) li.className = 'active';
+    const tokenBadge = p.hasToken ? '' : '<span class="badge notoken">no token</span>';
+    const enBadge = '<span class="badge ' + (p.enabled ? 'on' : 'off') + '">' + (p.enabled ? 'enabled' : 'off') + '</span>';
+    li.innerHTML =
+      '<div><div class="pname">' + esc(p.displayName || '(unnamed)') + '</div>' +
+      '<div class="pmeta">' + esc(p.fedditUsername || 'no username') + ' &middot; ' + esc(p.mode) + '</div></div>' +
+      '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + enBadge + tokenBadge + '</div>';
+    li.onclick = () => selectProfile(p.id);
+    ul.appendChild(li);
+  }
+}
+
+// ---- editor -----------------------------------------------------------------
+async function selectProfile(id) {
+  state.selected = id;
+  renderList();
+  const d = await api('/api/profiles/' + encodeURIComponent(id));
+  renderEditor(d.profile);
+}
+
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
+function csv(a) { return Array.isArray(a) ? a.join(', ') : (a || ''); }
+function parseCsv(s) { return String(s || '').split(',').map(x => x.trim()).filter(Boolean); }
+
+function renderEditor(p) {
+  const usesDefault = !p.model || p.model === state.defaultModel;
+  const main = $('#main');
+  main.innerHTML = `
+    <div class="section">
+      <div class="grid">
+        <div class="field"><label>Display name</label><input id="f_displayName" value="${esc(p.displayName)}"></div>
+        <div class="field"><label>Feddit username</label><input id="f_fedditUsername" value="${esc(p.fedditUsername)}" placeholder="e.g. quip_bot"></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Identity / token</h2>
+      <div id="tokenArea"></div>
+    </div>
+
+    <div class="section">
+      <h2>Persona</h2>
+      <div class="field full"><label>Persona system prompt</label>
+        <textarea id="f_persona" class="persona" placeholder="Who is this bot? What do they care about? How do they write?">${esc(p.persona)}</textarea></div>
+      <div class="field full"><label>Tone / style notes (appended to system prompt)</label>
+        <textarea id="f_toneNotes" placeholder="e.g. dry, concise, lowercase, never uses exclamation marks">${esc(p.toneNotes)}</textarea></div>
+    </div>
+
+    <div class="section">
+      <h2>Reach &amp; behaviour</h2>
+      <div class="grid">
+        <div class="field"><label>Reads sub-feddits (comma-separated)</label><input id="f_readFeddits" value="${esc(csv(p.readFeddits))}" placeholder="botlife, homelab"></div>
+        <div class="field"><label>Posts/comments to (comma-separated)</label><input id="f_postFeddits" value="${esc(csv(p.postFeddits))}" placeholder="botlife"></div>
+        <div class="field"><label>Does</label>
+          <select id="f_mode">
+            <option value="both"${p.mode==='both'?' selected':''}>post &amp; comment</option>
+            <option value="post"${p.mode==='post'?' selected':''}>post only</option>
+            <option value="comment"${p.mode==='comment'?' selected':''}>comment only</option>
+          </select></div>
+        <div class="field"><label>Enabled</label>
+          <select id="f_enabled">
+            <option value="true"${p.enabled?' selected':''}>enabled</option>
+            <option value="false"${!p.enabled?' selected':''}>disabled</option>
+          </select></div>
+        <div class="field"><label>Posts per hour</label><input id="f_postsPerHour" type="number" min="0" step="0.5" value="${esc(p.postsPerHour)}"></div>
+        <div class="field"><label>Comments per hour</label><input id="f_commentsPerHour" type="number" min="0" step="0.5" value="${esc(p.commentsPerHour)}"></div>
+      </div>
+      <div class="hint">Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day. The scheduler is not built yet, so cadence is not acted on.</div>
+    </div>
+
+    <div class="section">
+      <h2>Model</h2>
+      <div class="grid">
+        <div class="field full"><label>Model</label><input id="f_model" value="${esc(p.model)}"></div>
+        <div class="field"><label>Temperature</label><input id="f_temperature" type="number" min="0" max="2" step="0.05" value="${esc(p.temperature)}"></div>
+        <div class="field"><label>num_predict (max tokens)</label><input id="f_numPredict" type="number" min="1" step="10" value="${esc(p.numPredict)}"></div>
+      </div>
+      <div id="modelWarn"></div>
+      <div class="hint">Default reuses Cy's resident model. Leave it as the default unless you know what you are doing.</div>
+    </div>
+
+    <div class="section">
+      <h2>Test generate (does not post)</h2>
+      <div class="field full"><label>Sample post title</label><input id="t_title" placeholder="paste a post title"></div>
+      <div class="field full"><label>Sample post body</label><textarea id="t_body" placeholder="paste the post body (optional)"></textarea></div>
+      <div class="row"><button id="testBtn">Generate sample reply</button><span class="hint" id="testMeta"></span></div>
+      <div class="out" id="testOut" style="margin-top:10px"></div>
+    </div>
+
+    <div class="section">
+      <h2>Recent activity</h2>
+      <ul class="activity" id="activity"></ul>
+    </div>
+
+    <div class="row" style="margin: 6px 0 30px">
+      <button class="primary" id="saveBtn">Save changes</button>
+      <button class="danger" id="deleteBtn" style="margin-left:auto">Delete profile</button>
+    </div>
+  `;
+
+  renderTokenArea(p);
+  renderModelWarn();
+  renderActivity(p);
+
+  $('#f_model').addEventListener('input', renderModelWarn);
+  $('#saveBtn').onclick = () => saveProfile(p.id);
+  $('#deleteBtn').onclick = () => deleteProfile(p.id, p.displayName);
+  $('#testBtn').onclick = () => testGenerate(p.id);
+
+  function renderModelWarn() {
+    const val = $('#f_model').value.trim();
+    const box = $('#modelWarn');
+    if (val && val !== state.defaultModel) {
+      box.innerHTML = '<div class="warnbox"><b>Warning:</b> this is not Cy\'s resident model (' +
+        esc(state.defaultModel) + '). Generating with it will swap the model in VRAM, ' +
+        'evicting Cy\'s weights and stalling the live site until it reloads. Only do this deliberately.</div>';
+    } else {
+      box.innerHTML = '';
+    }
+  }
+}
+
+function renderTokenArea(p) {
+  const area = $('#tokenArea');
+  if (p.hasToken) {
+    area.innerHTML = '<div class="tokline">This identity is registered on Feddit and holds a bearer token (hidden). ' +
+      'To re-register, delete and recreate the profile.</div>';
+    return;
+  }
+  area.innerHTML =
+    '<div class="tokline">Not registered yet. Set the Feddit username above and save, then register to obtain a token.</div>' +
+    '<div class="row" style="margin-top:10px"><button id="regBtn">Register this identity on Feddit now</button>' +
+    '<span class="hint">Calls POST /register and stores the token returned (shown only once).</span></div>';
+  $('#regBtn').onclick = () => registerProfile(p.id);
+}
+
+function renderActivity(p) {
+  const ul = $('#activity');
+  const acts = (p.activity || []).slice().reverse();
+  if (!acts.length) { ul.innerHTML = '<li>No activity yet.</li>'; return; }
+  ul.innerHTML = acts.map(a =>
+    '<li><small class="mono">' + esc(a.at || '') + '</small> &middot; ' + esc(a.kind || '') +
+    (a.ok === false ? ' <span style="color:var(--bad)">failed</span>' : '') +
+    (a.note ? ' &middot; ' + esc(a.note) : '') + '</li>').join('');
+}
+
+function collectForm() {
+  return {
+    displayName: $('#f_displayName').value.trim(),
+    fedditUsername: $('#f_fedditUsername').value.trim(),
+    persona: $('#f_persona').value,
+    toneNotes: $('#f_toneNotes').value,
+    readFeddits: parseCsv($('#f_readFeddits').value),
+    postFeddits: parseCsv($('#f_postFeddits').value),
+    mode: $('#f_mode').value,
+    enabled: $('#f_enabled').value === 'true',
+    postsPerHour: Number($('#f_postsPerHour').value) || 0,
+    commentsPerHour: Number($('#f_commentsPerHour').value) || 0,
+    model: $('#f_model').value.trim() || state.defaultModel,
+    temperature: Number($('#f_temperature').value),
+    numPredict: Number($('#f_numPredict').value) || 200,
+  };
+}
+
+async function saveProfile(id) {
+  try {
+    await api('/api/profiles/' + encodeURIComponent(id), { method: 'PUT', body: collectForm() });
+    toast('Saved.', 'ok');
+    await loadProfiles();
+    await selectProfile(id);
+  } catch (e) { toast('Save failed: ' + e.message, 'err'); }
+}
+
+async function registerProfile(id) {
+  // Persist current form first so username/persona are up to date before registering.
+  try {
+    await api('/api/profiles/' + encodeURIComponent(id), { method: 'PUT', body: collectForm() });
+  } catch (e) { toast('Could not save before registering: ' + e.message, 'err'); return; }
+  if (!confirm('Register this identity on Feddit now? The token is shown only once and stored immediately.')) return;
+  try {
+    const r = await api('/api/profiles/' + encodeURIComponent(id) + '/register', { method: 'POST' });
+    toast('Registered as ' + ((r.bot && r.bot.username) || 'bot') + '. Token stored.', 'ok');
+    await loadProfiles();
+    await selectProfile(id);
+  } catch (e) { toast('Register failed: ' + e.message, 'err'); }
+}
+
+async function deleteProfile(id, name) {
+  if (!confirm('Delete profile "' + (name || id) + '"? This also drops its stored Feddit token.')) return;
+  try {
+    await api('/api/profiles/' + encodeURIComponent(id), { method: 'DELETE' });
+    state.selected = null;
+    $('#main').innerHTML = '<div class="empty">Select a profile, or create one.</div>';
+    await loadProfiles();
+    toast('Deleted.', 'ok');
+  } catch (e) { toast('Delete failed: ' + e.message, 'err'); }
+}
+
+async function testGenerate(id) {
+  const btn = $('#testBtn');
+  const out = $('#testOut');
+  const meta = $('#testMeta');
+  const title = $('#t_title').value.trim();
+  if (!title) { toast('Enter a sample post title first.', 'err'); return; }
+  // Save current form so the persona/model used matches what is on screen.
+  try { await api('/api/profiles/' + encodeURIComponent(id), { method: 'PUT', body: collectForm() }); } catch (e) {}
+  btn.disabled = true; out.textContent = 'Generating (single-flight; waits if ollama is busy)...'; meta.textContent = '';
+  try {
+    const r = await api('/api/profiles/' + encodeURIComponent(id) + '/test-generate', {
+      method: 'POST', body: { title, body: $('#t_body').value },
+    });
+    out.textContent = r.output || '(empty response)';
+    meta.textContent = (r.ms ? r.ms + 'ms' : '') + (r.evalCount ? ' / ' + r.evalCount + ' tokens' : '') + ' / ' + (r.model || '');
+  } catch (e) {
+    out.textContent = '';
+    toast('Generate failed: ' + e.message, 'err');
+  } finally { btn.disabled = false; }
+}
+
+// ---- new profile ------------------------------------------------------------
+$('#newBtn').onclick = async () => {
+  const name = prompt('Display name for the new profile?');
+  if (name == null) return;
+  try {
+    const d = await api('/api/profiles', { method: 'POST', body: { displayName: name.trim() } });
+    await loadProfiles();
+    await selectProfile(d.profile.id);
+    toast('Profile created. Fill it in, save, then register.', 'ok');
+  } catch (e) { toast('Create failed: ' + e.message, 'err'); }
+};
+$('#refreshStatus').onclick = loadStatus;
+
+// ---- boot -------------------------------------------------------------------
+loadStatus();
+loadProfiles();
+setInterval(loadStatus, 20000); // keep status panel live
+</script>
+</body>
+</html>

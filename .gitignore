@@ -1,0 +1,11 @@
+# Runtime data - holds Feddit bearer tokens. NEVER commit.
+/data/
+
+# No npm deps by design, but guard against an accidental install.
+/node_modules/
+
+# OS / editor cruft
+*.log
+.DS_Store
+Thumbs.db
+*.tmp
