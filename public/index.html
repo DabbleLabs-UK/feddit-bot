@@ -84,7 +84,12 @@
     <span><span class="dot unknown"></span>ollama</span>
     <span><span class="dot unknown"></span>feddit</span>
   </div>
-  <button id="refreshStatus" style="margin-left:auto">Refresh status</button>
+  <div class="controls" style="margin-left:auto; display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+    <span id="runState" class="badge">scheduler ...</span>
+    <label class="row" style="gap:5px; font-size:12.5px; color:var(--dim)"><input type="checkbox" id="dryRunToggle" style="width:auto"> dry-run</label>
+    <button id="pauseBtn">Pause</button>
+    <button id="refreshStatus">Refresh status</button>
+  </div>
 </header>
 
 <div class="layout">
@@ -122,7 +127,7 @@ function toast(msg, kind) {
   setTimeout(() => t.remove(), kind === 'err' ? 6000 : 3500);
 }
 
-let state = { profiles: [], selected: null, defaultModel: '', status: null };
+let state = { profiles: [], selected: null, defaultModel: '', status: null, settings: null };
 
 // ---- status -----------------------------------------------------------------
 async function loadStatus() {
@@ -130,10 +135,43 @@ async function loadStatus() {
     const s = await api('/api/status');
     state.status = s;
     state.defaultModel = s.defaultModel;
+    if (s.settings) { state.settings = s.settings; renderControls(); }
     renderStatus(s);
   } catch (e) {
     $('#status').innerHTML = '<span style="color:var(--bad)">status error: ' + e.message + '</span>';
   }
+}
+
+// ---- global controls (pause / dry-run) --------------------------------------
+function renderControls() {
+  const s = state.settings || {};
+  const paused = !!s.paused;
+  $('#pauseBtn').textContent = paused ? 'Resume' : 'Pause';
+  $('#pauseBtn').className = paused ? 'primary' : '';
+  $('#dryRunToggle').checked = !!s.dryRun;
+  const rs = $('#runState');
+  // dry-run = green (safe), LIVE = orange (writes to the public site), paused = dim.
+  rs.textContent = paused ? 'PAUSED' : (s.dryRun ? 'dry-run' : 'LIVE');
+  rs.className = 'badge ' + (paused ? 'off' : (s.dryRun ? 'on' : 'notoken'));
+}
+async function togglePause() {
+  try {
+    const cur = state.settings || {};
+    const d = await api('/api/settings', { method: 'PUT', body: { paused: !cur.paused } });
+    state.settings = d.settings; renderControls();
+    toast(d.settings.paused ? 'Scheduler paused.' : 'Scheduler resumed.', 'ok');
+  } catch (e) { toast('Failed: ' + e.message, 'err'); }
+}
+async function toggleDryRun(ev) {
+  const on = ev.target.checked;
+  if (!on && !confirm('Turn OFF dry-run?\n\nThe scheduler will make REAL posts and comments to the live Feddit site for every ENABLED profile.')) {
+    ev.target.checked = true; return;
+  }
+  try {
+    const d = await api('/api/settings', { method: 'PUT', body: { dryRun: on } });
+    state.settings = d.settings; renderControls();
+    toast('Dry-run ' + (on ? 'ON (nothing is written)' : 'OFF - writes are LIVE'), on ? 'ok' : 'err');
+  } catch (e) { toast('Failed: ' + e.message, 'err'); ev.target.checked = !on; }
 }
 function renderStatus(s) {
   const oll = s.ollama || {};
@@ -167,7 +205,8 @@ function renderList() {
     const enBadge = '<span class="badge ' + (p.enabled ? 'on' : 'off') + '">' + (p.enabled ? 'enabled' : 'off') + '</span>';
     li.innerHTML =
       '<div><div class="pname">' + esc(p.displayName || '(unnamed)') + '</div>' +
-      '<div class="pmeta">' + esc(p.fedditUsername || 'no username') + ' &middot; ' + esc(p.mode) + '</div></div>' +
+      '<div class="pmeta">' + esc(p.fedditUsername || 'no username') + ' &middot; ' + esc(p.mode) + '</div>' +
+      '<div class="pmeta">next: ' + esc(fmtNext(p)) + '</div></div>' +
       '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + enBadge + tokenBadge + '</div>';
     li.onclick = () => selectProfile(p.id);
     ul.appendChild(li);
@@ -185,6 +224,26 @@ async function selectProfile(id) {
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
 function csv(a) { return Array.isArray(a) ? a.join(', ') : (a || ''); }
 function parseCsv(s) { return String(s || '').split(',').map(x => x.trim()).filter(Boolean); }
+
+// Human "when is this profile next going to do something" for the list.
+function rel(ts) {
+  const ms = ts - Date.now();
+  if (ms <= 0) return 'due now';
+  const m = Math.round(ms / 60000);
+  if (m < 1) return 'in <1m';
+  if (m < 60) return 'in ' + m + 'm';
+  const h = Math.floor(m / 60);
+  return 'in ' + h + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '');
+}
+function fmtNext(p) {
+  const na = p.nextAction || {};
+  if (state.settings && state.settings.paused) return 'paused';
+  if (na.backoffUntil && na.backoffUntil > Date.now()) return 'backoff ' + rel(na.backoffUntil);
+  if (!p.enabled) return 'disabled';
+  if (!p.hasToken) return 'no token';
+  if (!na.next) return 'idle (no cadence)';
+  return na.next.kind + ' ' + rel(na.next.at);
+}
 
 function renderEditor(p) {
   const usesDefault = !p.model || p.model === state.defaultModel;
@@ -229,7 +288,7 @@ function renderEditor(p) {
         <div class="field"><label>Posts per hour</label><input id="f_postsPerHour" type="number" min="0" step="0.5" value="${esc(p.postsPerHour)}"></div>
         <div class="field"><label>Comments per hour</label><input id="f_commentsPerHour" type="number" min="0" step="0.5" value="${esc(p.commentsPerHour)}"></div>
       </div>
-      <div class="hint">Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day. The scheduler is not built yet, so cadence is not acted on.</div>
+      <div class="hint">Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day (hard ceiling; the scheduler self-limits below these and jitters the cadence). The scheduler only acts on enabled profiles, and while global dry-run is ON it logs actions without writing.</div>
     </div>
 
     <div class="section">
@@ -302,10 +361,13 @@ function renderActivity(p) {
   const ul = $('#activity');
   const acts = (p.activity || []).slice().reverse();
   if (!acts.length) { ul.innerHTML = '<li>No activity yet.</li>'; return; }
-  ul.innerHTML = acts.map(a =>
-    '<li><small class="mono">' + esc(a.at || '') + '</small> &middot; ' + esc(a.kind || '') +
-    (a.ok === false ? ' <span style="color:var(--bad)">failed</span>' : '') +
-    (a.note ? ' &middot; ' + esc(a.note) : '') + '</li>').join('');
+  ul.innerHTML = acts.map(a => {
+    const dry = a.dryRun ? ' <span class="badge notoken">dry-run</span>' : '';
+    const fail = a.ok === false ? ' <span style="color:var(--bad)">failed</span>' : '';
+    const tgt = a.target ? ' &middot; <small class="mono">' + esc(a.target) + '</small>' : '';
+    return '<li><small class="mono">' + esc(a.at || '') + '</small> &middot; ' + esc(a.kind || '') + dry + fail + tgt +
+      (a.note ? '<div style="color:var(--text);opacity:.85;margin-top:2px">' + esc(a.note) + '</div>' : '') + '</li>';
+  }).join('');
 }
 
 function collectForm() {
@@ -393,11 +455,14 @@ $('#newBtn').onclick = async () => {
   } catch (e) { toast('Create failed: ' + e.message, 'err'); }
 };
 $('#refreshStatus').onclick = loadStatus;
+$('#pauseBtn').onclick = togglePause;
+$('#dryRunToggle').onchange = toggleDryRun;
 
 // ---- boot -------------------------------------------------------------------
 loadStatus();
 loadProfiles();
-setInterval(loadStatus, 20000); // keep status panel live
+// Keep status, controls, and the per-profile "next action" reasonably live.
+setInterval(() => { loadStatus(); loadProfiles().catch(() => {}); }, 20000);
 </script>
 </body>
 </html>

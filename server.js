@@ -20,6 +20,7 @@ const os = require('node:os');
 const store = require('./lib/store');
 const ollama = require('./lib/ollama');
 const feddit = require('./lib/feddit');
+const scheduler = require('./lib/scheduler');
 
 const PORT = 8770;
 const HOST = '0.0.0.0';
@@ -92,11 +93,13 @@ function serveStatic(req, res, urlPath) {
   });
 }
 
-// Strip the token out of a profile before sending it to the browser list view.
-// (The edit view can still fetch the full record incl. token on demand.)
+// Strip the token (and the potentially-large dedupe list) out of a profile
+// before sending it to the browser list view, and attach the scheduler's view
+// of the next action so the UI can show it. The edit view can still fetch the
+// full record incl. token on demand.
 function safeProfile(p) {
-  const { token, ...rest } = p;
-  return { ...rest, hasToken: Boolean(token) };
+  const { token, repliedTo, ...rest } = p;
+  return { ...rest, hasToken: Boolean(token), nextAction: scheduler.nextAction(p) };
 }
 
 // ---- API routing ------------------------------------------------------------
@@ -111,7 +114,22 @@ async function handleApi(req, res, urlPath, query) {
       ollama: oll,
       feddit: fed,
       defaultModel: store.DEFAULT_MODEL,
+      settings: store.getSettings(),
     });
+  }
+
+  // GET /api/settings - global runner settings (pause / dry-run).
+  if (method === 'GET' && urlPath === '/api/settings') {
+    return sendJson(res, 200, { settings: store.getSettings() });
+  }
+
+  // PUT /api/settings - toggle global pause and/or dry-run, honoured live.
+  if (method === 'PUT' && urlPath === '/api/settings') {
+    const body = await readBody(req);
+    const patch = {};
+    if (typeof body.paused === 'boolean') patch.paused = body.paused;
+    if (typeof body.dryRun === 'boolean') patch.dryRun = body.dryRun;
+    return sendJson(res, 200, { settings: store.updateSettings(patch) });
   }
 
   // GET /api/feddits - proxy the sub-feddit list so the UI can offer choices.
@@ -244,14 +262,12 @@ const server = http.createServer((req, res) => {
 });
 
 // ---- SCHEDULER SEAM ---------------------------------------------------------
-// The posting loop is a separate concern and is intentionally not built yet.
-// When it is, drop in ./lib/scheduler exporting start({ store, ollama, feddit })
-// and wire it here - it has everything it needs via those three modules and the
-// ollama single-flight gate already protects Cy. Nothing else in this file
-// needs to change.
-//
-//   const scheduler = require('./lib/scheduler');
-//   scheduler.start({ store, ollama, feddit });
+// The posting loop lives in ./lib/scheduler and is started here with the three
+// modules it needs. It honours the global pause + per-profile enable + dry-run
+// flags live (read from the store each tick), and routes every generation
+// through the ollama single-flight gate so Cy's resident model is never queued
+// behind us or evicted. Starting it is a no-op until profiles are enabled.
+const schedulerHandle = scheduler.start({ store, ollama, feddit });
 // -----------------------------------------------------------------------------
 
 function lanAddress() {
@@ -273,7 +289,10 @@ server.listen(PORT, HOST, () => {
   console.log('  Data:    ' + store.DATA_FILE);
   console.log('  Ollama:  ' + ollama.OLLAMA_BASE + ' (default model ' + store.DEFAULT_MODEL + ', keep_alive -1)');
   console.log('  Feddit:  ' + feddit.BASE);
+  const s = store.getSettings();
   console.log('');
-  console.log('  Scheduler/posting loop is NOT running (not built yet).');
+  console.log('  Scheduler is running (tick ' + Math.round(schedulerHandle.tickMs / 1000) + 's). ' +
+    'Global: ' + (s.paused ? 'PAUSED' : 'active') + ', dry-run ' + (s.dryRun ? 'ON' : 'OFF') + '.');
+  console.log('  It only acts on ENABLED profiles; dry-run logs actions without writing.');
   console.log('');
 });
