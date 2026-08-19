@@ -10,6 +10,7 @@
 // is spawned and the process exits on its own.
 
 const scheduler = require('../lib/scheduler');
+const aboutLib = require('../lib/about');
 const gdelt = require('../lib/gdelt');
 const feeds = require('../lib/feeds');
 const cost = require('../lib/cost');
@@ -147,6 +148,7 @@ function profile(over) {
     readFeddits: over.readFeddits || [],
     postFeddits: over.postFeddits || [],
     createMissingSubFeddit: over.createMissingSubFeddit || false,
+    allowNsfw: over.allowNsfw || false,
     mode: over.mode || 'both',
     linkNoContext: over.linkNoContext || 'headline',
     probation: over.probation || { onProbation: null, checkedAt: 0 },
@@ -229,8 +231,24 @@ function commentChild(c) {
 }
 
 function makeFeddit(world) {
-  world.calls = { submit: [], comment: [], createFeddit: [], botInfo: [] };
+  world.calls = { submit: [], comment: [], createFeddit: [], botInfo: [], about: [] };
   const client = {
+    // GET /f/{name}/about.json. Returns the Serialize::feddit shape (description,
+    // over_18, ordered rules[{number,title,detail}]) for subs configured in
+    // world.abouts; a sub with NO config returns a failure so the "fetch failure
+    // does not block posting" path can be exercised. Records every call.
+    about: async (name) => {
+      world.calls.about.push(name);
+      const a = world.abouts && world.abouts[name];
+      if (!a) return { ok: false, status: 404, data: null, error: 'about fetch failed (stub)' };
+      return { ok: true, status: 200, data: { feddit: {
+        name, title: a.title || name,
+        description: a.description != null ? a.description : null,
+        sidebar_text: null, over_18: !!a.over_18,
+        rules: Array.isArray(a.rules) ? a.rules : [],
+        created_utc: 0, created_by: null, subscriber_count: 0, post_count: 0, url: '/f/' + name,
+      } } };
+    },
     feddit: async (name) => {
       const posts = world.feddits[name] || [];
       return { ok: true, status: 200, data: { kind: 'Listing', data: { after: null, children: posts.map(postChild) } } };
@@ -1970,6 +1988,187 @@ async function scenarioCreateMissingSubFeddit() {
   }
 }
 
+// ============================================================================
+// Scenario 19: community about/rules injection. A bot MUST read a sub-feddit's
+// published, structured rules (+ its description) before posting, and honour
+// them - across ALL THREE generation paths (post, comment, news title). Proves:
+//   (A) many profiles posting into ONE sub cause exactly ONE shared about fetch;
+//   (B) description + ordered rules are injected into the POST prompt (as a
+//       numbered list), sitting BEFORE the in-character voice cue, and the
+//       rules-applied count is logged;
+//   (C) same injection in the COMMENT prompt;
+//   (D) same injection in the NEWS TITLE prompt, in the MIDDLE (before the
+//       dominant persona/voice block - persona still wins on voice);
+//   (E) an EMPTY rules array produces NO rules block (description still shows);
+//   (F) an NSFW (over_18) community is SKIPPED unless the profile opted in;
+//   (G) a FAILED about fetch never blocks posting (generation still runs).
+// Uses the REAL lib/about shared cache wrapped around the stub feddit client,
+// so cache dedupe + scheduler wiring are exercised together.
+// ============================================================================
+async function scenarioAboutRules() {
+  console.log('\n[19] community about/rules: shared fetch + 3-path injection + empty-rules + NSFW opt-in');
+  const H = 3_600_000;
+  const RULES = [
+    { number: 1, title: 'No spam', detail: 'Self-promo at most once a week' },
+    { number: 2, title: 'Stay on topic', detail: null },          // detail-less rule
+    { number: 3, title: 'Be kind', detail: 'No personal attacks' },
+  ];
+  const makeAbout = (feddit) => aboutLib.createAbout({ feddit }); // REAL shared cache over the stub
+
+  // ---- (A)+(B) shared fetch across profiles + POST-prompt injection ----------
+  {
+    const clock = makeClock(1_600_000_000_000);
+    const world = { feddits: {}, comments: {}, abouts: { gardening: { description: 'A place for gardeners.', rules: RULES } } };
+    const feddit = makeFeddit(world);
+    const about = makeAbout(feddit);
+    const ps = ['g1', 'g2', 'g3'].map((id) => {
+      const p = profile({ id, fedditUsername: id, mode: 'post', postsPerHour: 60, postFeddits: ['gardening'] });
+      p.sched.nextPostAt = clock.now();
+      return p;
+    });
+    const store = makeStore(ps);
+    const providers = makeProviders();
+    const s = scheduler.createScheduler({ store, providers, feddit, about, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    await s.runTick();
+
+    const gardeningFetches = world.calls.about.filter((n) => n === 'gardening').length;
+    eq(gardeningFetches, 1, '(A) three profiles posting to f/gardening triggered exactly ONE shared about fetch');
+    ok(providers.prompts.length >= 3, '(A) all three profiles still generated (the cache did not block them)');
+
+    const pp = providers.prompts.find((x) => /posting a NEW thread/.test(x));
+    ok(!!pp, '(B) captured a post-generation prompt');
+    ok(pp.includes('A place for gardeners.'), '(B) the community description is injected into the POST prompt');
+    ok(/1\. No spam/.test(pp) && /2\. Stay on topic/.test(pp) && /3\. Be kind/.test(pp), '(B) all three rules appear in the post prompt');
+    ok(pp.indexOf('1. No spam') < pp.indexOf('2. Stay on topic') && pp.indexOf('2. Stay on topic') < pp.indexOf('3. Be kind'),
+      '(B) rules render as an ORDERED list (1 -> 2 -> 3), not a mushed paragraph');
+    ok(pp.includes('2. Stay on topic\n'), '(B) a detail-less rule shows just its title (no dangling separator)');
+    ok(pp.includes('1. No spam - Self-promo at most once a week'), '(B) a rule detail is appended after its title');
+    ok(pp.indexOf('No spam') < pp.indexOf('Write an original short post in character'),
+      '(B) rules sit BEFORE the in-character voice cue (rules bind conduct; persona still wins on voice)');
+    ok((store.getProfile('g1').activity || []).some((e) => /Applied 3 community rules from f\/gardening/.test(e.note || '')),
+      '(B) the rules-applied count (3) was logged');
+  }
+
+  // ---- (C) COMMENT-prompt injection ------------------------------------------
+  {
+    const clock = makeClock(1_600_000_000_000);
+    const post = { id: 500, feddit: 'gardening', title: 'My tomatoes are finally red', author: 'human', body: 'took all summer' };
+    const world = { feddits: { gardening: [post] }, comments: {}, abouts: { gardening: { description: 'A place for gardeners.', rules: RULES } } };
+    const feddit = makeFeddit(world);
+    const about = makeAbout(feddit);
+    const p = profile({ id: 'c1', fedditUsername: 'c1', mode: 'comment', commentsPerHour: 60, readFeddits: ['gardening'] });
+    p.sched.nextCommentAt = clock.now();
+    const store = makeStore([p]);
+    const providers = makeProviders();
+    const s = scheduler.createScheduler({ store, providers, feddit, about, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    await s.runTick();
+
+    const cp = providers.prompts.find((x) => /Your reply:\s*$/.test(x));
+    ok(!!cp, '(C) captured a comment-generation prompt');
+    ok(cp.includes('A place for gardeners.'), '(C) the description is injected into the COMMENT prompt');
+    ok(/1\. No spam/.test(cp) && /2\. Stay on topic/.test(cp) && /3\. Be kind/.test(cp), '(C) all three rules appear in the comment prompt as a list');
+    ok(cp.indexOf('No spam') < cp.indexOf('My tomatoes'), '(C) rules sit BEFORE the reply context/cue (context stays last)');
+  }
+
+  // ---- (D) NEWS-TITLE-prompt injection (rules in the middle; voice last) -----
+  {
+    const clock = makeClock(1_600_000_000_000);
+    const article = { url: 'https://news.example.com/bikes', domain: 'news.example.com', title: 'Council approves new bike lanes downtown', seendate: seendateFrom(clock.now() - 1 * H) };
+    const gd = gdelt.createGdelt({ now: clock.now, sleep: async (ms) => clock.advance(ms), minSpacingMs: 0, fetch: async () => ({ status: 200, arrayBuffer: async () => jsonBody({ articles: [article] }) }) });
+    const world = { feddits: {}, comments: {}, abouts: { citynews: { description: 'Local city news only.', rules: RULES } } };
+    const feddit = makeFeddit(world);
+    const about = makeAbout(feddit);
+    const p = profile({ id: 'n1', botType: 'news', mode: 'post', postsPerHour: 60, provider: 'ollama', newsUseGdelt: true, newsQuery: 'bike', newsRoutingRules: [{ keywords: [], subFeddit: 'citynews', weight: 1 }], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
+    const store = makeStore([p]);
+    const providers = makeProviders();
+    const s = scheduler.createScheduler({ store, providers, feddit, about, gdelt: gd, feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    const r = await s.previewNews('n1');
+
+    ok(r && r.ok === true, '(D) news preview produced a title');
+    const tp = providers.prompts.find((x) => /TITLE:\s*$/.test(x));
+    ok(!!tp, '(D) captured the news title prompt');
+    ok(tp.includes('Local city news only.'), '(D) the description is injected into the NEWS TITLE prompt');
+    ok(/1\. No spam/.test(tp) && /2\. Stay on topic/.test(tp) && /3\. Be kind/.test(tp), '(D) all three rules appear in the news title prompt as a list');
+    const iRules = tp.indexOf('No spam');
+    const iVoice = tp.indexOf('Now write the title AS THIS CHARACTER');
+    ok(iRules !== -1 && iVoice !== -1 && iRules < iVoice, '(D) rules sit BEFORE the dominant voice block (persona still wins on voice)');
+  }
+
+  // ---- (E) empty rules array -> NO rules block (description still injected) ---
+  {
+    const clock = makeClock(1_600_000_000_000);
+    const world = { feddits: {}, comments: {}, abouts: { plain: { description: 'Just a chill place.', rules: [] } } };
+    const feddit = makeFeddit(world);
+    const about = makeAbout(feddit);
+    const p = profile({ id: 'e1', fedditUsername: 'e1', mode: 'post', postsPerHour: 60, postFeddits: ['plain'] });
+    p.sched.nextPostAt = clock.now();
+    const store = makeStore([p]);
+    const providers = makeProviders();
+    const s = scheduler.createScheduler({ store, providers, feddit, about, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    await s.runTick();
+
+    const pp = providers.prompts.find((x) => /posting a NEW thread/.test(x));
+    ok(!!pp, '(E) captured the post prompt for the empty-rules community');
+    ok(pp.includes('Just a chill place.'), '(E) the description is still injected when the rules array is empty');
+    ok(!/This community publishes rules/.test(pp), '(E) an EMPTY rules array produces NO rules block');
+    ok(!/^\s*1\.\s/m.test(pp), '(E) no numbered rule lines are emitted when there are no rules');
+    ok(!(store.getProfile('e1').activity || []).some((e) => /Applied \d+ community rule/.test(e.note || '')), '(E) no rules-applied log when there are no rules');
+  }
+
+  // ---- (F) NSFW (over_18) community: skipped unless the profile opted in ------
+  {
+    // (F-off) NOT opted in -> skip BEFORE the model, log it, no submit.
+    const clock = makeClock(1_600_000_000_000);
+    const world = { feddits: {}, comments: {}, abouts: { adultzone: { description: 'over-18 only', over_18: true, rules: RULES } } };
+    const feddit = makeFeddit(world);
+    const about = makeAbout(feddit);
+    const p = profile({ id: 'nsfw-off', fedditUsername: 'nsfw-off', mode: 'post', postsPerHour: 60, postFeddits: ['adultzone'], allowNsfw: false });
+    p.sched.nextPostAt = clock.now();
+    const store = makeStore([p]);
+    const providers = makeProviders();
+    const s = scheduler.createScheduler({ store, providers, feddit, about, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    await s.runTick();
+
+    eq(providers.prompts.length, 0, '(F) NSFW community + not opted in -> NO generation (skipped before the model)');
+    eq(world.calls.submit.length, 0, '(F) NSFW skip made no submit call');
+    ok((store.getProfile('nsfw-off').activity || []).some((e) => /Skipped:.*NSFW/i.test(e.note || '')), '(F) the NSFW skip was logged');
+  }
+  {
+    // (F-on) opted in -> the bot posts, and the community rules are injected.
+    const clock = makeClock(1_600_000_000_000);
+    const world = { feddits: {}, comments: {}, abouts: { adultzone: { description: 'over-18 only', over_18: true, rules: RULES } } };
+    const feddit = makeFeddit(world);
+    const about = makeAbout(feddit);
+    const p = profile({ id: 'nsfw-on', fedditUsername: 'nsfw-on', mode: 'post', postsPerHour: 60, postFeddits: ['adultzone'], allowNsfw: true });
+    p.sched.nextPostAt = clock.now();
+    const store = makeStore([p]);
+    const providers = makeProviders();
+    const s = scheduler.createScheduler({ store, providers, feddit, about, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    await s.runTick();
+
+    eq(providers.prompts.length, 1, '(F) NSFW community + opted in -> the bot DOES generate a post');
+    ok(/1\. No spam/.test(providers.prompts[0]), '(F) the opted-in NSFW post still gets the community rules injected');
+  }
+
+  // ---- (G) a FAILED about fetch never blocks posting -------------------------
+  {
+    const clock = makeClock(1_600_000_000_000);
+    const world = { feddits: {}, comments: {}, abouts: {} }; // f/ghost has NO about -> stub returns a failure
+    const feddit = makeFeddit(world);
+    const about = makeAbout(feddit);
+    const p = profile({ id: 'ghost1', fedditUsername: 'ghost1', mode: 'post', postsPerHour: 60, postFeddits: ['ghost'] });
+    p.sched.nextPostAt = clock.now();
+    const store = makeStore([p]);
+    const providers = makeProviders();
+    const s = scheduler.createScheduler({ store, providers, feddit, about, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    await s.runTick();
+
+    ok(world.calls.about.includes('ghost'), '(G) an about fetch was attempted for f/ghost');
+    eq(providers.prompts.length, 1, '(G) a FAILED about fetch did NOT block posting - generation still ran');
+    ok(!/ABOUT THE COMMUNITY/.test(providers.prompts[0]), '(G) with no about data, no community block is injected (posting proceeds cleanly)');
+  }
+}
+
 // ---- run --------------------------------------------------------------------
 
 (async () => {
@@ -1994,6 +2193,7 @@ async function scenarioCreateMissingSubFeddit() {
   await scenarioProbationPolling();
   await scenarioCreateMissingSubFeddit();
   await scenarioFeeds();
+  await scenarioAboutRules();
   await scenarioRealSmoke();
 
   console.log('\n----------------------------------------');
