@@ -95,6 +95,11 @@ function makeStore(profiles) {
       b[dom] = (Number(b[dom]) || 0) + 1;
       return b[dom];
     },
+    setProbation: (id, patch) => {
+      const p = byId.get(id); if (!p) return null;
+      p.probation = { onProbation: null, checkedAt: 0, ...(p.probation || {}), ...(patch || {}) };
+      return p.probation;
+    },
     getThreadReplyCount: (postId) => settings.threadReplies[String(postId)] || 0,
     bumpThreadReply: (postId) => {
       const k = String(postId);
@@ -141,6 +146,8 @@ function profile(over) {
     readFeddits: over.readFeddits || [],
     postFeddits: over.postFeddits || [],
     mode: over.mode || 'both',
+    linkNoContext: over.linkNoContext || 'headline',
+    probation: over.probation || { onProbation: null, checkedAt: 0 },
     postsPerHour: over.postsPerHour || 0,
     commentsPerHour: over.commentsPerHour || 0,
     provider: over.provider || 'ollama',
@@ -183,14 +190,24 @@ function jsonBody(obj) { return Buffer.from(JSON.stringify(obj), 'utf8'); }
 // ---- stub feddit ------------------------------------------------------------
 
 function postChild(p) {
-  return { kind: 't3', data: { id: p.id, name: 't3_' + p.id, feddit: p.feddit, title: p.title, author: p.author, kind: 'text', selftext: p.body || '' } };
+  // OG/link-preview keys are ALWAYS present (null on a text post), matching
+  // Serialize::post - so classifyPost branches on og_status, never key existence.
+  return { kind: 't3', data: {
+    id: p.id, name: 't3_' + p.id, feddit: p.feddit, title: p.title, author: p.author,
+    kind: p.link ? 'link' : 'text', selftext: p.body || '', url: p.url || '',
+    thumbnail_url: p.thumbnail_url != null ? p.thumbnail_url : null,
+    og_title: p.og_title != null ? p.og_title : null,
+    og_description: p.og_description != null ? p.og_description : null,
+    og_site_name: p.og_site_name != null ? p.og_site_name : null,
+    og_status: p.og_status != null ? p.og_status : null,
+  } };
 }
 function commentChild(c) {
   return { kind: 't1', data: { id: c.id, name: 't1_' + c.id, post_id: c.postId, parent_id: null, author: c.author, body: c.body, replies: '' } };
 }
 
 function makeFeddit(world) {
-  world.calls = { submit: [], comment: [] };
+  world.calls = { submit: [], comment: [], createFeddit: [], botInfo: [] };
   const client = {
     feddit: async (name) => {
       const posts = world.feddits[name] || [];
@@ -200,8 +217,16 @@ function makeFeddit(world) {
       const cs = world.comments[postId] || [];
       return { ok: true, status: 200, data: { post: null, comments: { kind: 'Listing', data: { after: null, children: cs.map(commentChild) } } } };
     },
+    // GET /u/{name}.json - returns the bot object (with its probation flag).
+    // Default: off probation. Override via world.onBotInfo(name).
+    botInfo: async (name) => {
+      world.calls.botInfo.push(name);
+      return world.onBotInfo ? world.onBotInfo(name) : { ok: true, status: 200, data: { probation: { on_probation: false } } };
+    },
     submit: async (args) => { world.calls.submit.push(args); return world.onSubmit ? world.onSubmit(args) : { ok: true, status: 201, data: { post: { data: { id: 9999 } } } }; },
     comment: async (args) => { world.calls.comment.push(args); return world.onComment ? world.onComment(args) : { ok: true, status: 201, data: { comment: { data: { id: 8888 } } } }; },
+    // Spy: the scheduler must NEVER call this (esp. on probation, where it is blocked).
+    createFeddit: async (args) => { world.calls.createFeddit.push(args); return { ok: true, status: 201, data: { feddit: {} } }; },
   };
   client.calls = world.calls; // expose call log on the client too
   return client;
@@ -218,11 +243,14 @@ function makeProviders(opts) {
   const cfg = opts || {};
   const o = { inFlight: 0, max: 0, calls: 0 };
   const d = { inFlight: 0, max: 0, calls: 0 };
+  const prompts = []; // every prompt passed to generate(), for prompt-content asserts
   let ollamaBusyFlag = false;
   return {
+    prompts,
     setOllamaBusy: (b) => { ollamaBusyFlag = b; },
     ollamaBusy: () => ollamaBusyFlag,
     generate: async (gopts) => {
+      prompts.push(gopts.prompt || '');
       const prov = gopts.provider === 'deepseek' ? 'deepseek' : 'ollama';
       const s = prov === 'deepseek' ? d : o;
       s.inFlight++; s.max = Math.max(s.max, s.inFlight); s.calls++;
@@ -856,6 +884,232 @@ function scenarioProfileMigration() {
   eq(JSON.stringify(store.migrateProfiles(null)), '[]', 'migrateProfiles(null) is empty, no crash');
 }
 
+// ============================================================================
+// Scenario 14: PROBATION ceilings - a freshly registered bot is held to 2
+// posts/hr and 5 comments/hr (vs the normal 10 / 60), and the scheduler never
+// tries to create a sub-feddit (blocked on probation). Proven by contrast: the
+// SAME absurd configured rate produces far more output once probation clears.
+// ============================================================================
+async function scenarioProbationCeilings() {
+  console.log('\n[14] probation ceilings: 2 posts/hr + 5 comments/hr (vs 10 / 60)');
+
+  const pool = [];
+  for (let i = 1; i <= 400; i++) pool.push({ id: i, feddit: 'busy', title: 'p' + i, author: 'human' + (i % 7) });
+  // botInfo that always reports ON probation, so the state holds across the whole
+  // simulated hour (the periodic re-check re-confirms it rather than clearing it).
+  const onProb = () => ({ ok: true, status: 200, data: { probation: { on_probation: true } } });
+
+  // Simulate one hour of comment ticks and count how many actually fired.
+  async function commentHour(onBotInfo, seed) {
+    const clock = makeClock(2_000_000);
+    const world = { feddits: { busy: pool }, comments: {}, onBotInfo };
+    const p = profile({ id: 'pc', fedditUsername: 'pc', mode: 'comment', commentsPerHour: 100000, readFeddits: ['busy'] });
+    p.sched.nextCommentAt = clock.now();
+    const store = makeStore([p]);
+    const feddit = makeFeddit(world);
+    const sched = scheduler.createScheduler({ store, providers: makeProviders(), feddit, now: clock.now, random: rng(seed), getDeepseekKey: KEY });
+    let count = 0;
+    for (let s = 0; s < 3600; s += 10) {
+      const r = await sched.runTick();
+      if (r.acted) count++;
+      clock.advance(10_000);
+    }
+    return { count, feddit, store };
+  }
+
+  // Simulate one hour of post ticks and count how many actually fired.
+  async function postHour(onBotInfo, seed) {
+    const clock = makeClock(2_000_000);
+    const world = { feddits: {}, comments: {}, onBotInfo };
+    const p = profile({ id: 'pp', fedditUsername: 'pp', mode: 'post', postsPerHour: 100000, postFeddits: ['busy'] });
+    p.sched.nextPostAt = clock.now();
+    const store = makeStore([p]);
+    const feddit = makeFeddit(world);
+    const sched = scheduler.createScheduler({ store, providers: makeProviders(), feddit, now: clock.now, random: rng(seed), getDeepseekKey: KEY });
+    let count = 0;
+    for (let s = 0; s < 3600; s += 10) {
+      const r = await sched.runTick();
+      if (r.acted) count++;
+      clock.advance(10_000);
+    }
+    return { count, feddit, store };
+  }
+
+  // Comments: on probation the effective ceiling is 5/hr.
+  const cProb = await commentHour(onProb, 71);
+  ok(cProb.count <= 5, 'on probation, 100000/hr configured but held to ' + cProb.count + ' comments in the hour (<= 5)');
+  ok(cProb.count >= 3, 'still worked near the probation ceiling (' + cProb.count + ' >= 3), not starved');
+  eq(cProb.store.getProfile('pc').probation.onProbation, true, 'the profile was observed ON probation');
+  ok(cProb.feddit.calls.botInfo.length >= 1, 'probation was read from GET /u/{bot}.json');
+  eq(cProb.feddit.calls.createFeddit.length, 0, 'never attempted to create a sub-feddit (blocked on probation)');
+
+  // Comments: OFF probation the same config runs up to the normal 60/hr ceiling.
+  const cNorm = await commentHour(undefined, 71); // default botInfo -> off probation
+  eq(cNorm.store.getProfile('pc').probation.onProbation, false, 'the contrast profile was OFF probation');
+  ok(cNorm.count > cProb.count, 'off probation the SAME config fired far more (' + cNorm.count + ' > ' + cProb.count + '): probation was the limiter');
+  ok(cNorm.count > 5, 'off probation clearly exceeded the probation ceiling (' + cNorm.count + ' > 5)');
+
+  // Posts: on probation the effective ceiling is 2/hr.
+  const pProb = await postHour(onProb, 72);
+  ok(pProb.count <= 2, 'on probation, 100000/hr configured but held to ' + pProb.count + ' posts in the hour (<= 2)');
+  ok(pProb.count >= 1, 'still posted near the probation ceiling (' + pProb.count + ' >= 1)');
+
+  // Posts: OFF probation the same config runs up to the normal 10/hr ceiling.
+  const pNorm = await postHour(undefined, 72);
+  ok(pNorm.count > pProb.count, 'off probation the SAME post config fired more (' + pNorm.count + ' > ' + pProb.count + ')');
+  ok(pNorm.count > 2, 'off probation clearly exceeded the probation post ceiling (' + pNorm.count + ' > 2)');
+}
+
+// ============================================================================
+// Scenario 15: a LINK post whose OG fetch is still 'pending' is DEFERRED - it is
+// skipped WITHOUT being consumed (not marked replied), and is commented on only
+// once the metadata lands ('ok'), with the honesty guard + summary in the prompt.
+// ============================================================================
+async function scenarioLinkPendingDefer() {
+  console.log('\n[15] link post: pending is DEFERRED (not consumed), commented once it flips to ok');
+  const clock = makeClock(9_000_000);
+  const linkPost = { id: 700, feddit: 'links', title: 'City council votes on new bridge', author: 'human', link: true, url: 'https://news.example/bridge', og_status: 'pending' };
+  const world = { feddits: { links: [linkPost] }, comments: {} };
+  const p = profile({ id: 'conv', fedditUsername: 'conv', mode: 'comment', commentsPerHour: 30, readFeddits: ['links'] });
+  p.sched.nextCommentAt = clock.now();
+  const store = makeStore([p]);
+  const providers = makeProviders();
+  const feddit = makeFeddit(world);
+  const sched = scheduler.createScheduler({ store, providers, feddit, now: clock.now, random: rng(41), getDeepseekKey: KEY });
+
+  // Tick 1: the only post is a LINK whose OG fetch is still 'pending' -> DEFER.
+  const r1 = await sched.runTick();
+  ok(!r1.acted, 'pending link: the tick did not act');
+  eq(providers.stats().calls, 0, 'pending link: no generation (deferred, not commented)');
+  eq(world.calls.comment.length, 0, 'pending link: no live comment write');
+  ok(!store.hasReplied('conv', 't3_700'), 'pending link NOT marked replied (not consumed - it can retry later)');
+  eq(store.getThreadReplyCount(700), 0, 'pending link did not consume a thread-reply slot');
+
+  // The OG worker lands ~2 min later: status flips to ok with a real summary.
+  linkPost.og_status = 'ok';
+  linkPost.og_title = 'Council approves bridge funding';
+  linkPost.og_description = 'The vote passed 7-2 after a long debate over cost.';
+  linkPost.og_site_name = 'Example News';
+  clock.advance(130_000);
+  p.sched.nextCommentAt = clock.now(); // due again
+
+  const r2 = await sched.runTick();
+  ok(r2.acted, 'ok link: the tick acted');
+  eq(providers.stats().calls, 1, 'ok link: generated exactly one reply');
+  ok(store.hasReplied('conv', 't3_700'), 'ok link: NOW marked replied (consumed)');
+  const prompt = providers.prompts[providers.prompts.length - 1];
+  ok(/seen ONLY its headline/i.test(prompt), 'prompt carries the link-honesty guard (headline only, not the article)');
+  ok(/and a short summary/i.test(prompt), 'prompt says a summary (not the article) was also seen');
+  ok(prompt.includes('The vote passed 7-2'), 'prompt includes the OG summary as context');
+  ok(prompt.includes('Council approves bridge funding'), 'prompt uses the fetched OG title as the headline');
+}
+
+// ============================================================================
+// Scenario 16: terminal OG states. 'no_image' is terminal but may still carry a
+// populated og_description (means "no picture", NOT "no metadata") - so it stays
+// usable as context. 'blocked' is terminal with no description, so the per-profile
+// linkNoContext setting decides: 'skip' passes it over, 'headline' reacts to the
+// bare headline (still honesty-guarded, but with no summary claim).
+// ============================================================================
+async function scenarioLinkTerminalStates() {
+  console.log('\n[16] link terminal states: no_image+summary usable; blocked follows the profile setting');
+
+  // 16a: no_image WITH a summary is still commented on.
+  {
+    const clock = makeClock(10_000_000);
+    const post = { id: 800, feddit: 'links', title: 'Headline only', author: 'human', link: true, url: 'https://n.ex/x',
+      og_status: 'no_image', og_title: 'Rare comet passes Earth', og_description: 'Visible to the naked eye for three nights.', og_site_name: 'SkyNews' };
+    const world = { feddits: { links: [post] }, comments: {} };
+    const p = profile({ id: 'ni', fedditUsername: 'ni', mode: 'comment', commentsPerHour: 30, readFeddits: ['links'] });
+    p.sched.nextCommentAt = clock.now();
+    const store = makeStore([p]);
+    const providers = makeProviders();
+    const sched = scheduler.createScheduler({ store, providers, feddit: makeFeddit(world), now: clock.now, random: rng(51), getDeepseekKey: KEY });
+    await sched.runTick();
+    eq(providers.stats().calls, 1, 'no_image WITH a summary is still commented on (terminal != unusable)');
+    ok(store.hasReplied('ni', 't3_800'), 'no_image-with-summary post was consumed');
+    const prompt = providers.prompts[providers.prompts.length - 1];
+    ok(prompt.includes('Visible to the naked eye'), 'the no_image og_description was used as context');
+    ok(/and a short summary/i.test(prompt), 'honesty guard notes the summary was seen');
+  }
+
+  // 16b: blocked + linkNoContext:'skip' -> passed over, not consumed.
+  {
+    const clock = makeClock(11_000_000);
+    const post = { id: 900, feddit: 'links', title: 'Something behind a wall', author: 'human', link: true, url: 'https://n.ex/y', og_status: 'blocked' };
+    const world = { feddits: { links: [post] }, comments: {} };
+    const skipP = profile({ id: 'skp', fedditUsername: 'skp', mode: 'comment', commentsPerHour: 30, readFeddits: ['links'], linkNoContext: 'skip' });
+    skipP.sched.nextCommentAt = clock.now();
+    const store = makeStore([skipP]);
+    const providers = makeProviders();
+    const sched = scheduler.createScheduler({ store, providers, feddit: makeFeddit(world), now: clock.now, random: rng(52), getDeepseekKey: KEY });
+    await sched.runTick();
+    eq(providers.stats().calls, 0, "blocked + linkNoContext:'skip' -> not commented");
+    ok(!store.hasReplied('skp', 't3_900'), 'blocked+skip: the post was NOT consumed');
+  }
+
+  // 16c: blocked + linkNoContext:'headline' -> reacts to the bare headline.
+  {
+    const clock = makeClock(12_000_000);
+    const post = { id: 901, feddit: 'links', title: 'Bare headline here', author: 'human', link: true, url: 'https://n.ex/z', og_status: 'blocked' };
+    const world = { feddits: { links: [post] }, comments: {} };
+    const headP = profile({ id: 'hdl', fedditUsername: 'hdl', mode: 'comment', commentsPerHour: 30, readFeddits: ['links'], linkNoContext: 'headline' });
+    headP.sched.nextCommentAt = clock.now();
+    const store = makeStore([headP]);
+    const providers = makeProviders();
+    const sched = scheduler.createScheduler({ store, providers, feddit: makeFeddit(world), now: clock.now, random: rng(53), getDeepseekKey: KEY });
+    await sched.runTick();
+    eq(providers.stats().calls, 1, "blocked + linkNoContext:'headline' -> reacts to the headline");
+    ok(store.hasReplied('hdl', 't3_901'), 'blocked+headline: the post was consumed');
+    const prompt = providers.prompts[providers.prompts.length - 1];
+    ok(prompt.includes('Bare headline here'), 'the bare headline was used as context');
+    ok(/seen ONLY its headline/i.test(prompt), 'honesty guard present on a headline-only reaction');
+    ok(!/and a short summary/i.test(prompt), 'honesty guard does NOT claim a summary when there is none');
+  }
+}
+
+// ============================================================================
+// Scenario 17: probation polling discipline - checked once, NOT hammered inside
+// the poll window, re-checked after it, and NEVER checked again once observed off
+// (probation only ever transitions ON -> OFF).
+// ============================================================================
+async function scenarioProbationPolling() {
+  console.log('\n[17] probation polling: re-checked but not hammered, never checked again once off');
+  const clock = makeClock(13_000_000);
+  let probOn = true;
+  const world = { feddits: {}, comments: {}, onBotInfo: () => ({ ok: true, status: 200, data: { probation: { on_probation: probOn } } }) };
+  const p = profile({ id: 'poll', fedditUsername: 'poll', mode: 'comment', commentsPerHour: 30, readFeddits: ['none'] });
+  p.sched.nextCommentAt = clock.now();
+  const store = makeStore([p]);
+  const feddit = makeFeddit(world);
+  const sched = scheduler.createScheduler({ store, providers: makeProviders(), feddit, now: clock.now, random: rng(61), getDeepseekKey: KEY });
+
+  // First tick: checks probation exactly once, observes ON.
+  await sched.runTick();
+  eq(feddit.calls.botInfo.length, 1, 'probation checked once on the first tick');
+  eq(store.getProfile('poll').probation.onProbation, true, 'observed ON probation');
+
+  // Several ticks inside the ~3-min poll window: must NOT re-check (no hammering).
+  for (let i = 0; i < 5; i++) { clock.advance(20_000); await sched.runTick(); }
+  eq(feddit.calls.botInfo.length, 1, 'NOT re-checked within the poll window (no hammering)');
+
+  // Past the poll window: re-checked (still ON).
+  clock.advance(200_000);
+  await sched.runTick();
+  eq(feddit.calls.botInfo.length, 2, 're-checked after the poll interval elapsed');
+
+  // It clears. Advance past the window again so the next tick re-checks and sees OFF.
+  probOn = false;
+  clock.advance(200_000);
+  await sched.runTick();
+  eq(feddit.calls.botInfo.length, 3, 'checked again and observed it clear');
+  eq(store.getProfile('poll').probation.onProbation, false, 'now OFF probation');
+
+  // Once OFF it is terminal: never polled again, however much time passes.
+  for (let i = 0; i < 5; i++) { clock.advance(600_000); await sched.runTick(); }
+  eq(feddit.calls.botInfo.length, 3, 'never polled again once off probation (terminal transition)');
+}
+
 // ---- run --------------------------------------------------------------------
 
 (async () => {
@@ -871,6 +1125,10 @@ function scenarioProfileMigration() {
   await scenarioGdeltQueue();
   await scenarioNews();
   await scenarioShortlistFallback();
+  await scenarioProbationCeilings();
+  await scenarioLinkPendingDefer();
+  await scenarioLinkTerminalStates();
+  await scenarioProbationPolling();
   await scenarioRealSmoke();
 
   console.log('\n----------------------------------------');

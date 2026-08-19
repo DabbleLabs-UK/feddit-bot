@@ -295,12 +295,14 @@ function renderList() {
     if (state.selected === p.id) li.className = 'active';
     const tokenBadge = p.hasToken ? '' : '<span class="badge notoken">no token</span>';
     const enBadge = '<span class="badge ' + (p.enabled ? 'on' : 'off') + '">' + (p.enabled ? 'enabled' : 'off') + '</span>';
+    const probBadge = (p.probation && p.probation.onProbation === true)
+      ? '<span class="badge notoken" title="Feddit probation: tighter limits (2 posts/hr, 5 comments/hr) until 24h old or 10 kibble">probation</span>' : '';
     li.innerHTML =
       '<div><div class="pname">' + esc(p.referenceName || '(unnamed)') + '</div>' +
       '<div class="pmeta">' + esc(p.botType === 'news' ? 'news' : p.mode) +
         ' &middot; ' + esc(p.effProvider === 'deepseek' ? p.effModel : 'ollama') + '</div>' +
       '<div class="pmeta">next: ' + esc(fmtNext(p)) + '</div></div>' +
-      '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + enBadge + tokenBadge + '</div>';
+      '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + enBadge + probBadge + tokenBadge + '</div>';
     li.onclick = () => selectProfile(p.id);
     ul.appendChild(li);
   }
@@ -314,6 +316,15 @@ async function selectProfile(id) {
   renderEditor(d.profile);
 }
 
+// Per-profile probation status line for the editor. onProbation: null = not yet
+// checked (shows nothing definite), true = throttled, false = cleared.
+function probationLine(p) {
+  const pr = p && p.probation;
+  if (!p.hasToken) return '';
+  if (!pr || pr.onProbation == null) return '<div class="hint">Probation: not checked yet (the scheduler reads it from Feddit on the next tick).</div>';
+  if (pr.onProbation === true) return '<div class="warnbox"><b>On probation.</b> Feddit is holding this bot to 2 posts/hr, 5 comments/hr and no sub-feddit creation until it is 24h old or has earned 10 kibble. The scheduler is honouring these tighter limits automatically.</div>';
+  return '<div class="hint" style="color:var(--good)">Probation cleared - normal limits (10 posts/hr, 60 comments/hr) apply.</div>';
+}
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
 function csv(a) { return Array.isArray(a) ? a.join(', ') : (a || ''); }
 function parseCsv(s) { return String(s || '').split(',').map(x => x.trim()).filter(Boolean); }
@@ -386,6 +397,7 @@ function renderEditor(p) {
     <div class="section">
       <h2>Identity / token</h2>
       <div id="tokenArea"></div>
+      ${probationLine(p)}
     </div>
 
     <div class="section">
@@ -412,10 +424,15 @@ function renderEditor(p) {
             <option value="post"${p.mode==='post'?' selected':''}>post only</option>
             <option value="comment"${p.mode==='comment'?' selected':''}>comment only</option>
           </select></div>
+        <div class="field convField"><label>Link posts with no article summary</label>
+          <select id="f_linkNoContext">
+            <option value="headline"${p.linkNoContext!=='skip'?' selected':''}>comment on the headline (honesty-guarded)</option>
+            <option value="skip"${p.linkNoContext==='skip'?' selected':''}>skip them entirely</option>
+          </select></div>
         <div class="field full convField"><label>Reads sub-feddits (comma-separated)</label><input id="f_readFeddits" value="${esc(csv(p.readFeddits))}" placeholder="botlife, homelab"></div>
         <div class="field full convField"><label>Posts/comments to (comma-separated)</label><input id="f_postFeddits" value="${esc(csv(p.postFeddits))}" placeholder="botlife"></div>
       </div>
-      <div class="hint">Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day (hard ceiling; the scheduler self-limits below these and jitters the cadence). The scheduler only acts on enabled profiles, and while global dry-run is ON it logs actions without writing.</div>
+      <div class="hint">Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day (hard ceiling; the scheduler self-limits below these and jitters the cadence). A freshly registered bot is on <b>probation</b> (tighter: 2 posts/hr, 5 comments/hr, no sub-feddit creation) until it is 24h old or has earned 10 kibble - the scheduler detects this and throttles automatically. On a LINK post the bot sees only the headline (and a short summary if one was fetched), never the article, and is told so. The scheduler only acts on enabled profiles, and while global dry-run is ON it logs actions without writing.</div>
     </div>
 
     <div class="section" id="newsSection">
@@ -655,6 +672,7 @@ function collectForm() {
     readFeddits: parseCsv($('#f_readFeddits').value),
     postFeddits: parseCsv($('#f_postFeddits').value),
     mode: $('#f_mode').value,
+    linkNoContext: $('#f_linkNoContext') && $('#f_linkNoContext').value === 'skip' ? 'skip' : 'headline',
     enabled: $('#f_enabled').value === 'true',
     postsPerHour: Number($('#f_postsPerHour').value) || 0,
     commentsPerHour: Number($('#f_commentsPerHour').value) || 0,
