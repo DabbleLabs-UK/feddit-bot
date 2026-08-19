@@ -75,6 +75,21 @@
   .activity { list-style: none; margin: 0; padding: 0; font-size: 12px; color: var(--dim); }
   .activity li { padding: 3px 0; border-bottom: 1px solid var(--line); }
   small.mono { font-family: ui-monospace, monospace; }
+  .runnerbar {
+    display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+    padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+    font-size: 12.5px; color: var(--dim);
+  }
+  .runnerbar b { color: var(--text); }
+  .runnerbar input { width: 90px; display: inline-block; padding: 4px 7px; }
+  .runnerbar button { padding: 4px 10px; }
+  .capbanner {
+    padding: 11px 16px; background: #3a1414; border-bottom: 1px solid var(--bad);
+    color: #f3b9b9; font-weight: 600; font-size: 13.5px;
+  }
+  .willuse { font-size: 12.5px; color: var(--text); margin-top: 6px; }
+  .willuse b { color: var(--accent); }
+  .spendline { font-size: 12px; color: var(--dim); margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -91,6 +106,16 @@
     <button id="refreshStatus">Refresh status</button>
   </div>
 </header>
+
+<div class="capbanner" id="capBanner" style="display:none"></div>
+<div class="runnerbar" id="runnerBar">
+  <span>DeepSeek key: <b id="dsKeyState">unknown</b></span>
+  <button id="setKeyBtn">Set / change key</button>
+  <button id="clearKeyBtn">Clear</button>
+  <span style="margin-left:10px">Monthly cap: $<input type="number" id="capInput" min="0" step="0.5"></span>
+  <button id="saveCapBtn">Save cap</button>
+  <span id="spendState" style="margin-left:auto"></span>
+</div>
 
 <div class="layout">
   <aside class="sidebar">
@@ -137,6 +162,7 @@ async function loadStatus() {
     state.defaultModel = s.defaultModel;
     if (s.settings) { state.settings = s.settings; renderControls(); }
     renderStatus(s);
+    renderRunnerBar(s);
   } catch (e) {
     $('#status').innerHTML = '<span style="color:var(--bad)">status error: ' + e.message + '</span>';
   }
@@ -175,6 +201,7 @@ async function toggleDryRun(ev) {
 }
 function renderStatus(s) {
   const oll = s.ollama || {};
+  const ds = s.deepseek || {};
   const fed = s.feddit || {};
   const resident = (oll.resident || []).map(r => r.name);
   const residentTxt = resident.length ? resident.join(', ') : '(none resident)';
@@ -183,10 +210,75 @@ function renderStatus(s) {
   // Warn if the resident model is NOT the shared default (Cy may be evicted).
   const defaultResident = resident.includes(s.defaultModel);
   const modelDot = !oll.up ? 'unknown' : (defaultResident ? 'good' : 'warn');
+  // DeepSeek: green if reachable + key good; amber if reachable but no/bad key; red if unreachable.
+  const dsDot = !ds.up ? 'bad' : (ds.keyOk ? 'good' : 'warn');
+  const dsTxt = !ds.up ? 'unreachable' : (ds.keyOk ? 'ready' : (ds.hasKey ? 'key rejected' : 'no key'));
+  const spend = s.spend || {};
+  const capTxt = spend.capUsd != null ? (' / $' + Number(spend.capUsd).toFixed(2) + ' cap') : '';
   $('#status').innerHTML =
     '<span title="' + (oll.error || '') + '"><span class="dot ' + ollDot + '"></span>ollama ' + (oll.up ? 'up' : 'down') + (oll.busy ? ' <b>(busy)</b>' : '') + '</span>' +
     '<span title="resident model"><span class="dot ' + modelDot + '"></span>model: <b>' + esc(residentTxt) + '</b></span>' +
-    '<span title="' + (fed.error || '') + '"><span class="dot ' + fedDot + '"></span>feddit ' + (fed.up ? 'reachable' : 'unreachable') + '</span>';
+    '<span title="' + esc(ds.error || '') + '"><span class="dot ' + dsDot + '"></span>deepseek ' + esc(dsTxt) + '</span>' +
+    '<span title="' + (fed.error || '') + '"><span class="dot ' + fedDot + '"></span>feddit ' + (fed.up ? 'reachable' : 'unreachable') + '</span>' +
+    '<span title="month-to-date spend"><span class="dot ' + (spend.overCap ? 'bad' : 'good') + '"></span>spend: <b>$' + Number(spend.monthUsd || 0).toFixed(4) + '</b>' + esc(capTxt) + '</span>';
+}
+
+// Runner-wide controls: deepseek key state, monthly cap, spend + the loud
+// over-cap banner.
+function renderRunnerBar(s) {
+  const sec = s.secret || {};
+  const ds = s.deepseek || {};
+  const spend = s.spend || {};
+  const keyState = $('#dsKeyState');
+  if (sec.hasKey) {
+    keyState.textContent = sec.redacted + (ds.keyOk ? ' (valid)' : (ds.up ? ' (rejected)' : ''));
+    keyState.style.color = ds.keyOk ? 'var(--good)' : (ds.up ? 'var(--bad)' : 'var(--text)');
+  } else {
+    keyState.textContent = 'not set';
+    keyState.style.color = 'var(--warn)';
+  }
+  // Only overwrite the cap input if the user is not mid-edit (avoid clobbering).
+  const capIn = $('#capInput');
+  if (document.activeElement !== capIn && s.settings) capIn.value = s.settings.monthlyCapUsd;
+  $('#spendState').innerHTML =
+    'spend today <b>$' + Number(spend.todayUsd || 0).toFixed(4) + '</b> &middot; this month <b>$' +
+    Number(spend.monthUsd || 0).toFixed(4) + '</b>' + (spend.capUsd != null ? ' of $' + Number(spend.capUsd).toFixed(2) : '');
+  const banner = $('#capBanner');
+  if (spend.overCap) {
+    banner.style.display = '';
+    banner.textContent = 'SPEND CAP REACHED: month-to-date $' + Number(spend.monthUsd).toFixed(2) +
+      ' >= $' + Number(spend.capUsd).toFixed(2) + ' cap. All DeepSeek profiles are SKIPPED until the cap is raised or the month rolls over. Ollama profiles keep running.';
+  } else {
+    banner.style.display = 'none';
+  }
+}
+
+async function setDeepseekKey() {
+  const key = prompt('Paste the DeepSeek API key (shared by all DeepSeek profiles).\nIt is stored server-side and never shown again in full.');
+  if (key == null) return;
+  try {
+    await api('/api/secret', { method: 'PUT', body: { deepseekApiKey: key.trim() } });
+    toast('DeepSeek key saved.', 'ok');
+    await loadStatus();
+  } catch (e) { toast('Failed to save key: ' + e.message, 'err'); }
+}
+async function clearDeepseekKey() {
+  if (!confirm('Clear the stored DeepSeek key? All DeepSeek profiles will fail to generate until a new key is set.')) return;
+  try {
+    await api('/api/secret', { method: 'PUT', body: { deepseekApiKey: '' } });
+    toast('DeepSeek key cleared.', 'ok');
+    await loadStatus();
+  } catch (e) { toast('Failed: ' + e.message, 'err'); }
+}
+async function saveCap() {
+  const v = Number($('#capInput').value);
+  if (!Number.isFinite(v) || v < 0) { toast('Enter a non-negative dollar amount.', 'err'); return; }
+  try {
+    const d = await api('/api/settings', { method: 'PUT', body: { monthlyCapUsd: v } });
+    state.settings = d.settings;
+    toast('Monthly cap set to $' + d.settings.monthlyCapUsd + '.', 'ok');
+    await loadStatus();
+  } catch (e) { toast('Failed: ' + e.message, 'err'); }
 }
 
 // ---- profile list -----------------------------------------------------------
@@ -205,7 +297,8 @@ function renderList() {
     const enBadge = '<span class="badge ' + (p.enabled ? 'on' : 'off') + '">' + (p.enabled ? 'enabled' : 'off') + '</span>';
     li.innerHTML =
       '<div><div class="pname">' + esc(p.displayName || '(unnamed)') + '</div>' +
-      '<div class="pmeta">' + esc(p.fedditUsername || 'no username') + ' &middot; ' + esc(p.mode) + '</div>' +
+      '<div class="pmeta">' + esc(p.fedditUsername || 'no username') + ' &middot; ' + esc(p.mode) +
+        ' &middot; ' + esc(p.effProvider === 'deepseek' ? p.effModel : 'ollama') + '</div>' +
       '<div class="pmeta">next: ' + esc(fmtNext(p)) + '</div></div>' +
       '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + enBadge + tokenBadge + '</div>';
     li.onclick = () => selectProfile(p.id);
@@ -238,6 +331,8 @@ function rel(ts) {
 function fmtNext(p) {
   const na = p.nextAction || {};
   if (state.settings && state.settings.paused) return 'paused';
+  // Over the runner-wide monthly cap, deepseek profiles are skipped entirely.
+  if (p.effProvider === 'deepseek' && state.status && state.status.spend && state.status.spend.overCap) return 'spend cap reached';
   if (na.backoffUntil && na.backoffUntil > Date.now()) return 'backoff ' + rel(na.backoffUntil);
   if (!p.enabled) return 'disabled';
   if (!p.hasToken) return 'no token';
@@ -246,7 +341,8 @@ function fmtNext(p) {
 }
 
 function renderEditor(p) {
-  const usesDefault = !p.model || p.model === state.defaultModel;
+  state.editing = p;
+  const providerChoice = p.provider === 'deepseek' ? (p.deepseekModel || 'deepseek-v4-flash') : 'ollama';
   const main = $('#main');
   main.innerHTML = `
     <div class="section">
@@ -282,8 +378,8 @@ function renderEditor(p) {
           </select></div>
         <div class="field"><label>Scheduler</label>
           <select id="f_enabled">
-            <option value="true"${p.enabled?' selected':''}>ACTIVE — scheduler runs this bot</option>
-            <option value="false"${!p.enabled?' selected':''}>PAUSED — scheduler ignores this bot</option>
+            <option value="true"${p.enabled?' selected':''}>ACTIVE - scheduler runs this bot</option>
+            <option value="false"${!p.enabled?' selected':''}>PAUSED - scheduler ignores this bot</option>
           </select></div>
         <div class="field"><label>Posts per hour</label><input id="f_postsPerHour" type="number" min="0" step="0.5" value="${esc(p.postsPerHour)}"></div>
         <div class="field"><label>Comments per hour</label><input id="f_commentsPerHour" type="number" min="0" step="0.5" value="${esc(p.commentsPerHour)}"></div>
@@ -292,14 +388,22 @@ function renderEditor(p) {
     </div>
 
     <div class="section">
-      <h2>Model</h2>
+      <h2>Provider &amp; model</h2>
       <div class="grid">
-        <div class="field full"><label>Model</label><input id="f_model" value="${esc(p.model)}"></div>
+        <div class="field full"><label>Provider</label>
+          <select id="f_provider">
+            <option value="ollama"${providerChoice==='ollama'?' selected':''}>ollama (local, free, shares Cy model)</option>
+            <option value="deepseek-v4-flash"${providerChoice==='deepseek-v4-flash'?' selected':''}>DeepSeek V4-Flash (cheap)</option>
+            <option value="deepseek-v4-pro"${providerChoice==='deepseek-v4-pro'?' selected':''}>DeepSeek V4-Pro (premium)</option>
+          </select></div>
+        <div class="field full" id="ollamaModelField"><label>Ollama model</label><input id="f_model" value="${esc(p.model)}"></div>
         <div class="field"><label>Temperature</label><input id="f_temperature" type="number" min="0" max="2" step="0.05" value="${esc(p.temperature)}"></div>
-        <div class="field"><label>num_predict (max tokens)</label><input id="f_numPredict" type="number" min="1" step="10" value="${esc(p.numPredict)}"></div>
+        <div class="field"><label id="numPredictLabel">num_predict (max tokens)</label><input id="f_numPredict" type="number" min="1" step="10" value="${esc(p.numPredict)}"></div>
       </div>
       <div id="modelWarn"></div>
-      <div class="hint">Default reuses Cy's resident model. Leave it as the default unless you know what you are doing.</div>
+      <div class="willuse" id="willUseLine"></div>
+      <div class="spendline" id="spendLine"></div>
+      <div class="hint" id="providerHint"></div>
     </div>
 
     <div class="section">
@@ -322,24 +426,58 @@ function renderEditor(p) {
   `;
 
   renderTokenArea(p);
-  renderModelWarn();
+  renderProviderView();
   renderActivity(p);
+  renderSpendLine(p);
 
-  $('#f_model').addEventListener('input', renderModelWarn);
+  $('#f_model').addEventListener('input', renderProviderView);
+  $('#f_provider').addEventListener('change', renderProviderView);
   $('#saveBtn').onclick = () => saveProfile(p.id);
   $('#deleteBtn').onclick = () => deleteProfile(p.id, p.displayName);
   $('#testBtn').onclick = () => testGenerate(p.id);
 
-  function renderModelWarn() {
-    const val = $('#f_model').value.trim();
-    const box = $('#modelWarn');
-    if (val && val !== state.defaultModel) {
-      box.innerHTML = '<div class="warnbox"><b>Warning:</b> this is not Cy\'s resident model (' +
-        esc(state.defaultModel) + '). Generating with it will swap the model in VRAM, ' +
-        'evicting Cy\'s weights and stalling the live site until it reloads. Only do this deliberately.</div>';
+  // Adapt the model fields to the chosen provider: the Cy keep_alive warning is
+  // ollama-only; num_predict is labelled max_tokens for deepseek; and a clear
+  // line states which provider+model will actually be used.
+  function renderProviderView() {
+    const choice = $('#f_provider').value;
+    const isDeep = choice !== 'ollama';
+    $('#ollamaModelField').style.display = isDeep ? 'none' : '';
+    $('#numPredictLabel').textContent = isDeep ? 'max_tokens' : 'num_predict (max tokens)';
+
+    const warn = $('#modelWarn');
+    if (!isDeep) {
+      const val = $('#f_model').value.trim();
+      warn.innerHTML = (val && val !== state.defaultModel)
+        ? '<div class="warnbox"><b>Warning:</b> this is not Cy\'s resident model (' + esc(state.defaultModel) +
+          '). Generating with it will swap the model in VRAM, evicting Cy\'s weights and stalling the live ' +
+          'site until it reloads. Only do this deliberately.</div>'
+        : '';
     } else {
-      box.innerHTML = '';
+      warn.innerHTML = ''; // keep_alive / Cy eviction is irrelevant to a remote call
     }
+
+    const willModel = isDeep ? choice : ($('#f_model').value.trim() || state.defaultModel);
+    const provName = isDeep ? 'DeepSeek' : 'ollama (local)';
+    $('#willUseLine').innerHTML = 'Will generate via: <b>' + esc(provName) + '</b> &middot; model <b>' + esc(willModel) + '</b>' +
+      (isDeep ? ' &middot; billed per token (shared DeepSeek key)' : ' &middot; free of API cost');
+    const hint = $('#providerHint');
+    hint.textContent = isDeep
+      ? 'DeepSeek is a remote call: it does not touch Cy\'s VRAM and is not blocked by the ollama single-flight gate. It costs real money (even in dry-run, since dry-run only skips the Feddit write, not the generation). Set the shared key in the top bar.'
+      : 'Default reuses Cy\'s resident model. Leave it as the default unless you know what you are doing.';
+  }
+}
+
+function renderSpendLine(p) {
+  const el = $('#spendLine');
+  if (!el) return;
+  const s = p.spend || {};
+  if ((p.effProvider || 'ollama') === 'ollama') {
+    el.innerHTML = 'Spend: <b>$0.0000</b> (local, no API cost) &middot; ' +
+      (s.monthGens || 0) + ' generations this month';
+  } else {
+    el.innerHTML = 'Spend: today <b>$' + Number(s.todayUsd || 0).toFixed(4) + '</b> &middot; this month <b>$' +
+      Number(s.monthUsd || 0).toFixed(4) + '</b> (' + (s.monthGens || 0) + ' generations)';
   }
 }
 
@@ -371,6 +509,8 @@ function renderActivity(p) {
 }
 
 function collectForm() {
+  const choice = $('#f_provider').value;
+  const isDeep = choice !== 'ollama';
   return {
     displayName: $('#f_displayName').value.trim(),
     fedditUsername: $('#f_fedditUsername').value.trim(),
@@ -382,6 +522,8 @@ function collectForm() {
     enabled: $('#f_enabled').value === 'true',
     postsPerHour: Number($('#f_postsPerHour').value) || 0,
     commentsPerHour: Number($('#f_commentsPerHour').value) || 0,
+    provider: isDeep ? 'deepseek' : 'ollama',
+    deepseekModel: isDeep ? choice : ((state.editing && state.editing.deepseekModel) || 'deepseek-v4-flash'),
     model: $('#f_model').value.trim() || state.defaultModel,
     temperature: Number($('#f_temperature').value),
     numPredict: Number($('#f_numPredict').value) || 200,
@@ -436,7 +578,12 @@ async function testGenerate(id) {
       method: 'POST', body: { title, body: $('#t_body').value },
     });
     out.textContent = r.output || '(empty response)';
-    meta.textContent = (r.ms ? r.ms + 'ms' : '') + (r.evalCount ? ' / ' + r.evalCount + ' tokens' : '') + ' / ' + (r.model || '');
+    const u = r.usage || {};
+    const tok = (u.inputTokens != null || u.outputTokens != null)
+      ? ' / ' + (u.inputTokens || 0) + ' in + ' + (u.outputTokens || 0) + ' out tokens' : '';
+    const money = r.provider === 'deepseek' ? ' / $' + Number(r.costUsd || 0).toFixed(4) : ' / no API cost';
+    meta.textContent = (r.ms ? r.ms + 'ms' : '') + tok + money + ' / ' + (r.model || '');
+    if (r.provider === 'deepseek') loadStatus(); // refresh spend after a paid test-gen
   } catch (e) {
     out.textContent = '';
     toast('Generate failed: ' + e.message, 'err');
@@ -457,6 +604,9 @@ $('#newBtn').onclick = async () => {
 $('#refreshStatus').onclick = loadStatus;
 $('#pauseBtn').onclick = togglePause;
 $('#dryRunToggle').onchange = toggleDryRun;
+$('#setKeyBtn').onclick = setDeepseekKey;
+$('#clearKeyBtn').onclick = clearDeepseekKey;
+$('#saveCapBtn').onclick = saveCap;
 
 // ---- boot -------------------------------------------------------------------
 loadStatus();

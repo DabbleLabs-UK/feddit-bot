@@ -18,9 +18,13 @@ const path = require('node:path');
 const os = require('node:os');
 
 const store = require('./lib/store');
-const ollama = require('./lib/ollama');
+const providers = require('./lib/providers');
+const secrets = require('./lib/secrets');
+const cost = require('./lib/cost');
 const feddit = require('./lib/feddit');
 const scheduler = require('./lib/scheduler');
+
+const ollama = providers.ollama; // the ollama provider (status/isBusy/generate)
 
 const PORT = 8770;
 const HOST = '0.0.0.0';
@@ -99,7 +103,16 @@ function serveStatic(req, res, urlPath) {
 // full record incl. token on demand.
 function safeProfile(p) {
   const { token, repliedTo, ...rest } = p;
-  return { ...rest, hasToken: Boolean(token), nextAction: scheduler.nextAction(p) };
+  const now = Date.now();
+  const spend = store.profileSpend(p, cost.dayKey(now), cost.monthKey(now));
+  return {
+    ...rest,
+    hasToken: Boolean(token),
+    nextAction: scheduler.nextAction(p),
+    effProvider: scheduler.providerOf(p),
+    effModel: scheduler.modelOf(p, store.DEFAULT_MODEL),
+    spend,
+  };
 }
 
 // ---- API routing ------------------------------------------------------------
@@ -107,14 +120,33 @@ function safeProfile(p) {
 async function handleApi(req, res, urlPath, query) {
   const method = req.method;
 
-  // GET /api/status - health of ollama + feddit for the status panel.
+  // GET /api/status - health of ollama + deepseek + feddit for the status panel.
   if (method === 'GET' && urlPath === '/api/status') {
-    const [oll, fed] = await Promise.all([ollama.status(), feddit.reachable()]);
+    const apiKey = secrets.getDeepseekKey();
+    const [oll, ds, fed] = await Promise.all([
+      ollama.status(),
+      providers.deepseek.reachable(apiKey),
+      feddit.reachable(),
+    ]);
+    const settings = store.getSettings();
+    const now = Date.now();
+    const runner = store.runnerSpend(cost.monthKey(now), cost.dayKey(now));
+    const cap = Number(settings.monthlyCapUsd);
+    const capActive = Number.isFinite(cap) && cap >= 0;
     return sendJson(res, 200, {
       ollama: oll,
+      deepseek: ds,               // { up, hasKey, keyOk, error }
       feddit: fed,
       defaultModel: store.DEFAULT_MODEL,
-      settings: store.getSettings(),
+      deepseekModels: providers.deepseek.MODELS,
+      secret: secrets.publicView(), // { hasKey, redacted }
+      spend: {
+        monthUsd: runner.monthUsd,
+        todayUsd: runner.todayUsd,
+        capUsd: capActive ? cap : null,
+        overCap: capActive && runner.monthUsd >= cap,
+      },
+      settings,
     });
   }
 
@@ -123,13 +155,33 @@ async function handleApi(req, res, urlPath, query) {
     return sendJson(res, 200, { settings: store.getSettings() });
   }
 
-  // PUT /api/settings - toggle global pause and/or dry-run, honoured live.
+  // PUT /api/settings - toggle global pause / dry-run, set the monthly spend
+  // cap and per-model pricing. All honoured live by the scheduler.
   if (method === 'PUT' && urlPath === '/api/settings') {
     const body = await readBody(req);
     const patch = {};
     if (typeof body.paused === 'boolean') patch.paused = body.paused;
     if (typeof body.dryRun === 'boolean') patch.dryRun = body.dryRun;
+    if (body.monthlyCapUsd != null && Number.isFinite(Number(body.monthlyCapUsd))) {
+      patch.monthlyCapUsd = Math.max(0, Number(body.monthlyCapUsd));
+    }
+    if (body.pricing && typeof body.pricing === 'object') patch.pricing = body.pricing;
     return sendJson(res, 200, { settings: store.updateSettings(patch) });
+  }
+
+  // GET /api/secret - deepseek key presence + redacted preview (NEVER the key).
+  if (method === 'GET' && urlPath === '/api/secret') {
+    return sendJson(res, 200, secrets.publicView());
+  }
+
+  // PUT /api/secret - set or clear the ONE shared deepseek key. Never echoed back.
+  if (method === 'PUT' && urlPath === '/api/secret') {
+    const body = await readBody(req);
+    if (typeof body.deepseekApiKey !== 'string') {
+      return sendJson(res, 400, { error: 'Provide deepseekApiKey (string; empty string clears it).' });
+    }
+    secrets.setDeepseekKey(body.deepseekApiKey.trim());
+    return sendJson(res, 200, secrets.publicView()); // redacted view only
   }
 
   // GET /api/feddits - proxy the sub-feddit list so the UI can offer choices.
@@ -205,10 +257,15 @@ async function handleApi(req, res, urlPath, query) {
     }
 
     // POST /api/profiles/:id/test-generate - generate a sample reply against a
-    // pasted post title+body. Does NOT post anywhere. Respects single-flight.
+    // pasted post title+body. Does NOT post anywhere. Routes through the
+    // profile's chosen provider. Ollama respects single-flight; deepseek uses
+    // the shared key and costs real money (its usage IS recorded).
     if (method === 'POST' && sub === '/test-generate') {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
-      if (ollama.isBusy()) return sendJson(res, 409, { error: 'Ollama is busy with another generation. Try again in a moment.' });
+      const prov = scheduler.providerOf(existing);
+      if (prov === 'ollama' && ollama.isBusy()) {
+        return sendJson(res, 409, { error: 'Ollama is busy with another generation. Try again in a moment.' });
+      }
 
       const body = await readBody(req);
       const title = (body.title || '').trim();
@@ -220,18 +277,30 @@ async function handleApi(req, res, urlPath, query) {
         (post ? 'POST BODY: ' + post + '\n' : '') +
         '\nYour reply:';
 
+      const model = scheduler.modelOf(existing, store.DEFAULT_MODEL);
       try {
-        const out = await ollama.generate({
-          model: existing.model || store.DEFAULT_MODEL,
-          persona: existing.persona,
-          toneNotes: existing.toneNotes,
-          task,
+        const out = await providers.generate({
+          provider: prov,
+          model,
+          system: scheduler.buildSystem(existing.persona, existing.toneNotes),
+          prompt: task,
           temperature: Number(existing.temperature) || 0.8,
           numPredict: Number(existing.numPredict) || 200,
+          apiKey: prov === 'deepseek' ? secrets.getDeepseekKey() : undefined,
         });
-        return sendJson(res, 200, { output: out.content, model: out.model, ms: out.ms, evalCount: out.evalCount });
+        // Record spend for deepseek test-gens too (ollama => $0).
+        const usd = cost.estimateCost(out.model, out.usage, store.getSettings().pricing);
+        store.recordSpend(id, { dayKey: cost.dayKey(Date.now()), usage: out.usage, costUsd: usd });
+        return sendJson(res, 200, {
+          output: out.text, provider: out.provider, model: out.model, ms: out.ms,
+          usage: out.usage, costUsd: usd,
+        });
       } catch (err) {
-        const code = err.code === 'BUSY' ? 409 : 500;
+        const code = err.code === 'BUSY' ? 409
+          : (err.code === 'BAD_KEY' || err.code === 'NO_KEY') ? 400
+          : (err.code === 'INSUFFICIENT_BALANCE') ? 402
+          : (err.code === 'RATE_LIMITED') ? 429
+          : 500;
         return sendJson(res, code, { error: err.message });
       }
     }
@@ -262,12 +331,18 @@ const server = http.createServer((req, res) => {
 });
 
 // ---- SCHEDULER SEAM ---------------------------------------------------------
-// The posting loop lives in ./lib/scheduler and is started here with the three
+// The posting loop lives in ./lib/scheduler and is started here with the
 // modules it needs. It honours the global pause + per-profile enable + dry-run
-// flags live (read from the store each tick), and routes every generation
-// through the ollama single-flight gate so Cy's resident model is never queued
-// behind us or evicted. Starting it is a no-op until profiles are enabled.
-const schedulerHandle = scheduler.start({ store, ollama, feddit });
+// flags live (read from the store each tick). The ollama single-flight gate is
+// per-provider: ollama profiles are serialised so Cy's resident model is never
+// queued behind us or evicted, while deepseek profiles (remote) run concurrently
+// and independently, subject to the runner-wide monthly spend cap.
+const schedulerHandle = scheduler.start({
+  store,
+  providers,
+  feddit,
+  getDeepseekKey: () => secrets.getDeepseekKey(),
+});
 // -----------------------------------------------------------------------------
 
 function lanAddress() {
@@ -288,11 +363,13 @@ server.listen(PORT, HOST, () => {
   console.log('  LAN:     http://' + lan + ':' + PORT + '/');
   console.log('  Data:    ' + store.DATA_FILE);
   console.log('  Ollama:  ' + ollama.OLLAMA_BASE + ' (default model ' + store.DEFAULT_MODEL + ', keep_alive -1)');
+  console.log('  DeepSeek:' + providers.deepseek.DEEPSEEK_BASE + ' (key ' + (secrets.getDeepseekKey() ? 'set' : 'NOT set') + ', concurrency cap ' + providers.DEEPSEEK_MAX_CONCURRENT + ')');
   console.log('  Feddit:  ' + feddit.BASE);
   const s = store.getSettings();
   console.log('');
   console.log('  Scheduler is running (tick ' + Math.round(schedulerHandle.tickMs / 1000) + 's). ' +
     'Global: ' + (s.paused ? 'PAUSED' : 'active') + ', dry-run ' + (s.dryRun ? 'ON' : 'OFF') + '.');
+  console.log('  Monthly spend cap: $' + s.monthlyCapUsd + ' (deepseek profiles skip over-cap; ollama unaffected).');
   console.log('  It only acts on ENABLED profiles; dry-run logs actions without writing.');
   console.log('');
 });
