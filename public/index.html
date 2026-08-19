@@ -532,6 +532,10 @@ function renderEditor(p) {
           <select id="f_newsTitleStyle">
             ${['straight','deadpan','tabloid','punny','custom'].map(s=>'<option value="'+s+'"'+(p.newsTitleStyle===s?' selected':'')+'>'+s+'</option>').join('')}
           </select></div>
+        <div class="field"><label>${lbl('Title faithfulness', "How closely the title should stick to the publisher's original wording (this is about PHRASING, not facts - the bot never invents facts either way). close = keep it near the real headline, just reworded; loose (default) = the bot's own reaction in its own voice, free to depart from the headline; wild = a loud personal reaction that barely resembles the original. Loose/wild also run the title generation at a higher temperature. Most persona bots want loose or wild - close is for a bot that should read like a straight news wire.")}</label>
+          <select id="f_newsTitleFaithfulness">
+            ${['close','loose','wild'].map(s=>'<option value="'+s+'"'+((p.newsTitleFaithfulness||'loose')===s?' selected':'')+'>'+s+'</option>').join('')}
+          </select></div>
         <div class="field full"><label>${lbl('Domain denylist (comma-separated)', 'Publisher domains the bot will NEVER post from (subdomains matched too). Comma-separated. Example: dailymail.co.uk, example.com - this also blocks www.dailymail.co.uk.')}</label><input id="f_newsDomainDenylist" value="${esc(csv(p.newsDomainDenylist))}" placeholder="dailymail.co.uk, example.com"></div>
         <div class="field full" id="titleCustomField"><label>Custom title-style instruction</label><input id="f_newsTitleCustom" value="${esc(p.newsTitleCustom)}" placeholder="e.g. always frame it as a question"></div>
       </div>
@@ -897,6 +901,7 @@ function collectForm() {
     newsPaywallFilter: $('#f_newsPaywallFilter').checked,
     newsRequireImage: $('#f_newsRequireImage').checked,
     newsTitleStyle: $('#f_newsTitleStyle').value,
+    newsTitleFaithfulness: $('#f_newsTitleFaithfulness') ? $('#f_newsTitleFaithfulness').value : 'loose',
     newsTitleCustom: $('#f_newsTitleCustom').value.trim(),
     newsLetBotChoose: $('#f_newsLetBotChoose').checked,
   };

@@ -142,8 +142,8 @@ function profile(over) {
     id: over.id,
     fedditUsername: over.fedditUsername || over.id,
     token: over.token || 'feddit_stub',
-    persona: 'a terse forum poster',
-    toneNotes: '',
+    persona: over.persona != null ? over.persona : 'a terse forum poster',
+    toneNotes: over.toneNotes != null ? over.toneNotes : '',
     readFeddits: over.readFeddits || [],
     postFeddits: over.postFeddits || [],
     mode: over.mode || 'both',
@@ -177,6 +177,7 @@ function profile(over) {
     newsRequireImage: over.newsRequireImage || false,
     newsTitleStyle: over.newsTitleStyle || 'straight',
     newsTitleCustom: over.newsTitleCustom || '',
+    newsTitleFaithfulness: over.newsTitleFaithfulness || 'loose',
     newsLetBotChoose: over.newsLetBotChoose || false,
     postedNews: over.postedNews || [],
     newsDomainDaily: over.newsDomainDaily || {},
@@ -265,19 +266,27 @@ function makeProviders(opts) {
   const o = { inFlight: 0, max: 0, calls: 0 };
   const d = { inFlight: 0, max: 0, calls: 0 };
   const prompts = []; // every prompt passed to generate(), for prompt-content asserts
+  const genCalls = []; // richer per-call record: { prompt, temperature, provider }
   let ollamaBusyFlag = false;
   return {
     prompts,
+    genCalls,
     setOllamaBusy: (b) => { ollamaBusyFlag = b; },
     ollamaBusy: () => ollamaBusyFlag,
     generate: async (gopts) => {
       prompts.push(gopts.prompt || '');
+      const n = o.calls + d.calls; // 0-based index of THIS call, before it runs
+      genCalls.push({ prompt: gopts.prompt || '', temperature: gopts.temperature, provider: gopts.provider });
       const prov = gopts.provider === 'deepseek' ? 'deepseek' : 'ollama';
       const s = prov === 'deepseek' ? d : o;
       s.inFlight++; s.max = Math.max(s.max, s.inFlight); s.calls++;
       await Promise.resolve(); // yield so any real concurrency would be observed
       s.inFlight--;
-      const content = 'Generated line one\n\nGenerated body text for call ' + (o.calls + d.calls);
+      // A scripted responder lets a test force a specific title (e.g. a verbatim
+      // headline echo) to exercise the anti-verbatim / similarity regeneration.
+      const content = cfg.textFor
+        ? cfg.textFor(gopts, n)
+        : 'Generated line one\n\nGenerated body text for call ' + (o.calls + d.calls);
       const usage = prov === 'deepseek'
         ? { inputTokens: 1000, outputTokens: 500, cachedInputTokens: cfg.deepseekCached || 0 }
         : { inputTokens: 20, outputTokens: 30, cachedInputTokens: 0 };
@@ -1618,6 +1627,117 @@ async function scenarioFeeds() {
   }
 }
 
+// ============================================================================
+// Scenario 10v: NEWS TITLE VOICE - the persona/tone drive the title, the fact
+// constraint no longer reads as "paraphrase faithfully", a too-similar title
+// triggers a LOGGED regeneration, and the faithfulness control moves BOTH the
+// prompt wording and the title-generation temperature.
+// ============================================================================
+async function scenarioNewsVoice() {
+  console.log('\n[10v] news title: persona-dominant prompt + anti-verbatim regen + faithfulness control');
+  const H = 3_600_000;
+  const HEADLINE = 'Duran stars as Celtic ease to comfortable win over LASK';
+
+  const mk = (over) => profile(Object.assign({
+    id: 'voice', botType: 'news', mode: 'post', postsPerHour: 60, provider: 'ollama',
+    persona: 'gets angry about injustices, indifferent to other things, very simple language, lots of shorthand and slang',
+    toneNotes: 'messy style, all lowercase, lots of exclamation marks, very short and abbreviated',
+    newsUseGdelt: true, newsQuery: 'celtic', newsRoutingRules: [{ keywords: [], subFeddit: 'football', weight: 1 }],
+    newsMaxAgeHours: 24, newsMinGapMinutes: 0,
+  }, over || {}));
+
+  const makeGd = (clock) => gdelt.createGdelt({
+    now: clock.now, sleep: async (ms) => clock.advance(ms), minSpacingMs: 0,
+    fetch: async () => ({ status: 200, arrayBuffer: async () => jsonBody({ articles: [
+      { url: 'https://sport.example.com/celtic', domain: 'sport.example.com', title: HEADLINE, seendate: seendateFrom(clock.now() - 1 * H) },
+    ] }) }),
+  });
+
+  // (1) title prompt: persona + tone present, AFTER the fact constraint, and free
+  //     of the old faithfulness-to-phrasing wording.
+  {
+    const clock = makeClock(1_600_000_000_000);
+    const p = mk({ newsTitleFaithfulness: 'loose' });
+    const store = makeStore([p]);
+    const providers = makeProviders(); // default responder -> a clearly non-similar title
+    const s = scheduler.createScheduler({ store, providers, feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: makeGd(clock), feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    const r = await s.previewNews('voice');
+    ok(r && r.ok === true, '(1) preview produced a title');
+    const tp = providers.prompts.find((x) => /TITLE:\s*$/.test(x));
+    ok(!!tp, '(1) captured the title-generation prompt');
+
+    const iAcc = tp.indexOf('ACCURACY');
+    const iHead = tp.indexOf('HEADLINE:');
+    const iPersona = tp.indexOf(p.persona);
+    const iTone = tp.indexOf(p.toneNotes);
+    ok(iPersona !== -1, '(1) the persona text appears in the title prompt');
+    ok(iTone !== -1, '(1) the tone notes appear in the title prompt');
+    ok(iAcc !== -1, '(1) an ACCURACY (facts-only) constraint is present');
+    ok(iPersona > iAcc && iTone > iAcc, '(1) persona AND tone sit AFTER the fact constraint (dominant, near the cue)');
+    ok(iPersona > iHead, '(1) persona sits after the source headline too');
+
+    ok(/FAILURE/.test(tp) && /matches their phrasing, you got it WRONG/i.test(tp), '(1) prompt states that matching the original phrasing is a FAILURE');
+    ok(/throw the publisher's wording away/i.test(tp), '(1) prompt explicitly licenses departing from the wording');
+    ok(!/do NOT state any fact/i.test(tp), '(1) old "do NOT state any fact" HARD RULE is gone');
+    ok(!/invent nothing/i.test(tp), '(1) old "invent nothing" wording is gone');
+    ok(!/stay vague/i.test(tp), '(1) old "if unsure, stay vague" wording is gone');
+    ok(!/stay\s+(?:fairly\s+)?close/i.test(tp) && !/close to the headline/i.test(tp), '(1) a loose profile is NOT told to stay close to the headline');
+  }
+
+  // (2) anti-verbatim / similarity: a near-verbatim first attempt triggers a
+  //     LOGGED regeneration; the voiced second attempt is accepted.
+  {
+    const clock = makeClock(1_600_000_000_000);
+    const p = mk({ id: 'voice2', newsTitleFaithfulness: 'loose' });
+    const store = makeStore([p]);
+    let titleCall = 0;
+    const providers = makeProviders({ textFor: (gopts) => {
+      if (/TITLE:\s*$/.test(gopts.prompt)) {
+        titleCall++;
+        return titleCall === 1 ? HEADLINE : 'duran on FIRE!!! celtic cruising lol';
+      }
+      return 'x\n\nbody';
+    } });
+    const s = scheduler.createScheduler({ store, providers, feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: makeGd(clock), feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    const r = await s.previewNews('voice2');
+    ok(r && r.ok === true, '(2) preview produced a title after regeneration');
+    eq(r.title, 'duran on FIRE!!! celtic cruising lol', '(2) the voiced retry was accepted over the verbatim echo');
+    eq(titleCall, 2, '(2) exactly one regeneration ran (verbatim echo -> retry)');
+    const regenLogs = (p.activity || []).filter((e) => /title regenerated/.test(e.note || ''));
+    eq(regenLogs.length, 1, '(2) the regeneration was logged to the activity log');
+    ok(/too close to source|verbatim headline/.test(regenLogs[0].note), '(2) the log names the anti-verbatim reason');
+  }
+
+  // (3) similarity threshold sanity (pure exported function).
+  {
+    ok(scheduler.titleSimilarity(HEADLINE, HEADLINE) >= scheduler.TITLE_SIMILARITY_LIMIT, '(3) an identical title scores at/above the similarity limit');
+    ok(scheduler.titleSimilarity('duran on FIRE!!! celtic cruising lol', HEADLINE) < scheduler.TITLE_SIMILARITY_LIMIT, '(3) a strongly-voiced rewrite scores below the limit');
+  }
+
+  // (4) the faithfulness control moves BOTH the prompt wording AND the temperature.
+  {
+    const runFaith = async (mode) => {
+      const clock = makeClock(1_600_000_000_000);
+      const p = mk({ id: 'f_' + mode, newsTitleFaithfulness: mode });
+      const store = makeStore([p]);
+      const providers = makeProviders();
+      const s = scheduler.createScheduler({ store, providers, feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: makeGd(clock), feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY });
+      await s.previewNews('f_' + mode);
+      const call = providers.genCalls.find((c) => /TITLE:\s*$/.test(c.prompt));
+      return { prompt: call.prompt, temp: call.temperature };
+    };
+    const close = await runFaith('close');
+    const loose = await runFaith('loose');
+    const wild = await runFaith('wild');
+
+    ok(/STAY FAIRLY CLOSE/.test(close.prompt), '(4) close mode injects the "stay fairly close" directive');
+    ok(/GO WILD/.test(wild.prompt), '(4) wild mode injects the "go wild" directive');
+    ok(!/STAY FAIRLY CLOSE/.test(loose.prompt) && !/GO WILD/.test(loose.prompt), '(4) loose mode uses neither extreme directive');
+    ok(close.temp < loose.temp && loose.temp < wild.temp, '(4) title temperature rises close < loose < wild  (' + close.temp + ' < ' + loose.temp + ' < ' + wild.temp + ')');
+    ok(close.temp !== 0.8, '(4) title temperature overrides the profile base 0.8');
+  }
+}
+
 // ---- run --------------------------------------------------------------------
 
 (async () => {
@@ -1634,6 +1754,7 @@ async function scenarioFeeds() {
   await scenarioGdeltNonBlocking();
   await scenarioNews();
   await scenarioNewsOptionalRouting();
+  await scenarioNewsVoice();
   await scenarioShortlistFallback();
   await scenarioProbationCeilings();
   await scenarioLinkPendingDefer();
