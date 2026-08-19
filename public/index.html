@@ -297,7 +297,8 @@ function renderList() {
     const enBadge = '<span class="badge ' + (p.enabled ? 'on' : 'off') + '">' + (p.enabled ? 'enabled' : 'off') + '</span>';
     li.innerHTML =
       '<div><div class="pname">' + esc(p.displayName || '(unnamed)') + '</div>' +
-      '<div class="pmeta">' + esc(p.fedditUsername || 'no username') + ' &middot; ' + esc(p.mode) +
+      '<div class="pmeta">' + esc(p.fedditUsername || 'no username') + ' &middot; ' +
+        esc(p.botType === 'news' ? 'news' : p.mode) +
         ' &middot; ' + esc(p.effProvider === 'deepseek' ? p.effModel : 'ollama') + '</div>' +
       '<div class="pmeta">next: ' + esc(fmtNext(p)) + '</div></div>' +
       '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + enBadge + tokenBadge + '</div>';
@@ -317,6 +318,31 @@ async function selectProfile(id) {
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
 function csv(a) { return Array.isArray(a) ? a.join(', ') : (a || ''); }
 function parseCsv(s) { return String(s || '').split(',').map(x => x.trim()).filter(Boolean); }
+
+// One editable routing-rule row (keywords / sub-feddit / weight / remove).
+function addRoutingRow(rule) {
+  const wrap = $('#routingRows');
+  if (!wrap) return;
+  const row = document.createElement('div');
+  row.className = 'row routingRow';
+  row.style.marginBottom = '6px';
+  row.innerHTML =
+    '<input class="rr_keywords" style="flex:2" placeholder="keywords (comma-sep, blank = any)" value="' + esc(csv(rule && rule.keywords)) + '">' +
+    '<input class="rr_sub" style="flex:1" placeholder="sub-feddit" value="' + esc((rule && rule.subFeddit) || '') + '">' +
+    '<input class="rr_weight" type="number" step="1" style="width:80px" placeholder="weight" value="' + esc(rule && rule.weight != null ? rule.weight : 1) + '">' +
+    '<button type="button" class="rr_del danger" style="padding:6px 10px">x</button>';
+  row.querySelector('.rr_del').onclick = () => row.remove();
+  wrap.appendChild(row);
+}
+
+// Read the routing rows back in DOM (owner-chosen) order.
+function collectRoutingRules() {
+  return [...document.querySelectorAll('#routingRows .routingRow')].map((row) => ({
+    keywords: parseCsv(row.querySelector('.rr_keywords').value),
+    subFeddit: row.querySelector('.rr_sub').value.trim(),
+    weight: Number(row.querySelector('.rr_weight').value) || 0,
+  })).filter((r) => r.subFeddit);
+}
 
 // Human "when is this profile next going to do something" for the list.
 function rel(ts) {
@@ -349,7 +375,13 @@ function renderEditor(p) {
       <div class="grid">
         <div class="field"><label>Display name</label><input id="f_displayName" value="${esc(p.displayName)}"></div>
         <div class="field"><label>Feddit username</label><input id="f_fedditUsername" value="${esc(p.fedditUsername)}" placeholder="e.g. quip_bot"></div>
+        <div class="field"><label>Bot type</label>
+          <select id="f_botType">
+            <option value="conversational"${p.botType!=='news'?' selected':''}>Conversational (persona posts &amp; replies)</option>
+            <option value="news"${p.botType==='news'?' selected':''}>News (finds articles, posts links)</option>
+          </select></div>
       </div>
+      <div class="hint" id="botTypeHint"></div>
     </div>
 
     <div class="section">
@@ -366,25 +398,60 @@ function renderEditor(p) {
     </div>
 
     <div class="section">
-      <h2>Reach &amp; behaviour</h2>
+      <h2>Behaviour</h2>
       <div class="grid">
-        <div class="field"><label>Reads sub-feddits (comma-separated)</label><input id="f_readFeddits" value="${esc(csv(p.readFeddits))}" placeholder="botlife, homelab"></div>
-        <div class="field"><label>Posts/comments to (comma-separated)</label><input id="f_postFeddits" value="${esc(csv(p.postFeddits))}" placeholder="botlife"></div>
-        <div class="field"><label>What it does</label>
-          <select id="f_mode">
-            <option value="both"${p.mode==='both'?' selected':''}>post &amp; comment</option>
-            <option value="post"${p.mode==='post'?' selected':''}>post only</option>
-            <option value="comment"${p.mode==='comment'?' selected':''}>comment only</option>
-          </select></div>
         <div class="field"><label>Scheduler</label>
           <select id="f_enabled">
             <option value="true"${p.enabled?' selected':''}>ACTIVE - scheduler runs this bot</option>
             <option value="false"${!p.enabled?' selected':''}>PAUSED - scheduler ignores this bot</option>
           </select></div>
-        <div class="field"><label>Posts per hour</label><input id="f_postsPerHour" type="number" min="0" step="0.5" value="${esc(p.postsPerHour)}"></div>
-        <div class="field"><label>Comments per hour</label><input id="f_commentsPerHour" type="number" min="0" step="0.5" value="${esc(p.commentsPerHour)}"></div>
+        <div class="field"><label id="postsPerHourLabel">Posts per hour</label><input id="f_postsPerHour" type="number" min="0" step="0.5" value="${esc(p.postsPerHour)}"></div>
+        <div class="field convField"><label>Comments per hour</label><input id="f_commentsPerHour" type="number" min="0" step="0.5" value="${esc(p.commentsPerHour)}"></div>
+        <div class="field convField"><label>What it does</label>
+          <select id="f_mode">
+            <option value="both"${p.mode==='both'?' selected':''}>post &amp; comment</option>
+            <option value="post"${p.mode==='post'?' selected':''}>post only</option>
+            <option value="comment"${p.mode==='comment'?' selected':''}>comment only</option>
+          </select></div>
+        <div class="field full convField"><label>Reads sub-feddits (comma-separated)</label><input id="f_readFeddits" value="${esc(csv(p.readFeddits))}" placeholder="botlife, homelab"></div>
+        <div class="field full convField"><label>Posts/comments to (comma-separated)</label><input id="f_postFeddits" value="${esc(csv(p.postFeddits))}" placeholder="botlife"></div>
       </div>
       <div class="hint">Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day (hard ceiling; the scheduler self-limits below these and jitters the cadence). The scheduler only acts on enabled profiles, and while global dry-run is ON it logs actions without writing.</div>
+    </div>
+
+    <div class="section" id="newsSection">
+      <h2>News settings</h2>
+      <div class="field full"><label>Watch keywords / GDELT query</label>
+        <input id="f_newsQuery" value="${esc(p.newsQuery)}" placeholder='e.g. "artificial intelligence" OR robotics'></div>
+      <div class="hint">GDELT DOC 2.0 query syntax. English-only is forced automatically. Code (not the model) does the searching and filtering.</div>
+
+      <div style="margin-top:14px">
+        <label>Routing rules (ordered - highest weight that matches decides the sub-feddit)</label>
+        <div id="routingRows" style="margin-top:6px"></div>
+        <button id="addRuleBtn" type="button" style="margin-top:8px">+ Add routing rule</button>
+        <div class="hint">Each rule: keywords (comma-separated; blank = catch-all), the sub-feddit to post to, and a weight. An article with no matching rule is not posted.</div>
+      </div>
+
+      <div class="grid" style="margin-top:14px">
+        <div class="field"><label>Max article age (hours)</label><input id="f_newsMaxAgeHours" type="number" min="1" step="1" value="${esc(p.newsMaxAgeHours)}"></div>
+        <div class="field"><label>Max posts per source domain / day</label><input id="f_newsMaxPerDomainPerDay" type="number" min="0" step="1" value="${esc(p.newsMaxPerDomainPerDay)}"></div>
+        <div class="field"><label>Minimum gap between posts (minutes)</label><input id="f_newsMinGapMinutes" type="number" min="0" step="1" value="${esc(p.newsMinGapMinutes)}"></div>
+        <div class="field"><label>Title style</label>
+          <select id="f_newsTitleStyle">
+            ${['straight','deadpan','tabloid','punny','custom'].map(s=>'<option value="'+s+'"'+(p.newsTitleStyle===s?' selected':'')+'>'+s+'</option>').join('')}
+          </select></div>
+        <div class="field full"><label>Domain denylist (comma-separated)</label><input id="f_newsDomainDenylist" value="${esc(csv(p.newsDomainDenylist))}" placeholder="example.com, spam.net"></div>
+        <div class="field full" id="titleCustomField"><label>Custom title-style instruction</label><input id="f_newsTitleCustom" value="${esc(p.newsTitleCustom)}" placeholder="e.g. always frame it as a question"></div>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <label class="row" style="gap:6px"><input type="checkbox" id="f_newsPaywallFilter" style="width:auto"${p.newsPaywallFilter?' checked':''}> Skip known paywall domains</label>
+        <label class="row" style="gap:6px; margin-left:16px"><input type="checkbox" id="f_newsRequireImage" style="width:auto"${p.newsRequireImage?' checked':''}> Only post articles that already have an image</label>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <label class="row" style="gap:6px"><input type="checkbox" id="f_newsLetBotChoose" style="width:auto"${p.newsLetBotChoose?' checked':''}> Let the bot choose from a shortlist</label>
+      </div>
+      <div class="warnbox" id="letChooseWarn" style="display:${p.newsLetBotChoose?'block':'none'}">This adds one extra generation per post (the bot picks from ~5 headlines before writing the title). For DeepSeek profiles it <b>DOUBLES the cost per post</b>.</div>
     </div>
 
     <div class="section">
@@ -406,12 +473,26 @@ function renderEditor(p) {
       <div class="hint" id="providerHint"></div>
     </div>
 
-    <div class="section">
+    <div class="section" id="convTestSection">
       <h2>Test generate (does not post)</h2>
       <div class="field full"><label>Sample post title</label><input id="t_title" placeholder="paste a post title"></div>
       <div class="field full"><label>Sample post body</label><textarea id="t_body" placeholder="paste the post body (optional)"></textarea></div>
       <div class="row"><button id="testBtn">Generate sample reply</button><span class="hint" id="testMeta"></span></div>
       <div class="out" id="testOut" style="margin-top:10px"></div>
+    </div>
+
+    <div class="section" id="newsPreviewSection">
+      <h2>Preview (does not post)</h2>
+      <div class="hint">Runs the real pick: queries GDELT, filters, chooses an article and generates a title - without posting or consuming the article.</div>
+      <div class="row" style="margin-top:8px">
+        <button id="newsPreviewBtn">Preview next news post</button>
+        <span class="hint" id="newsPreviewMeta"></span>
+      </div>
+      <div class="out" id="newsPreviewOut" style="margin-top:10px"></div>
+      <div class="row" style="margin-top:12px">
+        <button id="clearPostedBtn">Clear posted history<span id="postedCount"></span></button>
+        <span class="hint">Dry-run consumes the dedupe set. Clear it to re-test the same articles.</span>
+      </div>
     </div>
 
     <div class="section">
@@ -430,11 +511,41 @@ function renderEditor(p) {
   renderActivity(p);
   renderSpendLine(p);
 
+  // Seed the routing-rule rows, then swap conversational vs news field groups.
+  (p.newsRoutingRules && p.newsRoutingRules.length ? p.newsRoutingRules : [{ keywords: [], subFeddit: '', weight: 1 }])
+    .forEach(addRoutingRow);
+  $('#postedCount').textContent = p.postedNewsCount ? ' (' + p.postedNewsCount + ')' : '';
+  renderBotTypeView();
+
   $('#f_model').addEventListener('input', renderProviderView);
   $('#f_provider').addEventListener('change', renderProviderView);
+  $('#f_botType').addEventListener('change', renderBotTypeView);
+  $('#f_newsTitleStyle').addEventListener('change', renderBotTypeView);
+  $('#f_newsLetBotChoose').addEventListener('change', () => {
+    $('#letChooseWarn').style.display = $('#f_newsLetBotChoose').checked ? 'block' : 'none';
+  });
+  $('#addRuleBtn').onclick = () => addRoutingRow({ keywords: [], subFeddit: '', weight: 1 });
   $('#saveBtn').onclick = () => saveProfile(p.id);
   $('#deleteBtn').onclick = () => deleteProfile(p.id, p.displayName);
   $('#testBtn').onclick = () => testGenerate(p.id);
+  $('#newsPreviewBtn').onclick = () => previewNews(p.id);
+  $('#clearPostedBtn').onclick = () => clearPosted(p.id);
+
+  // Show the fields that belong to the selected bot type; hide the rest. The
+  // scheduler, cadence and provider machinery are shared, so only the
+  // "what/where" field groups swap.
+  function renderBotTypeView() {
+    const news = $('#f_botType').value === 'news';
+    document.querySelectorAll('.convField').forEach((el) => { el.style.display = news ? 'none' : ''; });
+    $('#newsSection').style.display = news ? '' : 'none';
+    $('#convTestSection').style.display = news ? 'none' : '';
+    $('#newsPreviewSection').style.display = news ? '' : 'none';
+    $('#postsPerHourLabel').textContent = news ? 'News posts per hour' : 'Posts per hour';
+    $('#titleCustomField').style.display = (news && $('#f_newsTitleStyle').value === 'custom') ? '' : 'none';
+    $('#botTypeHint').textContent = news
+      ? 'News bot: finds fresh articles by keyword via GDELT and submits them as link posts with a generated title. It does not comment. The persona still shapes the title voice.'
+      : 'Conversational bot: writes original posts and replies in character, driven by the mode and cadence below.';
+  }
 
   // Adapt the model fields to the chosen provider: the Cy keep_alive warning is
   // ollama-only; num_predict is labelled max_tokens for deepseek; and a clear
@@ -514,6 +625,7 @@ function collectForm() {
   return {
     displayName: $('#f_displayName').value.trim(),
     fedditUsername: $('#f_fedditUsername').value.trim(),
+    botType: $('#f_botType').value === 'news' ? 'news' : 'conversational',
     persona: $('#f_persona').value,
     toneNotes: $('#f_toneNotes').value,
     readFeddits: parseCsv($('#f_readFeddits').value),
@@ -527,6 +639,18 @@ function collectForm() {
     model: $('#f_model').value.trim() || state.defaultModel,
     temperature: Number($('#f_temperature').value),
     numPredict: Number($('#f_numPredict').value) || 200,
+    // ---- news config ----
+    newsQuery: $('#f_newsQuery').value.trim(),
+    newsRoutingRules: collectRoutingRules(),
+    newsMaxAgeHours: Number($('#f_newsMaxAgeHours').value) || 24,
+    newsMaxPerDomainPerDay: Number($('#f_newsMaxPerDomainPerDay').value) || 0,
+    newsMinGapMinutes: Number($('#f_newsMinGapMinutes').value) || 0,
+    newsDomainDenylist: parseCsv($('#f_newsDomainDenylist').value),
+    newsPaywallFilter: $('#f_newsPaywallFilter').checked,
+    newsRequireImage: $('#f_newsRequireImage').checked,
+    newsTitleStyle: $('#f_newsTitleStyle').value,
+    newsTitleCustom: $('#f_newsTitleCustom').value.trim(),
+    newsLetBotChoose: $('#f_newsLetBotChoose').checked,
   };
 }
 
@@ -588,6 +712,42 @@ async function testGenerate(id) {
     out.textContent = '';
     toast('Generate failed: ' + e.message, 'err');
   } finally { btn.disabled = false; }
+}
+
+// ---- news preview / clear posted history ------------------------------------
+async function previewNews(id) {
+  const btn = $('#newsPreviewBtn');
+  const out = $('#newsPreviewOut');
+  const meta = $('#newsPreviewMeta');
+  // Save the current form first so the preview uses what's on screen.
+  try { await api('/api/profiles/' + encodeURIComponent(id), { method: 'PUT', body: collectForm() }); } catch (e) {}
+  btn.disabled = true; out.textContent = 'Querying GDELT (shared 8s queue; may wait) and generating a title...'; meta.textContent = '';
+  try {
+    const r = await api('/api/profiles/' + encodeURIComponent(id) + '/preview-news', { method: 'POST' });
+    if (!r.ok) { out.textContent = r.error || 'No article chosen.'; return; }
+    const a = r.article || {};
+    out.innerHTML =
+      '<div><b>Would post to:</b> f/' + esc(r.subFeddit) + '</div>' +
+      '<div style="margin-top:6px"><b>Domain:</b> <small class="mono">' + esc(a.domain || '') + '</small></div>' +
+      '<div style="margin-top:4px"><b>Headline:</b> ' + esc(a.title || '') + '</div>' +
+      '<div style="margin-top:4px"><b>Generated title:</b> ' + esc(r.title || '') + '</div>' +
+      '<div style="margin-top:4px"><b>URL:</b> <small class="mono">' + esc(a.url || '') + '</small></div>' +
+      (a.socialimage ? '<div style="margin-top:4px"><b>Image:</b> yes</div>' : '<div style="margin-top:4px" class="hint">No GDELT image (Feddit will fetch its own).</div>');
+    meta.textContent = r.provider === 'deepseek' ? ('$' + Number(r.costUsd || 0).toFixed(4) + ' / ' + (r.model || '')) : 'ollama (no API cost)';
+    if (r.provider === 'deepseek') loadStatus();
+  } catch (e) {
+    out.textContent = '';
+    toast('Preview failed: ' + e.message, 'err');
+  } finally { btn.disabled = false; }
+}
+
+async function clearPosted(id) {
+  if (!confirm('Clear this profile\'s posted-article history? It will be able to post articles it has already posted (or dry-run "posted") before.')) return;
+  try {
+    await api('/api/profiles/' + encodeURIComponent(id) + '/clear-posted', { method: 'POST' });
+    toast('Posted history cleared.', 'ok');
+    $('#postedCount').textContent = '';
+  } catch (e) { toast('Failed: ' + e.message, 'err'); }
 }
 
 // ---- new profile ------------------------------------------------------------

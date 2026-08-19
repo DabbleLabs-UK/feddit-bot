@@ -139,6 +139,7 @@ lib/providers/index.js    provider facade: routing + ollama single-flight + deep
 lib/providers/ollama.js   Ollama client: default model, keep_alive -1, single-flight
 lib/providers/deepseek.js DeepSeek client: OpenAI-compatible, Bearer auth, 401/402/429 handling
 lib/feddit.js             Feddit /api/v1 client: browser UA, 429 handling, register/read/write
+lib/gdelt.js              shared GDELT DOC 2.0 client: single 8s-spaced request queue, 15min cache, non-JSON/429 back-off (news bots)
 public/index.html         self-contained vanilla-JS control panel (no CDN, no build)
 test/scheduler-dryrun.js  stubbed dry-run harness proving the scheduler's guarantees
 ```
@@ -146,10 +147,29 @@ test/scheduler-dryrun.js  stubbed dry-run harness proving the scheduler's guaran
 ## What a profile holds
 
 id, display name, Feddit username, API token, persona system prompt, tone/style
-notes, which sub-feddits it reads and posts to, what it does (post / comment /
-both), cadence (posts + comments per hour), provider (ollama / DeepSeek tier),
-model, temperature, num_predict, and an enabled flag. Plus a small
+notes, provider (ollama / DeepSeek tier), model, temperature, num_predict,
+cadence (posts + comments per hour), and an enabled flag. Plus a small
 recent-activity log and per-day spend buckets.
+
+A profile has a **`botType`** (`conversational` or `news`) that selects which
+"what to do" implementation the shared scheduler runs for it - the cadence,
+jitter, ceilings, back-off, dry-run and spend machinery are identical either way.
+
+- **conversational** (the default): writes original posts and replies in
+  character. Fields: which sub-feddits it reads/posts to, and `mode`
+  (post / comment / both).
+- **news**: finds fresh articles by keyword via GDELT and submits them as **link
+  posts** with a generated title (it never comments). Fields: the GDELT query
+  (watch keywords); an ordered list of routing rules
+  (`{ keywords, subFeddit, weight }` - the highest-weighted rule that matches an
+  article decides its sub-feddit); max article age (freshness cap); max posts per
+  source domain per day; minimum gap between posts; a domain denylist; a paywall
+  filter; the title style (deadpan / tabloid / punny / straight / custom); and a
+  "let the bot choose" toggle (an extra shortlist generation - **doubles cost per
+  post** for DeepSeek profiles). News dedupe is **permanent** and separate from
+  the conversational reply list: it keys on the canonical article URL and is
+  recorded before the submit is even attempted (and in dry-run), so a story is
+  never reposted.
 
 ## Control panel
 
@@ -159,8 +179,11 @@ The single page at `/` lets you:
 - create a profile, then **register its identity on Feddit** (captures the
   returned token straight into the store);
 - edit every field including the persona prompt in a large textarea;
-- **test-generate** a sample reply against a pasted post title+body and see the
-  output **without posting it**;
+- for conversational bots, **test-generate** a sample reply against a pasted
+  post title+body and see the output **without posting it**;
+- for news bots, **preview** the next pick (query GDELT, filter, choose an
+  article, generate a title) **without posting or consuming it**, and clear the
+  posted-article history (needed because dry-run consumes the dedupe set);
 - enable / disable and delete profiles;
 - watch live status: is Ollama up, which model is resident, is Feddit reachable,
   and each profile's recent activity.
@@ -181,6 +204,8 @@ PUT    /api/profiles/:id                    update
 DELETE /api/profiles/:id                    delete
 POST   /api/profiles/:id/register           register on Feddit, store token
 POST   /api/profiles/:id/test-generate      generate sample reply via the profile's provider, no posting
+POST   /api/profiles/:id/preview-news        run the news pick (query -> filter -> choose -> title), no posting
+POST   /api/profiles/:id/clear-posted        wipe the news posted-article dedupe history
 ```
 
 ## The scheduler
@@ -199,6 +224,13 @@ the global pause + dry-run flags live. Key guarantees, all proved by
 - never replies to our own content, and caps any one thread at 3 replies from
   this runner (anti ping-pong);
 - the monthly spend cap skips DeepSeek profiles (not ollama) when exceeded, and
-  per-generation cost is recorded and summed for the UI.
+  per-generation cost is recorded and summed for the UI;
+- news profiles share all of the above and add: a single process-wide GDELT
+  request queue (min 8s spacing, plus a 15min per-query cache) that no profile
+  can bypass; non-JSON / plain-text 429 bodies treated as rate limiting with
+  escalating back-off; permanent canonical-URL dedupe (recorded before submit,
+  and in dry-run); and routing / freshness / per-domain-cap filtering done in
+  code, with the model used only to write the title (guardrailed to invent no
+  fact not in the headline).
 
 Run the harness with `node test/scheduler-dryrun.js`.

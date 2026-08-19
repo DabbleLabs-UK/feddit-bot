@@ -22,6 +22,7 @@ const providers = require('./lib/providers');
 const secrets = require('./lib/secrets');
 const cost = require('./lib/cost');
 const feddit = require('./lib/feddit');
+const gdelt = require('./lib/gdelt');
 const scheduler = require('./lib/scheduler');
 
 const ollama = providers.ollama; // the ollama provider (status/isBusy/generate)
@@ -102,12 +103,15 @@ function serveStatic(req, res, urlPath) {
 // of the next action so the UI can show it. The edit view can still fetch the
 // full record incl. token on demand.
 function safeProfile(p) {
-  const { token, repliedTo, ...rest } = p;
+  // Strip the token and the potentially-large dedupe/tracking arrays; surface a
+  // count of the news dedupe set so the UI can show it on the clear button.
+  const { token, repliedTo, postedNews, newsDomainDaily, newsDomainDays, ...rest } = p;
   const now = Date.now();
   const spend = store.profileSpend(p, cost.dayKey(now), cost.monthKey(now));
   return {
     ...rest,
     hasToken: Boolean(token),
+    postedNewsCount: Array.isArray(postedNews) ? postedNews.length : 0,
     nextAction: scheduler.nextAction(p),
     effProvider: scheduler.providerOf(p),
     effModel: scheduler.modelOf(p, store.DEFAULT_MODEL),
@@ -210,10 +214,12 @@ async function handleApi(req, res, urlPath, query) {
     const sub = m[2]; // e.g. "/register", "/test-generate", or undefined
     const existing = store.getProfile(id);
 
-    // GET /api/profiles/:id - full record INCLUDING token (edit view needs it).
+    // GET /api/profiles/:id - full record INCLUDING token (edit view needs it),
+    // but with the large news dedupe/tracking arrays replaced by a count.
     if (method === 'GET' && !sub) {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
-      return sendJson(res, 200, { profile: existing });
+      const { postedNews, newsDomainDaily, newsDomainDays, ...rest } = existing;
+      return sendJson(res, 200, { profile: { ...rest, postedNewsCount: Array.isArray(postedNews) ? postedNews.length : 0 } });
     }
 
     // PUT /api/profiles/:id - update fields.
@@ -304,6 +310,29 @@ async function handleApi(req, res, urlPath, query) {
         return sendJson(res, code, { error: err.message });
       }
     }
+
+    // POST /api/profiles/:id/preview-news - run the news pick (query GDELT ->
+    // filter -> choose -> generate a title) and return the chosen article + title
+    // WITHOUT posting or consuming (recording) the article. News profiles only.
+    if (method === 'POST' && sub === '/preview-news') {
+      if (!existing) return sendJson(res, 404, { error: 'No such profile' });
+      if (existing.botType !== 'news') return sendJson(res, 400, { error: 'This profile is not a news bot.' });
+      const prov = scheduler.providerOf(existing);
+      if (prov === 'ollama' && ollama.isBusy()) {
+        return sendJson(res, 409, { error: 'Ollama is busy with another generation. Try again in a moment.' });
+      }
+      const out = await schedulerHandle.previewNews(id);
+      if (!out || !out.ok) return sendJson(res, 200, { ok: false, error: (out && out.error) || 'No article chosen' });
+      return sendJson(res, 200, out);
+    }
+
+    // POST /api/profiles/:id/clear-posted - wipe this profile's posted-article
+    // history (and per-domain counts). Needed because dry-run consumes the dedupe.
+    if (method === 'POST' && sub === '/clear-posted') {
+      if (!existing) return sendJson(res, 404, { error: 'No such profile' });
+      store.clearPostedNews(id);
+      return sendJson(res, 200, { ok: true });
+    }
   }
 
   return sendJson(res, 404, { error: 'Unknown API route' });
@@ -341,6 +370,7 @@ const schedulerHandle = scheduler.start({
   store,
   providers,
   feddit,
+  gdelt,
   getDeepseekKey: () => secrets.getDeepseekKey(),
 });
 // -----------------------------------------------------------------------------
