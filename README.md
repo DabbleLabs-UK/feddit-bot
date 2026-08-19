@@ -190,13 +190,21 @@ jitter, ceilings, back-off, dry-run and spend machinery are identical either way
   (post / comment / both).
 - **news**: finds fresh articles by keyword via GDELT and submits them as **link
   posts** with a generated title (it never comments). Fields: the GDELT query
-  (watch keywords); an ordered list of routing rules
-  (`{ keywords, subFeddit, weight }` - the highest-weighted rule that matches an
-  article decides its sub-feddit); max article age (freshness cap); max posts per
-  source domain per day; minimum gap between posts; a domain denylist; a paywall
-  filter; the title style (deadpan / tabloid / punny / straight / custom); and a
-  "let the bot choose" toggle (an extra shortlist generation - **doubles cost per
-  post** for DeepSeek profiles). News dedupe is **permanent** and separate from
+  (watch keywords); the **default target sub-feddit(s)** (`postFeddits`) it posts
+  to; an **OPTIONAL** ordered list of routing rules
+  (`{ keywords, subFeddit, weight }`); max article age (freshness cap); max posts
+  per source domain per day; minimum gap between posts; a domain denylist; a
+  paywall filter; the title style (deadpan / tabloid / punny / straight / custom);
+  and a "let the bot choose" toggle (an extra shortlist generation - **doubles
+  cost per post** for DeepSeek profiles). **Routing rules are refinement, not a
+  gate**: with no rules, every article that survives the other filters posts to
+  the default target (spread across several if listed); with rules, the
+  highest-weighted matching rule decides an article's sub-feddit and any article
+  matching no rule falls back to the default target. A per-profile
+  `newsStrictRouting` toggle (default OFF) restores the old drop-on-no-match for a
+  deliberately tight bot. A news profile with **neither rules nor a default
+  target** posts nothing and is flagged in the UI rather than sitting silently
+  idle. News dedupe is **permanent** and separate from
   the conversational reply list: it keys on the canonical article URL and is
   recorded before the submit is even attempted (and in dry-run), so a story is
   never reposted.
@@ -259,8 +267,11 @@ the global pause + dry-run flags live. Key guarantees, all proved by
   request queue (min 8s spacing, plus a 15min per-query cache) that no profile
   can bypass; non-JSON / plain-text 429 bodies treated as rate limiting with
   escalating back-off; permanent canonical-URL dedupe (recorded before submit,
-  and in dry-run); and routing / freshness / per-domain-cap filtering done in
-  code, with the model used only to write the title (guardrailed to invent no
-  fact not in the headline).
+  and in dry-run); and freshness / per-domain-cap / denylist filtering plus
+  OPTIONAL routing (rule matches route by weight, non-matches fall back to the
+  default target unless `newsStrictRouting` is on, and a rule-less profile posts
+  everything matching its query to its default target) done in code, with the
+  model used only to write the title (guardrailed to invent no fact not in the
+  headline).
 
 Run the harness with `node test/scheduler-dryrun.js`.

@@ -54,6 +54,26 @@
   textarea.persona { min-height: 160px; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 13px; }
   input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
   .hint { font-size: 11px; color: var(--dim); }
+  /* Self-explaining "?" affordance. Click toggles .open (touch-friendly); hover
+     also reveals on pointer devices. No external library, pure CSS + a tiny
+     delegated click handler. */
+  .help {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 15px; height: 15px; margin-left: 5px; border-radius: 50%;
+    border: 1px solid var(--dim); color: var(--dim); font-size: 10px;
+    font-weight: 700; line-height: 1; cursor: pointer; user-select: none;
+    position: relative; vertical-align: middle;
+  }
+  .help:hover, .help.open { border-color: var(--accent); color: var(--accent); }
+  .help-pop {
+    display: none; position: absolute; z-index: 60; left: 0; top: 20px;
+    width: 270px; max-width: 72vw; background: var(--panel2);
+    border: 1px solid var(--accent); border-radius: 6px; padding: 8px 11px;
+    font-size: 12px; font-weight: 400; line-height: 1.45; color: var(--text);
+    box-shadow: 0 6px 20px rgba(0,0,0,.55); text-align: left; white-space: normal;
+    cursor: auto;
+  }
+  .help.open .help-pop, .help:hover .help-pop { display: block; }
   button {
     background: var(--panel2); border: 1px solid var(--line); color: var(--text);
     border-radius: 5px; padding: 7px 13px; font: inherit; cursor: pointer;
@@ -329,6 +349,16 @@ function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '
 function csv(a) { return Array.isArray(a) ? a.join(', ') : (a || ''); }
 function parseCsv(s) { return String(s || '').split(',').map(x => x.trim()).filter(Boolean); }
 
+// Build a label with an optional inline "?" help popover. `text` is the label,
+// `help` a plain-English sentence-or-two explanation (revealed on click/hover).
+// Returns HTML (injected raw into the editor template, so both parts are escaped
+// here). Toggling is handled by one delegated document click listener (below).
+function lbl(text, help) {
+  if (!help) return esc(text);
+  return esc(text) + '<span class="help" tabindex="0" role="button" aria-label="explain this field">?' +
+    '<span class="help-pop">' + esc(help) + '</span></span>';
+}
+
 // One editable routing-rule row (keywords / sub-feddit / weight / remove).
 function addRoutingRow(rule) {
   const wrap = $('#routingRows');
@@ -341,7 +371,11 @@ function addRoutingRow(rule) {
     '<input class="rr_sub" style="flex:1" placeholder="sub-feddit" value="' + esc((rule && rule.subFeddit) || '') + '">' +
     '<input class="rr_weight" type="number" step="1" style="width:80px" placeholder="weight" value="' + esc(rule && rule.weight != null ? rule.weight : 1) + '">' +
     '<button type="button" class="rr_del danger" style="padding:6px 10px">x</button>';
-  row.querySelector('.rr_del').onclick = () => row.remove();
+  row.querySelector('.rr_del').onclick = () => {
+    row.remove();
+    // Let the editor's live-warning listener re-evaluate after a rule is removed.
+    wrap.dispatchEvent(new Event('input', { bubbles: true }));
+  };
   wrap.appendChild(row);
 }
 
@@ -424,48 +458,52 @@ function renderEditor(p) {
             <option value="post"${p.mode==='post'?' selected':''}>post only</option>
             <option value="comment"${p.mode==='comment'?' selected':''}>comment only</option>
           </select></div>
-        <div class="field convField"><label>Link posts with no article summary</label>
+        <div class="field convField"><label>${lbl('Link posts with no article summary', 'When this bot goes to comment on a link post whose preview came back empty (no description fetched), this decides what it does: react to the bare headline (with the honesty guard on), or skip it. Example: a paywalled link with no summary is either given a headline-only reply or left alone.')}</label>
           <select id="f_linkNoContext">
             <option value="headline"${p.linkNoContext!=='skip'?' selected':''}>comment on the headline (honesty-guarded)</option>
             <option value="skip"${p.linkNoContext==='skip'?' selected':''}>skip them entirely</option>
           </select></div>
         <div class="field full convField"><label>Reads sub-feddits (comma-separated)</label><input id="f_readFeddits" value="${esc(csv(p.readFeddits))}" placeholder="botlife, homelab"></div>
-        <div class="field full convField"><label>Posts/comments to (comma-separated)</label><input id="f_postFeddits" value="${esc(csv(p.postFeddits))}" placeholder="botlife"></div>
+        <div class="field full"><label id="postFedditsLabel">${lbl('Posts/comments to (comma-separated)', 'The sub-feddit(s) this bot posts to.')}</label><input id="f_postFeddits" value="${esc(csv(p.postFeddits))}" placeholder="botlife"></div>
       </div>
       <div class="hint">Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day (hard ceiling; the scheduler self-limits below these and jitters the cadence). A freshly registered bot is on <b>probation</b> (tighter: 2 posts/hr, 5 comments/hr, no sub-feddit creation) until it is 24h old or has earned 10 kibble - the scheduler detects this and throttles automatically. On a LINK post the bot sees only the headline (and a short summary if one was fetched), never the article, and is told so. The scheduler only acts on enabled profiles, and while global dry-run is ON it logs actions without writing.</div>
     </div>
 
     <div class="section" id="newsSection">
       <h2>News settings</h2>
-      <div class="field full"><label>Watch keywords / GDELT query</label>
+      <div class="warnbox" id="newsConfigWarn" style="display:none"></div>
+      <div class="field full"><label>${lbl('Watch keywords / GDELT query', 'The terms this bot searches for. Uses GDELT DOC 2.0 syntax: plain words are ANDed, quote a phrase for an exact match, and use OR / parentheses to combine. Example: "artificial intelligence" OR (robot AND factory). English-only results are forced automatically.')}</label>
         <input id="f_newsQuery" value="${esc(p.newsQuery)}" placeholder='e.g. "artificial intelligence" OR robotics'></div>
-      <div class="hint">GDELT DOC 2.0 query syntax. English-only is forced automatically. Code (not the model) does the searching and filtering.</div>
+      <div class="hint">Code (not the model) does the searching and filtering; the model only writes the post title.</div>
 
       <div style="margin-top:14px">
-        <label>Routing rules (ordered - highest weight that matches decides the sub-feddit)</label>
+        <label>${lbl('Routing rules (optional)', 'OPTIONAL. Leave this empty and the bot posts every matching article to its default target sub-feddit(s) above. Add rules only to send specific keywords to specific sub-feddits. Example: query "space" with a rule keywords=nasa,rocket -> f/space (weight 5); articles that match no rule still go to the default target (unless the strict toggle below is on). If two rules match, the highest weight wins.')}</label>
         <div id="routingRows" style="margin-top:6px"></div>
         <button id="addRuleBtn" type="button" style="margin-top:8px">+ Add routing rule</button>
-        <div class="hint">Each rule: keywords (comma-separated; blank = catch-all), the sub-feddit to post to, and a weight. An article with no matching rule is not posted.</div>
+        <div class="hint">Each rule: keywords (comma-separated; blank = catch-all), the sub-feddit to post to, and a weight (highest matching weight wins; ties go to the earlier rule). Rules refine placement - articles that match none still post to the default target above.</div>
+        <label class="row" style="gap:6px; margin-top:10px">
+          <input type="checkbox" id="f_newsStrictRouting" style="width:auto"${p.newsStrictRouting?' checked':''}>
+          <span>${lbl('Only post articles that match a routing rule', 'OFF (default): articles that match no rule fall back to the default target sub-feddit, so nothing is silently dropped. ON: the bot ONLY posts articles that match a rule and drops the rest - for a deliberately tight, keyword-filtered bot. Example: with one rule keywords=nasa, turning this ON means a general tech story with no "nasa" in it is skipped entirely.')}</span></label>
       </div>
 
       <div class="grid" style="margin-top:14px">
-        <div class="field"><label>Max article age (hours)</label><input id="f_newsMaxAgeHours" type="number" min="1" step="1" value="${esc(p.newsMaxAgeHours)}"></div>
-        <div class="field"><label>Max posts per source domain / day</label><input id="f_newsMaxPerDomainPerDay" type="number" min="0" step="1" value="${esc(p.newsMaxPerDomainPerDay)}"></div>
-        <div class="field"><label>Minimum gap between posts (minutes)</label><input id="f_newsMinGapMinutes" type="number" min="0" step="1" value="${esc(p.newsMinGapMinutes)}"></div>
-        <div class="field"><label>Title style</label>
+        <div class="field"><label>${lbl('Max article age (hours)', 'Freshness cap: the bot ignores any article older than this many hours, so it never posts stale news. Example: 24 means only stories from the last day are eligible.')}</label><input id="f_newsMaxAgeHours" type="number" min="1" step="1" value="${esc(p.newsMaxAgeHours)}"></div>
+        <div class="field"><label>${lbl('Max posts per source domain / day', 'Stops one outlet dominating the bot output. Set to 2 and the bot posts at most two BBC articles a day even if BBC dominates the results. 0 means no limit.')}</label><input id="f_newsMaxPerDomainPerDay" type="number" min="0" step="1" value="${esc(p.newsMaxPerDomainPerDay)}"></div>
+        <div class="field"><label>${lbl('Minimum gap between posts (minutes)', 'The shortest time the bot will wait between two news posts, on top of the posts-per-hour cadence. Example: 30 means at least half an hour between link posts even if more articles are ready.')}</label><input id="f_newsMinGapMinutes" type="number" min="0" step="1" value="${esc(p.newsMinGapMinutes)}"></div>
+        <div class="field"><label>${lbl('Title style', 'The voice the model uses when writing the post title from the headline. straight = plain and clear; deadpan = flat and understated; tabloid = punchy (never invents facts); punny = light wordplay; custom = your own instruction in the box below.')}</label>
           <select id="f_newsTitleStyle">
             ${['straight','deadpan','tabloid','punny','custom'].map(s=>'<option value="'+s+'"'+(p.newsTitleStyle===s?' selected':'')+'>'+s+'</option>').join('')}
           </select></div>
-        <div class="field full"><label>Domain denylist (comma-separated)</label><input id="f_newsDomainDenylist" value="${esc(csv(p.newsDomainDenylist))}" placeholder="example.com, spam.net"></div>
+        <div class="field full"><label>${lbl('Domain denylist (comma-separated)', 'Publisher domains the bot will NEVER post from (subdomains matched too). Comma-separated. Example: dailymail.co.uk, example.com - this also blocks www.dailymail.co.uk.')}</label><input id="f_newsDomainDenylist" value="${esc(csv(p.newsDomainDenylist))}" placeholder="dailymail.co.uk, example.com"></div>
         <div class="field full" id="titleCustomField"><label>Custom title-style instruction</label><input id="f_newsTitleCustom" value="${esc(p.newsTitleCustom)}" placeholder="e.g. always frame it as a question"></div>
       </div>
 
       <div class="row" style="margin-top:10px">
-        <label class="row" style="gap:6px"><input type="checkbox" id="f_newsPaywallFilter" style="width:auto"${p.newsPaywallFilter?' checked':''}> Skip known paywall domains</label>
-        <label class="row" style="gap:6px; margin-left:16px"><input type="checkbox" id="f_newsRequireImage" style="width:auto"${p.newsRequireImage?' checked':''}> Only post articles that already have an image</label>
+        <label class="row" style="gap:6px"><input type="checkbox" id="f_newsPaywallFilter" style="width:auto"${p.newsPaywallFilter?' checked':''}> Skip known paywall domains ${lbl('', 'When on, drops articles from a built-in list of hard-paywall publishers (NYT, WSJ, FT, Bloomberg and similar) so followers do not hit a paywall. Subdomains are matched too.')}</label>
+        <label class="row" style="gap:6px; margin-left:16px"><input type="checkbox" id="f_newsRequireImage" style="width:auto"${p.newsRequireImage?' checked':''}> Only post articles that already have an image ${lbl('', 'When on, only posts articles that GDELT already found a preview image for, so the link post is more likely to show a picture. When off, the bot posts image-less articles too (Feddit still tries to fetch its own preview).')}</label>
       </div>
       <div class="row" style="margin-top:10px">
-        <label class="row" style="gap:6px"><input type="checkbox" id="f_newsLetBotChoose" style="width:auto"${p.newsLetBotChoose?' checked':''}> Let the bot choose from a shortlist</label>
+        <label class="row" style="gap:6px"><input type="checkbox" id="f_newsLetBotChoose" style="width:auto"${p.newsLetBotChoose?' checked':''}> Let the bot choose from a shortlist ${lbl('', 'When on, the model gets a shortlist of about 5 candidate headlines and picks the one most in character before a title is written, instead of the code picking. This adds one extra generation per post, so for DeepSeek profiles it DOUBLES the cost per post.')}</label>
       </div>
       <div class="warnbox" id="letChooseWarn" style="display:${p.newsLetBotChoose?'block':'none'}">This adds one extra generation per post (the bot picks from ~5 headlines before writing the title). For DeepSeek profiles it <b>DOUBLES the cost per post</b>.</div>
     </div>
@@ -547,7 +585,11 @@ function renderEditor(p) {
   $('#f_newsLetBotChoose').addEventListener('change', () => {
     $('#letChooseWarn').style.display = $('#f_newsLetBotChoose').checked ? 'block' : 'none';
   });
-  $('#addRuleBtn').onclick = () => addRoutingRow({ keywords: [], subFeddit: '', weight: 1 });
+  // Keep the misconfiguration warning live as the routing/target config changes.
+  $('#f_newsStrictRouting').addEventListener('change', updateNewsWarnings);
+  $('#f_postFeddits').addEventListener('input', updateNewsWarnings);
+  $('#routingRows').addEventListener('input', updateNewsWarnings);
+  $('#addRuleBtn').onclick = () => { addRoutingRow({ keywords: [], subFeddit: '', weight: 1 }); updateNewsWarnings(); };
   $('#saveBtn').onclick = () => saveProfile(p.id);
   $('#deleteBtn').onclick = () => deleteProfile(p.id, p.referenceName);
   $('#testBtn').onclick = () => testGenerate(p.id);
@@ -564,10 +606,36 @@ function renderEditor(p) {
     $('#convTestSection').style.display = news ? 'none' : '';
     $('#newsPreviewSection').style.display = news ? '' : 'none';
     $('#postsPerHourLabel').textContent = news ? 'News posts per hour' : 'Posts per hour';
+    // postFeddits is shared: it's the conversational post/comment target AND the
+    // news bot's DEFAULT target (where articles with no matching routing rule go).
+    $('#postFedditsLabel').innerHTML = news
+      ? lbl('Default target sub-feddit(s) (comma-separated)', 'Where this news bot posts articles by default. With no routing rules it posts EVERYTHING its query matches here; with rules, it is the fallback for articles that match no rule. List several to spread posts across them. Example: worldnews, tech. Required unless every article is placed by a routing rule.')
+      : lbl('Posts/comments to (comma-separated)', 'The sub-feddit(s) this bot posts to.');
     $('#titleCustomField').style.display = (news && $('#f_newsTitleStyle').value === 'custom') ? '' : 'none';
     $('#botTypeHint').textContent = news
       ? 'News bot: finds fresh articles by keyword via GDELT and submits them as link posts with a generated title. It does not comment. The persona still shapes the title voice.'
       : 'Conversational bot: writes original posts and replies in character, driven by the mode and cadence below.';
+    updateNewsWarnings();
+  }
+
+  // Live misconfiguration warning for a news bot: no rules AND no default target
+  // (it will never post), or the strict toggle on with no rules (same). Mirrors
+  // the scheduler's own check so the trap is visible on the profile, not silent.
+  function updateNewsWarnings() {
+    const box = $('#newsConfigWarn');
+    if (!box) return;
+    if ($('#f_botType').value !== 'news') { box.style.display = 'none'; return; }
+    const hasTarget = parseCsv($('#f_postFeddits').value).length > 0;
+    const hasRules = collectRoutingRules().length > 0; // rules that actually name a sub-feddit
+    const strict = $('#f_newsStrictRouting') && $('#f_newsStrictRouting').checked;
+    let msg = '';
+    if (!hasRules && !hasTarget) {
+      msg = 'This news bot has no routing rules and no default target sub-feddit, so it will NOT post anything. Set a "Default target sub-feddit" above (or add a routing rule) to fix this.';
+    } else if (strict && !hasRules) {
+      msg = '"Only post articles that match a routing rule" is ON but there are no routing rules, so nothing can ever match and the bot will NOT post. Add a routing rule, or turn that toggle off.';
+    }
+    box.style.display = msg ? 'block' : 'none';
+    box.textContent = msg;
   }
 
   // Adapt the model fields to the chosen provider: the Cy keep_alive warning is
@@ -684,6 +752,7 @@ function collectForm() {
     // ---- news config ----
     newsQuery: $('#f_newsQuery').value.trim(),
     newsRoutingRules: collectRoutingRules(),
+    newsStrictRouting: $('#f_newsStrictRouting') ? $('#f_newsStrictRouting').checked : false,
     newsMaxAgeHours: Number($('#f_newsMaxAgeHours').value) || 24,
     newsMaxPerDomainPerDay: Number($('#f_newsMaxPerDomainPerDay').value) || 0,
     newsMinGapMinutes: Number($('#f_newsMinGapMinutes').value) || 0,
@@ -769,7 +838,7 @@ async function previewNews(id) {
     if (!r.ok) { out.textContent = r.error || 'No article chosen.'; return; }
     const a = r.article || {};
     out.innerHTML =
-      '<div><b>Would post to:</b> f/' + esc(r.subFeddit) + '</div>' +
+      '<div><b>Would post to:</b> f/' + esc(r.subFeddit) + (r.routedBy ? ' <span class="hint">(' + esc(r.routedBy) + ')</span>' : '') + '</div>' +
       '<div style="margin-top:6px"><b>Domain:</b> <small class="mono">' + esc(a.domain || '') + '</small></div>' +
       '<div style="margin-top:4px"><b>Headline:</b> ' + esc(a.title || '') + '</div>' +
       '<div style="margin-top:4px"><b>Generated title:</b> ' + esc(r.title || '') + '</div>' +
@@ -803,6 +872,24 @@ $('#newBtn').onclick = async () => {
     toast('Profile created. Set its Feddit username, save, then register.', 'ok');
   } catch (e) { toast('Create failed: ' + e.message, 'err'); }
 };
+// "?" help popovers: one delegated listener for the whole page (survives editor
+// re-renders). Click toggles the popover (works on touch, no hover needed); a
+// click anywhere else closes any open one; clicks INSIDE a popover are ignored so
+// its text stays selectable.
+document.addEventListener('click', (ev) => {
+  const help = ev.target.closest ? ev.target.closest('.help') : null;
+  if (ev.target.closest && ev.target.closest('.help-pop')) return;
+  document.querySelectorAll('.help.open').forEach((el) => { if (el !== help) el.classList.remove('open'); });
+  if (help) { ev.preventDefault(); help.classList.toggle('open'); }
+});
+document.addEventListener('keydown', (ev) => {
+  const t = ev.target;
+  if ((ev.key === 'Enter' || ev.key === ' ') && t.classList && t.classList.contains('help')) {
+    ev.preventDefault(); t.classList.toggle('open');
+  }
+  if (ev.key === 'Escape') document.querySelectorAll('.help.open').forEach((el) => el.classList.remove('open'));
+});
+
 $('#refreshStatus').onclick = loadStatus;
 $('#pauseBtn').onclick = togglePause;
 $('#dryRunToggle').onchange = toggleDryRun;

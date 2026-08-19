@@ -163,6 +163,7 @@ function profile(over) {
     botType: over.botType || 'conversational',
     newsQuery: over.newsQuery || '',
     newsRoutingRules: over.newsRoutingRules || [],
+    newsStrictRouting: over.newsStrictRouting || false,
     newsMaxAgeHours: over.newsMaxAgeHours != null ? over.newsMaxAgeHours : 24,
     newsMaxPerDomainPerDay: over.newsMaxPerDomainPerDay != null ? over.newsMaxPerDomainPerDay : 3,
     newsMinGapMinutes: over.newsMinGapMinutes != null ? over.newsMinGapMinutes : 0,
@@ -765,6 +766,124 @@ async function scenarioNews() {
 }
 
 // ============================================================================
+// Scenario 10b: routing rules are OPTIONAL refinement, not a gate.
+//  (a) NO rules + a default target      -> everything matching the query posts
+//                                           to the default target sub-feddit;
+//  (b) rules present                    -> matches route by rule AND non-matches
+//                                           fall back to the default target;
+//  (c) the strict toggle                -> restores drop-on-no-match;
+//  (d) NO rules AND no target           -> flagged as misconfigured, not silent.
+// ============================================================================
+async function scenarioNewsOptionalRouting() {
+  console.log('\n[10b] news: routing rules OPTIONAL - default-target fallback, strict toggle, misconfig flag');
+  const H = 3_600_000;
+  const freshArt = (over) => Object.assign({ seendate: null }, over);
+
+  // Helper: run ONE news tick for a single profile against a fixed article set.
+  async function tick(p, articles, clock) {
+    const gd = gdelt.createGdelt({ now: clock.now, sleep: async (ms) => clock.advance(ms), minSpacingMs: 0, fetch: async () => ({ status: 200, arrayBuffer: async () => jsonBody({ articles }) }) });
+    p.sched.nextPostAt = clock.now();
+    const store = makeStore([p]);
+    const fed = makeFeddit({ feddits: {}, comments: {} });
+    const s = scheduler.createScheduler({ store, providers: makeProviders(), feddit: fed, gdelt: gd, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    const r = await s.runTick();
+    return { r, store, fed, gd, action: r.results.find((x) => x && x.action === 'news') };
+  }
+
+  // (a) No routing rules at all, but a default target sub-feddit -> it posts.
+  {
+    const clock = makeClock(1_600_000_000_000);
+    const art = freshArt({ url: 'https://news.org/a', domain: 'news.org', title: 'General thing happened', seendate: seendateFrom(clock.now() - 1 * H) });
+    const p = profile({ id: 'nf-a', botType: 'news', mode: 'post', postsPerHour: 60, newsQuery: 'general', newsRoutingRules: [], postFeddits: ['general'], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
+    const { action, fed } = await tick(p, [art], clock);
+    ok(action && action.ok === true, '(a) rule-less profile with a default target acted');
+    eq(action.feddit, 'general', '(a) NO routing rules -> article posts to the default target f/general');
+    eq(fed.calls.submit.length, 0, '(a) dry-run: ZERO live submits');
+  }
+
+  // (b) Rules present: a match routes by rule; a non-match falls back to default.
+  {
+    const rules = [{ keywords: ['rocket', 'launch'], subFeddit: 'space', weight: 5 }];
+    const match = { url: 'https://space.com/rocket', domain: 'space.com', title: 'Rocket launch success', seendate: null };
+    const nonMatch = { url: 'https://misc.com/story', domain: 'misc.com', title: 'Unrelated local story', seendate: null };
+    // Direct matcher checks: rule for the match, null for the non-match.
+    eq(scheduler.matchRule(match, rules).subFeddit, 'space', '(b) matcher: rocket article -> f/space rule');
+    eq(scheduler.matchRule(nonMatch, rules), null, '(b) matcher: unrelated article matches NO rule');
+
+    const clock = makeClock(1_600_000_000_000);
+    match.seendate = seendateFrom(clock.now() - 1 * H);
+    nonMatch.seendate = seendateFrom(clock.now() - 2 * H);
+    // Shared store across two ticks so the run-1 pick is deduped for run 2.
+    const gd = gdelt.createGdelt({ now: clock.now, sleep: async (ms) => clock.advance(ms), minSpacingMs: 0, fetch: async () => ({ status: 200, arrayBuffer: async () => jsonBody({ articles: [match, nonMatch] }) }) });
+    const p = profile({ id: 'nf-b', botType: 'news', mode: 'post', postsPerHour: 60, newsQuery: 'q', newsRoutingRules: rules, postFeddits: ['general'], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
+    const store = makeStore([p]);
+
+    p.sched.nextPostAt = clock.now();
+    const s1 = scheduler.createScheduler({ store, providers: makeProviders(), feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gd, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    const a1 = (await s1.runTick()).results.find((x) => x && x.action === 'news');
+    eq(a1.feddit, 'space', '(b) rule match routes the rocket article to f/space (weight 5 beats the fallback)');
+
+    clock.advance(60_000); p.sched.nextPostAt = clock.now();
+    const s2 = scheduler.createScheduler({ store, providers: makeProviders(), feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gd, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    const a2 = (await s2.runTick()).results.find((x) => x && x.action === 'news');
+    eq(a2.feddit, 'general', '(b) the non-matching article falls back to the default target f/general (NOT dropped)');
+  }
+
+  // (c) The strict toggle restores the old drop-on-no-match behaviour. Same
+  //     non-matching article: strict OFF posts it to the default; strict ON drops it.
+  {
+    const rules = [{ keywords: ['rocket'], subFeddit: 'space', weight: 5 }];
+    const nonMatch = { url: 'https://misc.com/only', domain: 'misc.com', title: 'Unrelated local story', seendate: null };
+
+    const clockOff = makeClock(1_600_000_000_000);
+    nonMatch.seendate = seendateFrom(clockOff.now() - 1 * H);
+    const pOff = profile({ id: 'nf-c-off', botType: 'news', mode: 'post', postsPerHour: 60, newsQuery: 'q', newsRoutingRules: rules, newsStrictRouting: false, postFeddits: ['general'], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
+    const off = await tick(pOff, [nonMatch], clockOff);
+    eq(off.action.feddit, 'general', '(c) strict OFF: the non-match still posts to the default target');
+
+    const clockOn = makeClock(1_600_000_000_000);
+    nonMatch.seendate = seendateFrom(clockOn.now() - 1 * H);
+    const pOn = profile({ id: 'nf-c-on', botType: 'news', mode: 'post', postsPerHour: 60, newsQuery: 'q', newsRoutingRules: rules, newsStrictRouting: true, postFeddits: ['general'], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
+    const on = await tick(pOn, [nonMatch], clockOn);
+    eq(on.action.note, 'none', '(c) strict ON: the non-match is DROPPED (drop-on-no-match restored)');
+    ok(!on.store.hasPostedNews('nf-c-on', on.gd.canonicalUrl(nonMatch.url)), '(c) strict ON did not consume the dropped article');
+  }
+
+  // (d) No rules AND no target -> flagged loudly, not silently idle.
+  {
+    const clock = makeClock(1_600_000_000_000);
+    const art = { url: 'https://news.org/d', domain: 'news.org', title: 'Something newsworthy', seendate: seendateFrom(clock.now() - 1 * H) };
+    const p = profile({ id: 'nf-d', botType: 'news', mode: 'post', postsPerHour: 60, newsQuery: 'q', newsRoutingRules: [], postFeddits: [], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
+    const { action, store, fed, gd } = await tick(p, [art], clock);
+    eq(action.note, 'misconfigured', '(d) no rules + no target -> flagged as misconfigured');
+    eq(action.ok, false, '(d) a misconfigured news profile does not post');
+    eq(fed.calls.submit.length, 0, '(d) misconfigured profile made ZERO submits');
+    ok(!store.hasPostedNews('nf-d', gd.canonicalUrl(art.url)), '(d) misconfig did not consume the article');
+    ok(p.activity.some((e) => /no routing rules and no target/i.test(e.note || '')), '(d) a plain-English warning was logged (not silence)');
+  }
+
+  // (d2) Strict ON but no routing rules is ALSO a misconfiguration (nothing can match).
+  {
+    const clock = makeClock(1_600_000_000_000);
+    const art = { url: 'https://news.org/d2', domain: 'news.org', title: 'Another story', seendate: seendateFrom(clock.now() - 1 * H) };
+    const p = profile({ id: 'nf-d2', botType: 'news', mode: 'post', postsPerHour: 60, newsQuery: 'q', newsRoutingRules: [], newsStrictRouting: true, postFeddits: ['general'], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
+    const { action } = await tick(p, [art], clock);
+    eq(action.note, 'misconfigured', '(d2) strict ON with no routing rules -> flagged as misconfigured');
+  }
+
+  // Multiple default targets are spread "sensibly" (stable per-URL, but not all
+  // funnelled to one) - proven directly against the exported helper.
+  {
+    const targets = ['worldnews', 'tech', 'sports'];
+    const used = new Set();
+    for (let i = 0; i < 30; i++) used.add(scheduler.defaultTarget(targets, 'https://ex.com/story-' + i));
+    ok(used.size >= 2, 'default target spreads articles across several sub-feddits (not all to one)');
+    [...used].forEach((t) => ok(targets.includes(t), 'each spread target is one of the configured defaults'));
+    eq(scheduler.defaultTarget(targets, 'https://ex.com/story-7'), scheduler.defaultTarget(targets, 'https://ex.com/story-7'), 'the same URL always lands in the same default target (idempotent)');
+  }
+}
+
+// ============================================================================
 // Scenario 11: the "let the bot choose" shortlist toggle falls back cleanly to
 // the code-picked article when the model's index reply is unparseable.
 // ============================================================================
@@ -1124,6 +1243,7 @@ async function scenarioProbationPolling() {
   await scenarioCostMaths();
   await scenarioGdeltQueue();
   await scenarioNews();
+  await scenarioNewsOptionalRouting();
   await scenarioShortlistFallback();
   await scenarioProbationCeilings();
   await scenarioLinkPendingDefer();
