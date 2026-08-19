@@ -11,6 +11,7 @@
 
 const scheduler = require('../lib/scheduler');
 const gdelt = require('../lib/gdelt');
+const feeds = require('../lib/feeds');
 const cost = require('../lib/cost');
 const store = require('../lib/store'); // migrateProfiles/referenceName are pure - no disk touched
 
@@ -161,6 +162,10 @@ function profile(over) {
     repliedTo: [],
     // ---- news config + state ----
     botType: over.botType || 'conversational',
+    newsUseAllFeeds: over.newsUseAllFeeds != null ? over.newsUseAllFeeds : true,
+    newsFeedSelection: over.newsFeedSelection || [],
+    newsCustomFeeds: over.newsCustomFeeds || [],
+    newsUseGdelt: over.newsUseGdelt || false,
     newsQuery: over.newsQuery || '',
     newsRoutingRules: over.newsRoutingRules || [],
     newsStrictRouting: over.newsStrictRouting || false,
@@ -187,6 +192,21 @@ function seendateFrom(ms) {
   return s.slice(0, 4) + s.slice(5, 7) + s.slice(8, 10) + 'T' + s.slice(11, 13) + s.slice(14, 16) + s.slice(17, 19) + 'Z';
 }
 function jsonBody(obj) { return Buffer.from(JSON.stringify(obj), 'utf8'); }
+
+// A minimal feeds-client stub for the scheduler dep. Returns a fixed item list
+// (default empty) for any feed URL set, so the GDELT-driven news scenarios can
+// keep sourcing via the GDELT secondary with feeds contributing nothing and NO
+// network. `calls` counts fetchItems invocations.
+function makeFeedsStub(items) {
+  const stub = {
+    calls: 0,
+    fetchItems: async () => { stub.calls++; return { ok: true, items: (items || []).slice(), health: [], refreshing: [] }; },
+    health: () => [],
+    canonicalUrl: gdelt.canonicalUrl,
+  };
+  return stub;
+}
+const EMPTY_FEEDS = () => makeFeedsStub([]);
 
 // ---- stub feddit ------------------------------------------------------------
 
@@ -763,15 +783,18 @@ async function scenarioGdeltNonBlocking() {
   const rule = [{ keywords: [], subFeddit: 'general', weight: 1 }];
   // The preview target is DISABLED so the tick ignores it; it exists only to hold
   // the queue via previewNews().
-  const previewP = profile({ id: 'prev', botType: 'news', mode: 'post', enabled: false, postsPerHour: 60, newsQuery: 'q', newsRoutingRules: rule, newsMinGapMinutes: 0 });
-  const schedNewsP = profile({ id: 'snews', botType: 'news', mode: 'post', postsPerHour: 60, newsQuery: 'q', newsRoutingRules: rule, newsMinGapMinutes: 0 });
+  // GDELT is now the SECONDARY source (default off), so these profiles opt in via
+  // newsUseGdelt:true; feeds contribute nothing (empty stub) so GDELT is the only
+  // source this tick - exactly the "stuck GDELT" condition this scenario probes.
+  const previewP = profile({ id: 'prev', botType: 'news', mode: 'post', enabled: false, postsPerHour: 60, newsUseGdelt: true, newsQuery: 'q', newsRoutingRules: rule, newsMinGapMinutes: 0 });
+  const schedNewsP = profile({ id: 'snews', botType: 'news', mode: 'post', postsPerHour: 60, newsUseGdelt: true, newsQuery: 'q', newsRoutingRules: rule, newsMinGapMinutes: 0 });
   const convP = profile({ id: 'conv', botType: 'conversational', mode: 'post', postsPerHour: 60, postFeddits: ['general'] });
   schedNewsP.sched.nextPostAt = clock.now();
   convP.sched.nextPostAt = clock.now();
 
   const store = makeStore([schedNewsP, convP, previewP]);
   const providers = makeProviders();
-  const sched = scheduler.createScheduler({ store, providers, feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gd, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+  const sched = scheduler.createScheduler({ store, providers, feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gd, feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY });
 
   // Kick off the preview but do NOT await it - it parks on the retry sleep.
   let previewResolved = false;
@@ -828,14 +851,14 @@ async function scenarioNews() {
   // The canonical key strips utm_* and the #fragment (but keeps ?id=7).
   eq(gd.canonicalUrl(A.url), 'https://space.com/rocket?id=7', 'canonical URL strips utm_* + fragment, keeps host/path/id');
 
-  const p = profile({ id: 'news1', botType: 'news', mode: 'post', postsPerHour: 60, provider: 'ollama', newsQuery: 'rocket', newsRoutingRules: rules, newsMaxAgeHours: 24, newsMaxPerDomainPerDay: 5, newsMinGapMinutes: 0 });
+  const p = profile({ id: 'news1', botType: 'news', mode: 'post', postsPerHour: 60, provider: 'ollama', newsUseGdelt: true, newsQuery: 'rocket', newsRoutingRules: rules, newsMaxAgeHours: 24, newsMaxPerDomainPerDay: 5, newsMinGapMinutes: 0 });
   p.sched.nextPostAt = clock.now();
   const store = makeStore([p]);
   const keyA = gd.canonicalUrl(A.url);
 
   // Run 1: freshest highest-weight FRESH article is A (mega is too old) -> f/space.
   const fed1 = makeFeddit({ feddits: {}, comments: {} });
-  const s1 = scheduler.createScheduler({ store, providers: makeProviders(), feddit: fed1, gdelt: gd, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+  const s1 = scheduler.createScheduler({ store, providers: makeProviders(), feddit: fed1, gdelt: gd, feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY });
   const r1 = await s1.runTick();
   const a1 = r1.results.find((x) => x && x.action === 'news');
   eq(a1.feddit, 'space', 'run1 posted the fresh w5 rocket article to f/space (stale w9 mega excluded)');
@@ -847,7 +870,7 @@ async function scenarioNews() {
   // NOT be reposted; the next candidate C posts to f/sports.
   clock.advance(60_000); p.sched.nextPostAt = clock.now();
   const fed2 = makeFeddit({ feddits: {}, comments: {} });
-  const s2 = scheduler.createScheduler({ store, providers: makeProviders(), feddit: fed2, gdelt: gd, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+  const s2 = scheduler.createScheduler({ store, providers: makeProviders(), feddit: fed2, gdelt: gd, feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY });
   const r2 = await s2.runTick();
   const a2 = r2.results.find((x) => x && x.action === 'news');
   eq(a2.feddit, 'sports', 'run2 (post-restart) posted C to f/sports - A was NOT reposted');
@@ -855,7 +878,7 @@ async function scenarioNews() {
 
   // Run 3: only the stale mega article is left -> nothing postable (freshness).
   clock.advance(60_000); p.sched.nextPostAt = clock.now();
-  const s3 = scheduler.createScheduler({ store, providers: makeProviders(), feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gd, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+  const s3 = scheduler.createScheduler({ store, providers: makeProviders(), feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gd, feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY });
   const r3 = await s3.runTick();
   const a3 = r3.results.find((x) => x && x.action === 'news');
   eq(a3.note, 'none', 'run3 posted nothing: only the stale mega article remained (freshness cap held)');
@@ -867,14 +890,14 @@ async function scenarioNews() {
     const d1 = { url: 'https://dup.com/1', domain: 'dup.com', title: 'Dup one', seendate: seendateFrom(clock2.now() - 1 * H) };
     const d2 = { url: 'https://dup.com/2', domain: 'dup.com', title: 'Dup two', seendate: seendateFrom(clock2.now() - 1 * H) };
     const gdD = gdelt.createGdelt({ now: clock2.now, sleep: async (ms) => clock2.advance(ms), minSpacingMs: 0, fetch: async () => ({ status: 200, arrayBuffer: async () => jsonBody({ articles: [d1, d2] }) }) });
-    const pd = profile({ id: 'newsD', botType: 'news', mode: 'post', postsPerHour: 60, newsQuery: 'dup', newsRoutingRules: [{ keywords: [], subFeddit: 'dump', weight: 1 }], newsMaxAgeHours: 24, newsMaxPerDomainPerDay: 1, newsMinGapMinutes: 0 });
+    const pd = profile({ id: 'newsD', botType: 'news', newsUseGdelt: true, mode: 'post', postsPerHour: 60, newsQuery: 'dup', newsRoutingRules: [{ keywords: [], subFeddit: 'dump', weight: 1 }], newsMaxAgeHours: 24, newsMaxPerDomainPerDay: 1, newsMinGapMinutes: 0 });
     pd.sched.nextPostAt = clock2.now();
     const storeD = makeStore([pd]);
-    const sd1 = scheduler.createScheduler({ store: storeD, providers: makeProviders(), feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gdD, now: clock2.now, random: () => 0, getDeepseekKey: KEY });
+    const sd1 = scheduler.createScheduler({ store: storeD, providers: makeProviders(), feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gdD, feeds: EMPTY_FEEDS(), now: clock2.now, random: () => 0, getDeepseekKey: KEY });
     const rd1 = await sd1.runTick();
     eq(rd1.results.find((x) => x && x.action === 'news').domain, 'dup.com', 'domain-cap run1 posted a dup.com article');
     clock2.advance(60_000); pd.sched.nextPostAt = clock2.now();
-    const sd2 = scheduler.createScheduler({ store: storeD, providers: makeProviders(), feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gdD, now: clock2.now, random: () => 0, getDeepseekKey: KEY });
+    const sd2 = scheduler.createScheduler({ store: storeD, providers: makeProviders(), feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gdD, feeds: EMPTY_FEEDS(), now: clock2.now, random: () => 0, getDeepseekKey: KEY });
     const rd2 = await sd2.runTick();
     eq(rd2.results.find((x) => x && x.action === 'news').note, 'none', 'domain-cap run2 posted nothing: dup.com daily cap (1) already reached');
   }
@@ -900,7 +923,7 @@ async function scenarioNewsOptionalRouting() {
     p.sched.nextPostAt = clock.now();
     const store = makeStore([p]);
     const fed = makeFeddit({ feddits: {}, comments: {} });
-    const s = scheduler.createScheduler({ store, providers: makeProviders(), feddit: fed, gdelt: gd, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    const s = scheduler.createScheduler({ store, providers: makeProviders(), feddit: fed, gdelt: gd, feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY });
     const r = await s.runTick();
     return { r, store, fed, gd, action: r.results.find((x) => x && x.action === 'news') };
   }
@@ -909,7 +932,7 @@ async function scenarioNewsOptionalRouting() {
   {
     const clock = makeClock(1_600_000_000_000);
     const art = freshArt({ url: 'https://news.org/a', domain: 'news.org', title: 'General thing happened', seendate: seendateFrom(clock.now() - 1 * H) });
-    const p = profile({ id: 'nf-a', botType: 'news', mode: 'post', postsPerHour: 60, newsQuery: 'general', newsRoutingRules: [], postFeddits: ['general'], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
+    const p = profile({ id: 'nf-a', botType: 'news', newsUseGdelt: true, mode: 'post', postsPerHour: 60, newsQuery: 'general', newsRoutingRules: [], postFeddits: ['general'], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
     const { action, fed } = await tick(p, [art], clock);
     ok(action && action.ok === true, '(a) rule-less profile with a default target acted');
     eq(action.feddit, 'general', '(a) NO routing rules -> article posts to the default target f/general');
@@ -930,16 +953,16 @@ async function scenarioNewsOptionalRouting() {
     nonMatch.seendate = seendateFrom(clock.now() - 2 * H);
     // Shared store across two ticks so the run-1 pick is deduped for run 2.
     const gd = gdelt.createGdelt({ now: clock.now, sleep: async (ms) => clock.advance(ms), minSpacingMs: 0, fetch: async () => ({ status: 200, arrayBuffer: async () => jsonBody({ articles: [match, nonMatch] }) }) });
-    const p = profile({ id: 'nf-b', botType: 'news', mode: 'post', postsPerHour: 60, newsQuery: 'q', newsRoutingRules: rules, postFeddits: ['general'], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
+    const p = profile({ id: 'nf-b', botType: 'news', newsUseGdelt: true, mode: 'post', postsPerHour: 60, newsQuery: 'q', newsRoutingRules: rules, postFeddits: ['general'], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
     const store = makeStore([p]);
 
     p.sched.nextPostAt = clock.now();
-    const s1 = scheduler.createScheduler({ store, providers: makeProviders(), feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gd, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    const s1 = scheduler.createScheduler({ store, providers: makeProviders(), feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gd, feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY });
     const a1 = (await s1.runTick()).results.find((x) => x && x.action === 'news');
     eq(a1.feddit, 'space', '(b) rule match routes the rocket article to f/space (weight 5 beats the fallback)');
 
     clock.advance(60_000); p.sched.nextPostAt = clock.now();
-    const s2 = scheduler.createScheduler({ store, providers: makeProviders(), feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gd, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    const s2 = scheduler.createScheduler({ store, providers: makeProviders(), feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gd, feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY });
     const a2 = (await s2.runTick()).results.find((x) => x && x.action === 'news');
     eq(a2.feddit, 'general', '(b) the non-matching article falls back to the default target f/general (NOT dropped)');
   }
@@ -952,13 +975,13 @@ async function scenarioNewsOptionalRouting() {
 
     const clockOff = makeClock(1_600_000_000_000);
     nonMatch.seendate = seendateFrom(clockOff.now() - 1 * H);
-    const pOff = profile({ id: 'nf-c-off', botType: 'news', mode: 'post', postsPerHour: 60, newsQuery: 'q', newsRoutingRules: rules, newsStrictRouting: false, postFeddits: ['general'], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
+    const pOff = profile({ id: 'nf-c-off', botType: 'news', newsUseGdelt: true, mode: 'post', postsPerHour: 60, newsQuery: 'q', newsRoutingRules: rules, newsStrictRouting: false, postFeddits: ['general'], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
     const off = await tick(pOff, [nonMatch], clockOff);
     eq(off.action.feddit, 'general', '(c) strict OFF: the non-match still posts to the default target');
 
     const clockOn = makeClock(1_600_000_000_000);
     nonMatch.seendate = seendateFrom(clockOn.now() - 1 * H);
-    const pOn = profile({ id: 'nf-c-on', botType: 'news', mode: 'post', postsPerHour: 60, newsQuery: 'q', newsRoutingRules: rules, newsStrictRouting: true, postFeddits: ['general'], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
+    const pOn = profile({ id: 'nf-c-on', botType: 'news', newsUseGdelt: true, mode: 'post', postsPerHour: 60, newsQuery: 'q', newsRoutingRules: rules, newsStrictRouting: true, postFeddits: ['general'], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
     const on = await tick(pOn, [nonMatch], clockOn);
     eq(on.action.note, 'none', '(c) strict ON: the non-match is DROPPED (drop-on-no-match restored)');
     ok(!on.store.hasPostedNews('nf-c-on', on.gd.canonicalUrl(nonMatch.url)), '(c) strict ON did not consume the dropped article');
@@ -968,7 +991,7 @@ async function scenarioNewsOptionalRouting() {
   {
     const clock = makeClock(1_600_000_000_000);
     const art = { url: 'https://news.org/d', domain: 'news.org', title: 'Something newsworthy', seendate: seendateFrom(clock.now() - 1 * H) };
-    const p = profile({ id: 'nf-d', botType: 'news', mode: 'post', postsPerHour: 60, newsQuery: 'q', newsRoutingRules: [], postFeddits: [], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
+    const p = profile({ id: 'nf-d', botType: 'news', newsUseGdelt: true, mode: 'post', postsPerHour: 60, newsQuery: 'q', newsRoutingRules: [], postFeddits: [], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
     const { action, store, fed, gd } = await tick(p, [art], clock);
     eq(action.note, 'misconfigured', '(d) no rules + no target -> flagged as misconfigured');
     eq(action.ok, false, '(d) a misconfigured news profile does not post');
@@ -981,7 +1004,7 @@ async function scenarioNewsOptionalRouting() {
   {
     const clock = makeClock(1_600_000_000_000);
     const art = { url: 'https://news.org/d2', domain: 'news.org', title: 'Another story', seendate: seendateFrom(clock.now() - 1 * H) };
-    const p = profile({ id: 'nf-d2', botType: 'news', mode: 'post', postsPerHour: 60, newsQuery: 'q', newsRoutingRules: [], newsStrictRouting: true, postFeddits: ['general'], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
+    const p = profile({ id: 'nf-d2', botType: 'news', newsUseGdelt: true, mode: 'post', postsPerHour: 60, newsQuery: 'q', newsRoutingRules: [], newsStrictRouting: true, postFeddits: ['general'], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
     const { action } = await tick(p, [art], clock);
     eq(action.note, 'misconfigured', '(d2) strict ON with no routing rules -> flagged as misconfigured');
   }
@@ -1017,10 +1040,10 @@ async function scenarioShortlistFallback() {
     generate: async (g) => { gens++; return { provider: 'ollama', model: g.model, text: 'honestly they all look good to me', ms: 1, usage: { inputTokens: 10, outputTokens: 6, cachedInputTokens: 0 } }; },
     stats: () => ({ calls: gens, ollama: { calls: gens, maxConcurrent: 1 }, deepseek: { calls: 0, maxConcurrent: 0 }, maxConcurrent: 1 }),
   };
-  const p = profile({ id: 'nl', botType: 'news', mode: 'post', postsPerHour: 60, newsQuery: 'q', newsLetBotChoose: true, newsRoutingRules: [{ keywords: [], subFeddit: 'general', weight: 1 }], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
+  const p = profile({ id: 'nl', botType: 'news', newsUseGdelt: true, mode: 'post', postsPerHour: 60, newsQuery: 'q', newsLetBotChoose: true, newsRoutingRules: [{ keywords: [], subFeddit: 'general', weight: 1 }], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
   p.sched.nextPostAt = clock.now();
   const store = makeStore([p]);
-  const sched = scheduler.createScheduler({ store, providers, feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gd, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+  const sched = scheduler.createScheduler({ store, providers, feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gd, feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY });
 
   let threw = false, r = null;
   try { r = await sched.runTick(); } catch { threw = true; }
@@ -1348,6 +1371,253 @@ async function scenarioProbationPolling() {
   eq(feddit.calls.botInfo.length, 3, 'never polled again once off probation (terminal transition)');
 }
 
+// ============================================================================
+// Scenario 18: publisher RSS/Atom feeds (lib/feeds) as the PRIMARY news source.
+// Proves: RSS AND Atom parsing (entities, CDATA, every image location); the
+// shared process-wide cache (N reads of one feed => ONE fetch, incl. concurrent);
+// conditional GET (stored ETag/Last-Modified sent, 304 handled); a failing feed
+// is isolated with backoff and never breaks the run; keyword filtering (incl. the
+// empty case); and the whole existing news pipeline running with feeds as source.
+// All with a fake clock + stub fetch: NO live network, NO real waiting.
+// ============================================================================
+
+// A minimal fetch Response stub for a feed request.
+function feedRes(status, xml, headers) {
+  const h = {};
+  for (const k of Object.keys(headers || {})) h[k.toLowerCase()] = headers[k];
+  return { status, headers: { get: (n) => h[String(n).toLowerCase()] || '' }, arrayBuffer: async () => Buffer.from(xml || '', 'utf8') };
+}
+
+const RSS_SAMPLE = [
+  '<?xml version="1.0" encoding="UTF-8"?>',
+  '<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">',
+  '<channel><title>Test Feed</title>',
+  '  <item>',
+  '    <title>Rockets &amp; Robots take off</title>',
+  '    <link>https://pub.example.com/a/rockets-robots</link>',
+  '    <description><![CDATA[A story about <b>rockets</b> &amp; robots.]]></description>',
+  '    <pubDate>Wed, 19 Aug 2026 08:00:00 GMT</pubDate>',
+  '    <media:thumbnail url="https://img.example.com/thumb.jpg"/>',
+  '  </item>',
+  '  <item>',
+  '    <title>Weather &#38; sun &#x26; more</title>',
+  '    <link>https://pub.example.com/b/weather</link>',
+  '    <description>Plain description no markup</description>',
+  '    <pubDate>Wed, 19 Aug 2026 07:00:00 GMT</pubDate>',
+  '    <media:content url="https://img.example.com/mc.jpg" medium="image" type="image/jpeg"/>',
+  '  </item>',
+  '  <item>',
+  '    <title>Enclosure item</title>',
+  '    <link>https://pub.example.com/c/enc</link>',
+  '    <description>desc</description>',
+  '    <pubDate>Wed, 19 Aug 2026 06:00:00 GMT</pubDate>',
+  '    <enclosure url="https://img.example.com/enc.png" type="image/png" length="1234"/>',
+  '  </item>',
+  '  <item>',
+  '    <title>Img in body</title>',
+  '    <link>https://pub.example.com/d/img</link>',
+  '    <description><![CDATA[<p>text</p><img src="https://img.example.com/inbody.jpg" alt="x"/>]]></description>',
+  '    <pubDate>Wed, 19 Aug 2026 05:00:00 GMT</pubDate>',
+  '  </item>',
+  '</channel></rss>',
+].join('\n');
+
+const ATOM_SAMPLE = [
+  '<?xml version="1.0" encoding="utf-8"?>',
+  '<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">',
+  '  <title>Atom Test</title>',
+  '  <entry>',
+  '    <title>Atom &amp; entities &lt;ok&gt;</title>',
+  '    <link rel="edit" href="https://pub.example.com/atom/one/edit"/>',
+  '    <link rel="alternate" type="text/html" href="https://pub.example.com/atom/one"/>',
+  '    <summary><![CDATA[Summary with <em>markup</em> &amp; entity]]></summary>',
+  '    <published>2026-08-19T08:00:00Z</published>',
+  '    <media:thumbnail url="https://img.example.com/atom.jpg"/>',
+  '  </entry>',
+  '</feed>',
+].join('\n');
+
+async function scenarioFeeds() {
+  console.log('\n[18] feeds: RSS+Atom parse (entities/CDATA/images), shared cache, conditional GET/304, failure isolation, keyword filter, full pipeline');
+
+  // --- 18.1 RSS parsing: entities, CDATA, and each image location -----------
+  {
+    const items = feeds.parseFeed(RSS_SAMPLE);
+    eq(items.length, 4, 'RSS: parsed all four items');
+    eq(items[0].title, 'Rockets & Robots take off', 'RSS: &amp; entity decoded in title');
+    eq(items[0].url, 'https://pub.example.com/a/rockets-robots', 'RSS: real publisher link extracted');
+    ok(Number.isFinite(items[0].seenAt), 'RSS: pubDate parsed to epoch ms');
+    eq(items[0].summary, 'A story about rockets & robots.', 'RSS: CDATA + entity decoded and HTML stripped for summary');
+    eq(items[0].socialimage, 'https://img.example.com/thumb.jpg', 'RSS image: media:thumbnail');
+    eq(items[1].title, 'Weather & sun & more', 'RSS: numeric (&#38;) and hex (&#x26;) entities decoded');
+    eq(items[1].socialimage, 'https://img.example.com/mc.jpg', 'RSS image: media:content type=image');
+    eq(items[2].socialimage, 'https://img.example.com/enc.png', 'RSS image: enclosure type=image');
+    eq(items[3].socialimage, 'https://img.example.com/inbody.jpg', 'RSS image: <img> in the description body (last resort)');
+    eq(items[3].summary, 'text', 'RSS: <img>-only body still yields clean text summary');
+  }
+
+  // --- 18.2 Atom parsing: entities, CDATA, alternate-link, image ------------
+  {
+    const items = feeds.parseFeed(ATOM_SAMPLE);
+    eq(items.length, 1, 'Atom: parsed the entry');
+    eq(items[0].title, 'Atom & entities <ok>', 'Atom: entities decoded in title');
+    eq(items[0].url, 'https://pub.example.com/atom/one', 'Atom: picked the rel=alternate html link (not rel=edit)');
+    eq(items[0].summary, 'Summary with markup & entity', 'Atom: CDATA summary decoded + HTML stripped');
+    eq(items[0].socialimage, 'https://img.example.com/atom.jpg', 'Atom image: media:thumbnail');
+    ok(Number.isFinite(items[0].seenAt), 'Atom: <published> ISO date parsed');
+  }
+
+  // --- 18.3 Shared cache: N reads of one feed => ONE fetch ------------------
+  {
+    const clock = makeClock(1_600_000_000_000);
+    const F = 'https://feed.example.com/rss';
+    let fc = 0;
+    const inst = feeds.createFeeds({
+      now: clock.now, sleep: async (ms) => clock.advance(ms), random: () => 0, timeoutMs: 0,
+      fetch: async () => { fc++; return feedRes(200, RSS_SAMPLE, { etag: '"v1"' }); },
+    });
+    const r1 = await inst.fetchItems([F]);
+    const r2 = await inst.fetchItems([F]); // within TTL -> served from cache
+    eq(fc, 1, 'two sequential reads of one feed caused ONE network fetch (shared cache)');
+    ok(r1.items.length === 4 && r2.items.length === 4, 'both reads returned the cached items');
+
+    inst.clearCache(); fc = 0;
+    const [c1, c2] = await Promise.all([inst.fetchItems([F]), inst.fetchItems([F])]);
+    eq(fc, 1, 'two CONCURRENT reads of one feed still caused ONE fetch (in-flight dedupe)');
+    ok(c1.items.length === 4 && c2.items.length === 4, 'both concurrent reads got the items');
+  }
+
+  // --- 18.4 Conditional GET: stored validators sent, 304 handled -----------
+  {
+    const clock = makeClock(1_600_000_000_000);
+    const F = 'https://cond.example.com/rss';
+    const reqHeaders = [];
+    let call = 0;
+    const inst = feeds.createFeeds({
+      now: clock.now, sleep: async (ms) => clock.advance(ms), random: () => 0, timeoutMs: 0, ttlMs: 1000,
+      fetch: async (url, o) => {
+        call++; reqHeaders.push(o.headers || {});
+        if (call === 1) return feedRes(200, RSS_SAMPLE, { etag: '"v1"', 'last-modified': 'Wed, 19 Aug 2026 08:00:00 GMT' });
+        return feedRes(304, '', {});
+      },
+    });
+    const a = await inst.fetchItems([F]);
+    ok(!reqHeaders[0]['If-None-Match'] && !reqHeaders[0]['If-Modified-Since'], 'first fetch sends NO validators (nothing stored yet)');
+    ok(a.items.length === 4, 'first fetch parsed and cached the items');
+
+    clock.advance(2000); // past the 1s TTL -> a revalidation is due
+    const b = await inst.fetchItems([F]);
+    eq(reqHeaders[1]['If-None-Match'], '"v1"', 'conditional GET sent the stored ETag (If-None-Match)');
+    eq(reqHeaders[1]['If-Modified-Since'], 'Wed, 19 Aug 2026 08:00:00 GMT', 'conditional GET sent the stored Last-Modified');
+    eq(b.items.length, 4, '304 served the cached items unchanged');
+    const h = inst.health([F])[0];
+    ok(h.ok === true && h.lastStatus === 304, 'a 304 keeps the feed healthy (lastStatus 304)');
+  }
+
+  // --- 18.5 A failing feed is isolated (backoff) and never breaks the run ---
+  {
+    const clock = makeClock(1_600_000_000_000);
+    const GOOD = 'https://good.example.com/rss';
+    const BAD = 'https://bad.example.com/rss';   // throws
+    const BAD2 = 'https://bad2.example.com/rss';  // HTTP 500
+    let goodFetches = 0, badFetches = 0;
+    const inst = feeds.createFeeds({
+      now: clock.now, sleep: async (ms) => clock.advance(ms), random: () => 0, timeoutMs: 0,
+      fetch: async (url) => {
+        if (url === BAD) { badFetches++; throw new Error('boom'); }
+        if (url === BAD2) return feedRes(500, 'err', {});
+        goodFetches++; return feedRes(200, RSS_SAMPLE, {});
+      },
+    });
+    let threw = false, r = null;
+    try { r = await inst.fetchItems([BAD, BAD2, GOOD]); } catch { threw = true; }
+    ok(!threw, 'a failing feed did not throw / break the whole fetch');
+    ok(r && r.items.length === 4, 'the healthy feed still yielded its items despite two broken siblings');
+    const hb = inst.health([BAD])[0];
+    ok(hb.ok === false && /boom/.test(hb.error), 'the throwing feed is marked unhealthy with the reason');
+    ok(hb.nextRetryAt > clock.now(), 'the failing feed has a future retry time (backoff), not retried instantly');
+    const hb2 = inst.health([BAD2])[0];
+    ok(hb2.ok === false && hb2.lastStatus === 500, 'the HTTP-500 feed is marked unhealthy with its status');
+
+    // A read within the backoff window must NOT re-hit the failing feed.
+    const before = badFetches;
+    await inst.fetchItems([BAD, GOOD]);
+    eq(badFetches, before, 'a read within the backoff window did NOT re-fetch the failing feed');
+  }
+
+  // --- 18.6 Keyword filtering behaves as documented (incl. the empty case) --
+  {
+    const items = [
+      { title: 'Rocket launch success', summary: 'a rocket went up' },
+      { title: 'Sports final score', summary: 'the football result' },
+      { title: 'Robot factory opens', summary: 'automation and AI' },
+    ];
+    eq(scheduler.filterByKeywords(items, '').length, 3, 'keywords EMPTY => every item is a candidate');
+    eq(scheduler.filterByKeywords(items, '   ').length, 3, 'whitespace-only keywords => everything (empty case)');
+    eq(scheduler.filterByKeywords(items, 'rocket').length, 1, 'single keyword matches the title');
+    eq(scheduler.filterByKeywords(items, 'football').length, 1, 'keyword matches the summary/description too');
+    eq(scheduler.filterByKeywords(items, 'rocket OR robot').length, 2, 'OR is dropped; ANY term matches (rocket|robot)');
+    eq(scheduler.filterByKeywords(items, '"final score"').length, 1, 'a quoted phrase matches as a whole');
+    eq(scheduler.filterByKeywords(items, 'nonesuch').length, 0, 'no term matches => zero candidates');
+    eq(scheduler.parseKeywords('   ').length, 0, 'parseKeywords: blank => no terms');
+    eq(JSON.stringify(scheduler.parseKeywords('(rocket OR "deep space")')), JSON.stringify(['rocket', 'deep space']), 'parseKeywords: strips parens/OR, keeps the quoted phrase whole');
+
+    // effectiveFeedUrls: empty selection = all shipped; selection narrows; customs added.
+    const all = scheduler.effectiveFeedUrls({}, feeds.DEFAULT_FEEDS);
+    eq(all.length, feeds.DEFAULT_FEEDS.length, 'default (newsUseAllFeeds true) => ALL shipped feeds');
+    const narrowed = scheduler.effectiveFeedUrls({ newsUseAllFeeds: false, newsFeedSelection: [feeds.DEFAULT_FEEDS[0].feedUrl], newsCustomFeeds: ['https://my.example.com/rss'] }, feeds.DEFAULT_FEEDS);
+    eq(narrowed.length, 2, 'newsUseAllFeeds false + one-feed selection + one custom => exactly those two');
+    ok(narrowed.includes('https://my.example.com/rss'), 'the custom feed URL is included');
+    const customOnly = scheduler.effectiveFeedUrls({ newsUseAllFeeds: false, newsFeedSelection: [], newsCustomFeeds: ['https://only.example.com/rss'] }, feeds.DEFAULT_FEEDS);
+    eq(JSON.stringify(customOnly), JSON.stringify(['https://only.example.com/rss']), 'newsUseAllFeeds false + empty selection => ONLY the custom feeds (zero shipped)');
+  }
+
+  // --- 18.7 The whole existing news pipeline runs with feeds as the source --
+  {
+    const H = 3_600_000;
+    const clock = makeClock(1_600_000_000_000);
+    const recent = new Date(clock.now() - 1 * H).toISOString();
+    const xml = [
+      '<rss version="2.0"><channel><title>P</title>',
+      '<item><title>Rocket launch tonight</title><link>https://pub.example.com/rocket</link><description>space launch</description><pubDate>' + recent + '</pubDate></item>',
+      '<item><title>Cooking recipes for autumn</title><link>https://pub.example.com/food</link><description>food and recipes</description><pubDate>' + recent + '</pubDate></item>',
+      '</channel></rss>',
+    ].join('\n');
+    const SHIPPED = feeds.DEFAULT_FEEDS[0].feedUrl; // select ONE shipped feed
+    let fc = 0;
+    const inst = feeds.createFeeds({
+      now: clock.now, sleep: async (ms) => clock.advance(ms), random: () => 0, timeoutMs: 0,
+      fetch: async () => { fc++; return feedRes(200, xml, {}); },
+    });
+    // Feeds-ONLY (GDELT off). Keyword 'rocket' should keep the rocket story and
+    // drop the cooking one, then route to the default target f/general.
+    const p = profile({ id: 'feednews', botType: 'news', mode: 'post', postsPerHour: 60, newsUseGdelt: false, newsQuery: 'rocket', newsUseAllFeeds: false, newsFeedSelection: [SHIPPED], postFeddits: ['general'], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
+    p.sched.nextPostAt = clock.now();
+    const store = makeStore([p]);
+    const fed = makeFeddit({ feddits: {}, comments: {} });
+    // Blocking preview would fetch; the scheduled tick is non-blocking, so warm
+    // the shared cache first (as a real deployment does over its first tick).
+    await inst.fetchItems([SHIPPED]);
+    const sched = scheduler.createScheduler({ store, providers: makeProviders(), feddit: fed, gdelt: null, feeds: inst, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    const r = await sched.runTick();
+    const a = r.results.find((x) => x && x.action === 'news');
+    ok(a && a.ok === true, 'feeds-only news profile acted');
+    eq(a.feddit, 'general', 'posted the feed article to the default target f/general');
+    eq(a.domain, 'pub.example.com', 'the REAL publisher domain (not a feed/aggregator) was used');
+    ok(store.hasPostedNews('feednews', feeds.canonicalUrl('https://pub.example.com/rocket')), 'permanent canonical dedupe recorded the posted publisher URL');
+    eq(fed.calls.submit.length, 0, 'dry-run: ZERO live submits');
+    ok(a.headline === 'Rocket launch tonight', 'the keyword-matched story (not the cooking one) was chosen');
+
+    // Second tick post-restart: rocket is deduped, cooking is filtered by keyword
+    // -> nothing to post (proves dedupe + keyword filter both hold on the feeds path).
+    clock.advance(60_000); p.sched.nextPostAt = clock.now();
+    const sched2 = scheduler.createScheduler({ store, providers: makeProviders(), feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: null, feeds: inst, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    const r2 = await sched2.runTick();
+    const a2 = r2.results.find((x) => x && x.action === 'news');
+    eq(a2.note, 'none', 'second tick posted nothing: rocket deduped, cooking keyword-filtered');
+  }
+}
+
 // ---- run --------------------------------------------------------------------
 
 (async () => {
@@ -1369,6 +1639,7 @@ async function scenarioProbationPolling() {
   await scenarioLinkPendingDefer();
   await scenarioLinkTerminalStates();
   await scenarioProbationPolling();
+  await scenarioFeeds();
   await scenarioRealSmoke();
 
   console.log('\n----------------------------------------');

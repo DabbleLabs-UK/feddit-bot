@@ -23,6 +23,7 @@ const secrets = require('./lib/secrets');
 const cost = require('./lib/cost');
 const feddit = require('./lib/feddit');
 const gdelt = require('./lib/gdelt');
+const feeds = require('./lib/feeds');
 const scheduler = require('./lib/scheduler');
 
 const ollama = providers.ollama; // the ollama provider (status/isBusy/generate)
@@ -196,6 +197,12 @@ async function handleApi(req, res, urlPath, query) {
     return sendJson(res, 200, r.data);
   }
 
+  // GET /api/news/feeds - the shipped default RSS/Atom feed list, so the news
+  // config UI can render the (optional) feed-picker. Static; no network.
+  if (method === 'GET' && urlPath === '/api/news/feeds') {
+    return sendJson(res, 200, { feeds: feeds.DEFAULT_FEEDS });
+  }
+
   // GET /api/profiles - list (tokens redacted).
   if (method === 'GET' && urlPath === '/api/profiles') {
     return sendJson(res, 200, { profiles: store.listProfiles().map(safeProfile) });
@@ -346,6 +353,14 @@ async function handleApi(req, res, urlPath, query) {
       return sendJson(res, 200, { message: prog ? prog.message : null });
     }
 
+    // GET /api/profiles/:id/feed-health - this profile's effective feeds joined
+    // with each feed's live health (ok / failing + why / last good fetch), so a
+    // silently dead feed is visible in the UI. Reads the shared cache; no fetch.
+    if (method === 'GET' && sub === '/feed-health') {
+      if (!existing) return sendJson(res, 404, { error: 'No such profile' });
+      return sendJson(res, 200, { feeds: schedulerHandle.feedHealth(id) });
+    }
+
     // POST /api/profiles/:id/clear-posted - wipe this profile's posted-article
     // history (and per-domain counts). Needed because dry-run consumes the dedupe.
     if (method === 'POST' && sub === '/clear-posted') {
@@ -391,6 +406,7 @@ const schedulerHandle = scheduler.start({
   providers,
   feddit,
   gdelt,
+  feeds,
   getDeepseekKey: () => secrets.getDeepseekKey(),
 });
 // -----------------------------------------------------------------------------

@@ -348,6 +348,19 @@ function probationLine(p) {
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
 function csv(a) { return Array.isArray(a) ? a.join(', ') : (a || ''); }
 function parseCsv(s) { return String(s || '').split(',').map(x => x.trim()).filter(Boolean); }
+// One-per-line list (e.g. the custom-feed URLs textarea) back to a trimmed array.
+function parseLines(s) { return String(s || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean); }
+// Human "how long ago" for a past epoch-ms timestamp (0/absent = never).
+function ago(ts) {
+  if (!ts) return 'never';
+  const s = Math.round((Date.now() - ts) / 1000);
+  if (s < 60) return s + 's ago';
+  const m = Math.round(s / 60);
+  if (m < 60) return m + 'm ago';
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '') + ' ago';
+  return Math.floor(h / 24) + 'd ago';
+}
 
 // Build a label with an optional inline "?" help popover. `text` is the label,
 // `help` a plain-English sentence-or-two explanation (revealed on click/hover).
@@ -472,9 +485,34 @@ function renderEditor(p) {
     <div class="section" id="newsSection">
       <h2>News settings</h2>
       <div class="warnbox" id="newsConfigWarn" style="display:none"></div>
-      <div class="field full"><label>${lbl('Watch keywords / GDELT query', 'The terms this bot searches for. Uses GDELT DOC 2.0 syntax: plain words are ANDed, quote a phrase for an exact match, and use OR / parentheses to combine. Example: "artificial intelligence" OR (robot AND factory). English-only results are forced automatically.')}</label>
-        <input id="f_newsQuery" value="${esc(p.newsQuery)}" placeholder='e.g. "artificial intelligence" OR robotics'></div>
-      <div class="hint">Code (not the model) does the searching and filtering; the model only writes the post title.</div>
+      <div class="field full"><label>${lbl('Watch keywords', 'The keywords this bot watches for. They FILTER the articles pulled from your feeds: an article is a candidate if ANY keyword appears in its headline or description (case-insensitive). Leave this BLANK to accept everything from the selected feeds. Quote a phrase for an exact match, e.g. "artificial intelligence" robotics. If you also switch on the GDELT option below, these same words become its search query, where OR / parentheses also work.')}</label>
+        <input id="f_newsQuery" value="${esc(p.newsQuery)}" placeholder='blank = everything; or e.g. "artificial intelligence" robotics'></div>
+      <div class="hint">No keywords means every article from the selected feeds is a candidate. Keywords match the headline and description. Code (not the model) does the filtering; the model only writes the post title.</div>
+
+      <div id="newsSourcesBlock" style="margin-top:14px; border-top:1px solid var(--line, #2a2f3a); padding-top:12px">
+        <label>${lbl('News sources', 'Where candidate articles come from. By default the bot draws from a shipped list of about 25 mainstream feeds (UK-leaning plus major international outlets), so you curate nothing - you just pick keywords above. You can optionally narrow to a subset, add your own feed URLs, and/or switch on the wider GDELT search.')}</label>
+
+        <label class="row" style="gap:6px; margin-top:8px"><input type="checkbox" id="f_newsUseAllFeeds" style="width:auto"${p.newsUseAllFeeds!==false?' checked':''}> Use all shipped feeds (recommended) ${lbl('', 'ON (default): the bot uses every feed in the shipped list, so it never goes quiet because a source was missed. Turn OFF to pick an explicit subset below. Your own custom feeds are always included either way.')}</label>
+
+        <div id="feedPickerWrap" style="margin-top:8px; display:none">
+          <div class="row" style="gap:8px; margin-bottom:6px">
+            <button type="button" id="feedAllBtn" style="padding:4px 10px">Select all</button>
+            <button type="button" id="feedNoneBtn" style="padding:4px 10px">Select none</button>
+            <span class="hint">Tick the shipped feeds this bot should use.</span>
+          </div>
+          <div id="feedPicker"></div>
+        </div>
+
+        <div class="field full" style="margin-top:10px"><label>${lbl('Your own feed URLs (one per line)', 'OPTIONAL. Paste RSS or Atom feed URLs, one per line, to add sources beyond the shipped list. They are always used, in addition to the shipped feeds above (or on their own if you turned off "use all shipped feeds" and picked none).')}</label>
+          <textarea id="f_newsCustomFeeds" placeholder="https://example.com/feed.xml" style="min-height:60px">${esc((p.newsCustomFeeds || []).join('\n'))}</textarea></div>
+
+        <label class="row" style="gap:6px; margin-top:8px"><input type="checkbox" id="f_newsUseGdelt" style="width:auto"${p.newsUseGdelt?' checked':''}> Also search GDELT (wider, but unreliable) ${lbl('', 'OPTIONAL, default OFF. GDELT searches a huge index of world news, wider than the feed list, using your watch keywords. But it rate-limits unpredictably (often failing even at 60-second gaps), so it is a bonus source only: when it is throttled the feeds still carry the bot. Turn it on to occasionally surface stories no shipped feed covers.')}</label>
+
+        <div id="feedHealthWrap" style="margin-top:12px">
+          <div class="row" style="gap:8px"><label style="margin:0">Feed health</label><button type="button" id="feedHealthBtn" style="padding:4px 10px">Refresh</button><span class="hint" id="feedHealthMeta"></span></div>
+          <div id="feedHealth" style="margin-top:6px"></div>
+        </div>
+      </div>
 
       <div style="margin-top:14px">
         <label>${lbl('Routing rules (optional)', 'OPTIONAL. Leave this empty and the bot posts every matching article to its default target sub-feddit(s) above. Add rules only to send specific keywords to specific sub-feddits. Example: query "space" with a rule keywords=nasa,rocket -> f/space (weight 5); articles that match no rule still go to the default target (unless the strict toggle below is on). If two rules match, the highest weight wins.')}</label>
@@ -500,7 +538,7 @@ function renderEditor(p) {
 
       <div class="row" style="margin-top:10px">
         <label class="row" style="gap:6px"><input type="checkbox" id="f_newsPaywallFilter" style="width:auto"${p.newsPaywallFilter?' checked':''}> Skip known paywall domains ${lbl('', 'When on, drops articles from a built-in list of hard-paywall publishers (NYT, WSJ, FT, Bloomberg and similar) so followers do not hit a paywall. Subdomains are matched too.')}</label>
-        <label class="row" style="gap:6px; margin-left:16px"><input type="checkbox" id="f_newsRequireImage" style="width:auto"${p.newsRequireImage?' checked':''}> Only post articles that already have an image ${lbl('', 'When on, only posts articles that GDELT already found a preview image for, so the link post is more likely to show a picture. When off, the bot posts image-less articles too (Feddit still tries to fetch its own preview).')}</label>
+        <label class="row" style="gap:6px; margin-left:16px"><input type="checkbox" id="f_newsRequireImage" style="width:auto"${p.newsRequireImage?' checked':''}> Only post articles that already have an image ${lbl('', 'When on, only posts articles whose feed already carries a preview image, so the link post is more likely to show a picture. The feed image is only a hint - Feddit does its own link preview fetch and that thumbnail is what actually shows. When off, the bot posts image-less articles too.')}</label>
       </div>
       <div class="row" style="margin-top:10px">
         <label class="row" style="gap:6px"><input type="checkbox" id="f_newsLetBotChoose" style="width:auto"${p.newsLetBotChoose?' checked':''}> Let the bot choose from a shortlist ${lbl('', 'When on, the model gets a shortlist of about 5 candidate headlines and picks the one most in character before a title is written, instead of the code picking. This adds one extra generation per post, so for DeepSeek profiles it DOUBLES the cost per post.')}</label>
@@ -537,7 +575,7 @@ function renderEditor(p) {
 
     <div class="section" id="newsPreviewSection">
       <h2>Preview (does not post)</h2>
-      <div class="hint">Runs the real pick: queries GDELT, filters, chooses an article and generates a title - without posting or consuming the article.</div>
+      <div class="hint">Runs the real pick: fetches your feeds (plus GDELT if enabled), filters by your keywords, chooses an article and generates a title - without posting or consuming the article.</div>
       <div class="row" style="margin-top:8px">
         <button id="newsPreviewBtn">Preview next news post</button>
         <span class="hint" id="newsPreviewMeta"></span>
@@ -570,6 +608,12 @@ function renderEditor(p) {
     .forEach(addRoutingRow);
   $('#postedCount').textContent = p.postedNewsCount ? ' (' + p.postedNewsCount + ')' : '';
   renderBotTypeView();
+  // Seed the news-sources panels: the (always-populated) feed picker and the
+  // effective-feed health list. Both are no-ops for a conversational bot (their
+  // containers live inside the hidden #newsSection).
+  renderFeedPicker(p);
+  renderFeedHealth(p.id);
+  syncFeedPicker();
 
   // The profile's name IS its username: keep the heading + token panel in sync as
   // it's typed, so the register button enables the moment a username is present.
@@ -590,6 +634,12 @@ function renderEditor(p) {
   $('#f_postFeddits').addEventListener('input', updateNewsWarnings);
   $('#routingRows').addEventListener('input', updateNewsWarnings);
   $('#addRuleBtn').onclick = () => { addRoutingRow({ keywords: [], subFeddit: '', weight: 1 }); updateNewsWarnings(); };
+  // News sources: the picker only applies when "use all shipped feeds" is off;
+  // select-all/none tick the shipped-feed checkboxes; Refresh re-reads health.
+  $('#f_newsUseAllFeeds').addEventListener('change', syncFeedPicker);
+  $('#feedAllBtn').onclick = () => { document.querySelectorAll('#feedPicker .feedPick').forEach((c) => { c.checked = true; }); };
+  $('#feedNoneBtn').onclick = () => { document.querySelectorAll('#feedPicker .feedPick').forEach((c) => { c.checked = false; }); };
+  $('#feedHealthBtn').onclick = () => renderFeedHealth(p.id);
   $('#saveBtn').onclick = () => saveProfile(p.id);
   $('#deleteBtn').onclick = () => deleteProfile(p.id, p.referenceName);
   $('#testBtn').onclick = () => testGenerate(p.id);
@@ -613,9 +663,19 @@ function renderEditor(p) {
       : lbl('Posts/comments to (comma-separated)', 'The sub-feddit(s) this bot posts to.');
     $('#titleCustomField').style.display = (news && $('#f_newsTitleStyle').value === 'custom') ? '' : 'none';
     $('#botTypeHint').textContent = news
-      ? 'News bot: finds fresh articles by keyword via GDELT and submits them as link posts with a generated title. It does not comment. The persona still shapes the title voice.'
+      ? 'News bot: finds fresh articles from publisher RSS feeds (and optionally GDELT), filters them by your keywords, and submits them as link posts with a generated title. It does not comment. The persona still shapes the title voice.'
       : 'Conversational bot: writes original posts and replies in character, driven by the mode and cadence below.';
     updateNewsWarnings();
+  }
+
+  // Show the shipped-feed subset picker only when "use all shipped feeds" is off.
+  // The checkboxes stay in the DOM either way, so a saved selection survives a
+  // toggle and still round-trips on save.
+  function syncFeedPicker() {
+    const wrap = $('#feedPickerWrap');
+    if (!wrap) return;
+    const useAll = $('#f_newsUseAllFeeds') ? $('#f_newsUseAllFeeds').checked : true;
+    wrap.style.display = useAll ? 'none' : '';
   }
 
   // Live misconfiguration warning for a news bot: no rules AND no default target
@@ -716,6 +776,79 @@ function renderTokenArea(p) {
   if (btn && ready) btn.onclick = () => registerProfile(p.id);
 }
 
+// Populate the optional shipped-feed picker: one checkbox per shipped feed,
+// grouped by category, pre-ticked from the profile's saved newsFeedSelection.
+// Always rendered (even when hidden by "use all shipped feeds") so a saved
+// selection round-trips through save/reload instead of being wiped on collect.
+async function renderFeedPicker(p) {
+  const host = $('#feedPicker');
+  if (!host) return;
+  const selected = new Set(Array.isArray(p.newsFeedSelection) ? p.newsFeedSelection : []);
+  host.innerHTML = '<div class="hint">Loading feeds...</div>';
+  let feeds;
+  try {
+    const r = await api('/api/news/feeds');
+    feeds = (r && r.feeds) || [];
+  } catch (e) {
+    host.innerHTML = '<div class="hint" style="color:var(--bad)">Could not load feed list: ' + esc(e.message) + '</div>';
+    return;
+  }
+  const groups = {};
+  feeds.forEach((f) => { const c = f.category || 'other'; (groups[c] = groups[c] || []).push(f); });
+  host.innerHTML = Object.keys(groups).sort().map((cat) =>
+    '<div style="margin-bottom:8px"><div class="hint" style="text-transform:uppercase; letter-spacing:.5px">' + esc(cat) + '</div>' +
+    groups[cat].map((f) =>
+      '<label class="row" style="gap:6px; margin-top:2px"><input type="checkbox" class="feedPick" style="width:auto" value="' +
+      esc(f.feedUrl) + '"' + (selected.has(f.feedUrl) ? ' checked' : '') + '> ' +
+      esc(f.name) + ' <small class="mono">' + esc(f.domain) + '</small></label>'
+    ).join('') + '</div>'
+  ).join('');
+}
+
+// Render this profile's effective-feed health so a silently dead feed (the exact
+// thing that makes a news bot go quiet) is visible: per feed OK/failing, why it
+// failed, and when it last succeeded. Reads an in-memory snapshot (no live fetch).
+async function renderFeedHealth(id) {
+  const host = $('#feedHealth');
+  const meta = $('#feedHealthMeta');
+  if (!host) return;
+  host.innerHTML = '<div class="hint">Loading...</div>';
+  if (meta) meta.textContent = '';
+  let feeds;
+  try {
+    const r = await api('/api/profiles/' + encodeURIComponent(id) + '/feed-health');
+    feeds = (r && r.feeds) || [];
+  } catch (e) {
+    host.innerHTML = '<div class="hint" style="color:var(--bad)">Could not load feed health: ' + esc(e.message) + '</div>';
+    return;
+  }
+  if (!feeds.length) { host.innerHTML = '<div class="hint">No feeds configured for this bot.</div>'; return; }
+  let ok = 0, bad = 0, untried = 0;
+  const rows = feeds.map((f) => {
+    const h = f.health || {};
+    let dot, label, detail;
+    if (h.ok === true) {
+      dot = 'var(--good)'; label = 'OK'; ok++;
+      detail = (h.itemCount || 0) + ' items &middot; last OK ' + ago(h.lastOkAt);
+    } else if (h.ok === false) {
+      dot = 'var(--bad)'; label = 'failing'; bad++;
+      const why = h.error || (h.lastStatus ? ('HTTP ' + h.lastStatus) : 'unknown error');
+      detail = esc(why) + ' &middot; ' + (h.fails || 0) + ' fail' + ((h.fails || 0) === 1 ? '' : 's') +
+        ' &middot; last OK ' + ago(h.lastOkAt);
+    } else {
+      dot = '#888'; label = 'not tried yet'; untried++;
+      detail = 'the scheduler will fetch it on a coming tick';
+    }
+    const custom = f.custom ? ' <span class="badge notoken">custom</span>' : '';
+    return '<div style="padding:5px 0; border-top:1px solid var(--line, #2a2f3a)">' +
+      '<span style="display:inline-block; width:9px; height:9px; border-radius:50%; background:' + dot + '; margin-right:7px"></span>' +
+      '<b>' + esc(f.name) + '</b>' + custom + ' <span class="hint">' + esc(label) + '</span>' +
+      '<div class="hint" style="margin:2px 0 0 16px">' + detail + '</div></div>';
+  }).join('');
+  host.innerHTML = rows;
+  if (meta) meta.textContent = ok + ' OK, ' + bad + ' failing' + (untried ? ', ' + untried + ' not tried yet' : '');
+}
+
 function renderActivity(p) {
   const ul = $('#activity');
   const acts = (p.activity || []).slice().reverse();
@@ -751,6 +884,10 @@ function collectForm() {
     numPredict: Number($('#f_numPredict').value) || 200,
     // ---- news config ----
     newsQuery: $('#f_newsQuery').value.trim(),
+    newsUseAllFeeds: $('#f_newsUseAllFeeds') ? $('#f_newsUseAllFeeds').checked : true,
+    newsFeedSelection: [...document.querySelectorAll('#feedPicker .feedPick:checked')].map((c) => c.value),
+    newsCustomFeeds: parseLines($('#f_newsCustomFeeds') ? $('#f_newsCustomFeeds').value : ''),
+    newsUseGdelt: $('#f_newsUseGdelt') ? $('#f_newsUseGdelt').checked : false,
     newsRoutingRules: collectRoutingRules(),
     newsStrictRouting: $('#f_newsStrictRouting') ? $('#f_newsStrictRouting').checked : false,
     newsMaxAgeHours: Number($('#f_newsMaxAgeHours').value) || 24,
