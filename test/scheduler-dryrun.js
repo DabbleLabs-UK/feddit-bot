@@ -10,6 +10,7 @@
 // is spawned and the process exits on its own.
 
 const scheduler = require('../lib/scheduler');
+const gdelt = require('../lib/gdelt');
 const cost = require('../lib/cost');
 
 // ---- tiny assert framework --------------------------------------------------
@@ -73,6 +74,26 @@ function makeStore(profiles) {
       p.repliedTo = p.repliedTo || [];
       if (!p.repliedTo.includes(key)) p.repliedTo.push(key);
     },
+    hasPostedNews: (id, key) => { const p = byId.get(id); return !!(p && p.postedNews && p.postedNews.includes(key)); },
+    recordPostedNews: (id, key) => {
+      const p = byId.get(id); if (!p) return;
+      p.postedNews = p.postedNews || [];
+      if (!p.postedNews.includes(key)) p.postedNews.push(key);
+    },
+    clearPostedNews: (id) => { const p = byId.get(id); if (!p) return; p.postedNews = []; p.newsDomainDaily = {}; p.newsDomainDays = []; },
+    newsDomainCount: (profile, dayKey, domain) => {
+      const daily = (profile && profile.newsDomainDaily) || {};
+      const b = daily[dayKey] || {};
+      return Number(b[String(domain || '').toLowerCase()]) || 0;
+    },
+    recordNewsDomain: (id, dayKey, domain) => {
+      const p = byId.get(id); if (!p) return;
+      if (!p.newsDomainDaily) p.newsDomainDaily = {};
+      const dom = String(domain || '').toLowerCase();
+      const b = p.newsDomainDaily[dayKey] || (p.newsDomainDaily[dayKey] = {});
+      b[dom] = (Number(b[dom]) || 0) + 1;
+      return b[dom];
+    },
     getThreadReplyCount: (postId) => settings.threadReplies[String(postId)] || 0,
     bumpThreadReply: (postId) => {
       const k = String(postId);
@@ -131,10 +152,33 @@ function profile(over) {
     activity: [],
     sched: over.sched || { nextPostAt: null, nextCommentAt: null, backoffUntil: 0, sentPosts: [], sentComments: [] },
     repliedTo: [],
+    // ---- news config + state ----
+    botType: over.botType || 'conversational',
+    newsQuery: over.newsQuery || '',
+    newsRoutingRules: over.newsRoutingRules || [],
+    newsMaxAgeHours: over.newsMaxAgeHours != null ? over.newsMaxAgeHours : 24,
+    newsMaxPerDomainPerDay: over.newsMaxPerDomainPerDay != null ? over.newsMaxPerDomainPerDay : 3,
+    newsMinGapMinutes: over.newsMinGapMinutes != null ? over.newsMinGapMinutes : 0,
+    newsDomainDenylist: over.newsDomainDenylist || [],
+    newsPaywallFilter: over.newsPaywallFilter != null ? over.newsPaywallFilter : false,
+    newsRequireImage: over.newsRequireImage || false,
+    newsTitleStyle: over.newsTitleStyle || 'straight',
+    newsTitleCustom: over.newsTitleCustom || '',
+    newsLetBotChoose: over.newsLetBotChoose || false,
+    postedNews: over.postedNews || [],
+    newsDomainDaily: over.newsDomainDaily || {},
+    newsDomainDays: over.newsDomainDays || [],
     spendDaily: {},
     spendDays: [],
   };
 }
+
+// Format an epoch-ms as a GDELT seendate string ("20260819T091500Z").
+function seendateFrom(ms) {
+  const s = new Date(ms).toISOString(); // YYYY-MM-DDTHH:MM:SS.sssZ
+  return s.slice(0, 4) + s.slice(5, 7) + s.slice(8, 10) + 'T' + s.slice(11, 13) + s.slice(14, 16) + s.slice(17, 19) + 'Z';
+}
+function jsonBody(obj) { return Buffer.from(JSON.stringify(obj), 'utf8'); }
 
 // ---- stub feddit ------------------------------------------------------------
 
@@ -541,6 +585,215 @@ async function scenarioCostMaths() {
   }
 }
 
+// ============================================================================
+// Scenario 9: the shared GDELT queue - 8s spacing across profiles, a plain-text
+// 429 body handled without throwing (escalating back-off), and the per-query
+// cache. Drives the REAL createGdelt() queue with a fake clock + stub fetch, so
+// there is NO live network call here.
+// ============================================================================
+async function scenarioGdeltQueue() {
+  console.log('\n[9] GDELT shared queue: 8s spacing + plain-text 429 back-off + cache');
+
+  // 9a: three DISTINCT queries fired at once must be issued >= 8s apart.
+  {
+    const clock = makeClock(1_000_000);
+    const issuedAt = [];
+    const body = jsonBody({ articles: [{ url: 'https://x.com/a', title: 'A', seendate: '20200101T000000Z', domain: 'x.com' }] });
+    const gd = gdelt.createGdelt({
+      now: clock.now, sleep: async (ms) => clock.advance(ms), minSpacingMs: 8000,
+      fetch: async () => { issuedAt.push(clock.now()); return { status: 200, arrayBuffer: async () => body }; },
+    });
+    const [r1, r2, r3] = await Promise.all([gd.fetchArticles('alpha'), gd.fetchArticles('bravo'), gd.fetchArticles('charlie')]);
+    ok(r1.ok && r2.ok && r3.ok, 'all three queued GDELT requests succeeded');
+    eq(issuedAt.length, 3, 'exactly three real requests were issued (queue serialised them)');
+    const gaps = issuedAt.slice(1).map((t, i) => t - issuedAt[i]);
+    ok(gaps.every((g) => g >= 8000), 'no two requests issued within 8s even with several due at once (gaps=' + gaps.join(',') + 'ms)');
+  }
+
+  // 9b: a plain-text 429 body is NOT JSON.parsed blindly - handled, and it backs
+  // off so a follow-up does not immediately re-request.
+  {
+    const clock = makeClock(2_000_000);
+    let fetchCount = 0;
+    const gd = gdelt.createGdelt({
+      now: clock.now, sleep: async (ms) => clock.advance(ms), minSpacingMs: 8000, backoffSteps: [15_000, 30_000],
+      fetch: async () => { fetchCount++; return { status: 429, arrayBuffer: async () => Buffer.from('Too many requests. Please slow down.', 'utf8') }; },
+    });
+    let threw = false, res = null;
+    try { res = await gd.fetchArticles('boom'); } catch { threw = true; }
+    ok(!threw, 'plain-text 429 body did NOT throw (no blind JSON.parse)');
+    ok(res && res.ok === false && res.rateLimited === true, '429 surfaced as { ok:false, rateLimited:true }');
+    eq(fetchCount, 1, 'one request attempted');
+    const res2 = await gd.fetchArticles('boom-different');
+    ok(res2 && res2.backoff === true, 'a follow-up while backed off short-circuits (no request)');
+    eq(fetchCount, 1, 'no new request issued during the back-off window (no hammering)');
+  }
+
+  // 9c: an HTML error page (status 200 but non-JSON) is also treated as rate limiting.
+  {
+    const clock = makeClock(3_000_000);
+    const gd = gdelt.createGdelt({
+      now: clock.now, sleep: async (ms) => clock.advance(ms),
+      fetch: async () => ({ status: 200, arrayBuffer: async () => Buffer.from('<html><body>error</body></html>', 'utf8') }),
+    });
+    const res = await gd.fetchArticles('htmlerr');
+    ok(res && res.ok === false && res.rateLimited === true, 'HTML (non-JSON) 200 body treated as rate limiting, not parsed');
+  }
+
+  // 9d: overlapping/identical queries are served from the ~15min cache.
+  {
+    const clock = makeClock(4_000_000);
+    let fetchCount = 0;
+    const body = jsonBody({ articles: [{ url: 'https://y.com/1', title: 'Y', seendate: '20200101T000000Z', domain: 'y.com' }] });
+    const gd = gdelt.createGdelt({
+      now: clock.now, sleep: async (ms) => clock.advance(ms), cacheTtlMs: 900_000,
+      fetch: async () => { fetchCount++; return { status: 200, arrayBuffer: async () => body }; },
+    });
+    await gd.fetchArticles('same');
+    const b = await gd.fetchArticles('same');
+    eq(fetchCount, 1, 'two calls for the same query hit the API only once (per-query cache)');
+    ok(b.cached === true, 'the second identical query was a cache hit');
+  }
+}
+
+// ============================================================================
+// Scenario 10: news end-to-end (dry-run) - routing rules, freshness cap,
+// per-domain daily cap, and PERMANENT canonical-URL dedupe that survives a
+// simulated restart. Uses random:()=>0 so the "top of the ranked list" pick is
+// deterministic.
+// ============================================================================
+async function scenarioNews() {
+  console.log('\n[10] news: routing + freshness + dedupe-across-restart + per-domain cap (dry-run)');
+  const H = 3_600_000;
+  const clock = makeClock(1_600_000_000_000);
+  const rules = [
+    { keywords: ['mega'], subFeddit: 'mega', weight: 9 },
+    { keywords: ['rocket', 'launch'], subFeddit: 'space', weight: 5 },
+    { keywords: ['sport', 'score', 'final'], subFeddit: 'sports', weight: 3 },
+  ];
+  const M = { url: 'https://megablog.com/mega', domain: 'megablog.com', title: 'Rocket launch mega event', seendate: seendateFrom(clock.now() - 48 * H) }; // too old
+  const A = { url: 'https://space.com/rocket?utm_source=x&id=7#frag', domain: 'space.com', title: 'Rocket launch success', seendate: seendateFrom(clock.now() - 1 * H) };
+  const C = { url: 'https://espn.com/final', domain: 'espn.com', title: 'Sports final score tonight', seendate: seendateFrom(clock.now() - 2 * H) };
+  const articles = [M, A, C];
+  const gd = gdelt.createGdelt({ now: clock.now, sleep: async (ms) => clock.advance(ms), minSpacingMs: 0, fetch: async () => ({ status: 200, arrayBuffer: async () => jsonBody({ articles }) }) });
+
+  // Routing is deterministic - assert it directly via the exported matcher.
+  eq(scheduler.matchRule(M, rules).subFeddit, 'mega', 'routing: mega article -> f/mega (weight 9)');
+  eq(scheduler.matchRule(A, rules).subFeddit, 'space', 'routing: rocket article -> f/space (weight 5)');
+  eq(scheduler.matchRule(C, rules).subFeddit, 'sports', 'routing: sports article -> f/sports (weight 3)');
+  // The canonical key strips utm_* and the #fragment (but keeps ?id=7).
+  eq(gd.canonicalUrl(A.url), 'https://space.com/rocket?id=7', 'canonical URL strips utm_* + fragment, keeps host/path/id');
+
+  const p = profile({ id: 'news1', botType: 'news', mode: 'post', postsPerHour: 60, provider: 'ollama', newsQuery: 'rocket', newsRoutingRules: rules, newsMaxAgeHours: 24, newsMaxPerDomainPerDay: 5, newsMinGapMinutes: 0 });
+  p.sched.nextPostAt = clock.now();
+  const store = makeStore([p]);
+  const keyA = gd.canonicalUrl(A.url);
+
+  // Run 1: freshest highest-weight FRESH article is A (mega is too old) -> f/space.
+  const fed1 = makeFeddit({ feddits: {}, comments: {} });
+  const s1 = scheduler.createScheduler({ store, providers: makeProviders(), feddit: fed1, gdelt: gd, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+  const r1 = await s1.runTick();
+  const a1 = r1.results.find((x) => x && x.action === 'news');
+  eq(a1.feddit, 'space', 'run1 posted the fresh w5 rocket article to f/space (stale w9 mega excluded)');
+  eq(a1.canonical, keyA, 'run1 dedupe key is the canonical A url');
+  eq(fed1.calls.submit.length, 0, 'dry-run: ZERO live submits');
+  ok(store.hasPostedNews('news1', keyA), 'dry-run recorded A in the PERMANENT news dedupe set');
+
+  // Run 2: simulate a RESTART (brand-new scheduler, same persisted store). A must
+  // NOT be reposted; the next candidate C posts to f/sports.
+  clock.advance(60_000); p.sched.nextPostAt = clock.now();
+  const fed2 = makeFeddit({ feddits: {}, comments: {} });
+  const s2 = scheduler.createScheduler({ store, providers: makeProviders(), feddit: fed2, gdelt: gd, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+  const r2 = await s2.runTick();
+  const a2 = r2.results.find((x) => x && x.action === 'news');
+  eq(a2.feddit, 'sports', 'run2 (post-restart) posted C to f/sports - A was NOT reposted');
+  ok(a2.canonical !== keyA, 'run2 chose a different article (canonical dedupe held across the restart)');
+
+  // Run 3: only the stale mega article is left -> nothing postable (freshness).
+  clock.advance(60_000); p.sched.nextPostAt = clock.now();
+  const s3 = scheduler.createScheduler({ store, providers: makeProviders(), feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gd, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+  const r3 = await s3.runTick();
+  const a3 = r3.results.find((x) => x && x.action === 'news');
+  eq(a3.note, 'none', 'run3 posted nothing: only the stale mega article remained (freshness cap held)');
+  ok(!store.hasPostedNews('news1', gd.canonicalUrl(M.url)), 'the stale mega article was never posted');
+
+  // Per-domain daily cap: two fresh same-domain articles, cap 1 -> only one posts.
+  {
+    const clock2 = makeClock(1_600_000_000_000);
+    const d1 = { url: 'https://dup.com/1', domain: 'dup.com', title: 'Dup one', seendate: seendateFrom(clock2.now() - 1 * H) };
+    const d2 = { url: 'https://dup.com/2', domain: 'dup.com', title: 'Dup two', seendate: seendateFrom(clock2.now() - 1 * H) };
+    const gdD = gdelt.createGdelt({ now: clock2.now, sleep: async (ms) => clock2.advance(ms), minSpacingMs: 0, fetch: async () => ({ status: 200, arrayBuffer: async () => jsonBody({ articles: [d1, d2] }) }) });
+    const pd = profile({ id: 'newsD', botType: 'news', mode: 'post', postsPerHour: 60, newsQuery: 'dup', newsRoutingRules: [{ keywords: [], subFeddit: 'dump', weight: 1 }], newsMaxAgeHours: 24, newsMaxPerDomainPerDay: 1, newsMinGapMinutes: 0 });
+    pd.sched.nextPostAt = clock2.now();
+    const storeD = makeStore([pd]);
+    const sd1 = scheduler.createScheduler({ store: storeD, providers: makeProviders(), feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gdD, now: clock2.now, random: () => 0, getDeepseekKey: KEY });
+    const rd1 = await sd1.runTick();
+    eq(rd1.results.find((x) => x && x.action === 'news').domain, 'dup.com', 'domain-cap run1 posted a dup.com article');
+    clock2.advance(60_000); pd.sched.nextPostAt = clock2.now();
+    const sd2 = scheduler.createScheduler({ store: storeD, providers: makeProviders(), feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gdD, now: clock2.now, random: () => 0, getDeepseekKey: KEY });
+    const rd2 = await sd2.runTick();
+    eq(rd2.results.find((x) => x && x.action === 'news').note, 'none', 'domain-cap run2 posted nothing: dup.com daily cap (1) already reached');
+  }
+}
+
+// ============================================================================
+// Scenario 11: the "let the bot choose" shortlist toggle falls back cleanly to
+// the code-picked article when the model's index reply is unparseable.
+// ============================================================================
+async function scenarioShortlistFallback() {
+  console.log('\n[11] news shortlist toggle: clean fallback on an unparseable index');
+  const H = 3_600_000;
+  const clock = makeClock(1_600_000_000_000);
+  const art = { url: 'https://news.org/story', domain: 'news.org', title: 'Something happened today', seendate: seendateFrom(clock.now() - 1 * H) };
+  const gd = gdelt.createGdelt({ now: clock.now, sleep: async (ms) => clock.advance(ms), minSpacingMs: 0, fetch: async () => ({ status: 200, arrayBuffer: async () => jsonBody({ articles: [art] }) }) });
+
+  // A provider stub whose replies contain NO digit, so the shortlist index can't
+  // be parsed (forcing the fallback). Both generations return the same text.
+  let gens = 0;
+  const providers = {
+    ollamaBusy: () => false,
+    generate: async (g) => { gens++; return { provider: 'ollama', model: g.model, text: 'honestly they all look good to me', ms: 1, usage: { inputTokens: 10, outputTokens: 6, cachedInputTokens: 0 } }; },
+    stats: () => ({ calls: gens, ollama: { calls: gens, maxConcurrent: 1 }, deepseek: { calls: 0, maxConcurrent: 0 }, maxConcurrent: 1 }),
+  };
+  const p = profile({ id: 'nl', botType: 'news', mode: 'post', postsPerHour: 60, newsQuery: 'q', newsLetBotChoose: true, newsRoutingRules: [{ keywords: [], subFeddit: 'general', weight: 1 }], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
+  p.sched.nextPostAt = clock.now();
+  const store = makeStore([p]);
+  const sched = scheduler.createScheduler({ store, providers, feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gd, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+
+  let threw = false, r = null;
+  try { r = await sched.runTick(); } catch { threw = true; }
+  ok(!threw, 'unparseable shortlist index did not throw');
+  const a = r.results.find((x) => x && x.action === 'news');
+  ok(a && a.ok === true && a.title, 'still posted using the code-picked article (clean fallback)');
+  eq(gens, 2, 'exactly two generations: one shortlist pick (unparseable) + one title');
+  eq(a.feddit, 'general', 'posted to the catch-all route');
+}
+
+// ============================================================================
+// Scenario 12: best-effort LIVE smoke test. At most ONE real GDELT call and ONE
+// short real ollama generation in total. Both are guarded: unreachable => SKIP
+// (not a failure), so the suite stays green offline.
+// ============================================================================
+async function scenarioRealSmoke() {
+  console.log('\n[12] best-effort live smoke (at most ONE real GDELT call + ONE real ollama gen)');
+  const providersReal = require('../lib/providers');
+  const timeout = (ms) => new Promise((res) => setTimeout(() => res({ __timeout: true }), ms));
+
+  try {
+    const r = await Promise.race([gdelt.fetchArticles('technology', { maxRecords: 1, timespanHours: 24 }), timeout(9000)]);
+    if (r && r.__timeout) console.log('  SKIP  real GDELT call timed out (offline?) - not a failure');
+    else if (r && r.ok) { console.log('  PASS  real GDELT returned ' + r.articles.length + ' article(s)'); passed++; }
+    else console.log('  SKIP  real GDELT not ok (' + JSON.stringify(r).slice(0, 90) + ') - not a failure');
+  } catch (e) { console.log('  SKIP  real GDELT threw: ' + e.message + ' - not a failure'); }
+
+  try {
+    const g = await Promise.race([providersReal.ollama.generate({ system: 'You are terse.', prompt: 'Say hi in one word.', numPredict: 5, temperature: 0 }), timeout(9000)]);
+    if (g && g.__timeout) console.log('  SKIP  real ollama gen timed out - not a failure');
+    else if (g && typeof g.text === 'string') { console.log('  PASS  real ollama gen: ' + JSON.stringify(g.text.slice(0, 40))); passed++; }
+    else console.log('  SKIP  real ollama gen returned nothing - not a failure');
+  } catch (e) { console.log('  SKIP  real ollama unavailable: ' + e.message + ' - not a failure'); }
+}
+
 // ---- run --------------------------------------------------------------------
 
 (async () => {
@@ -552,6 +805,10 @@ async function scenarioCostMaths() {
   await scenarioProviderGate();
   await scenarioSpendCap();
   await scenarioCostMaths();
+  await scenarioGdeltQueue();
+  await scenarioNews();
+  await scenarioShortlistFallback();
+  await scenarioRealSmoke();
 
   console.log('\n----------------------------------------');
   console.log(passed + ' checks passed, ' + failures.length + ' failed.');
