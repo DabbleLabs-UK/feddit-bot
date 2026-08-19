@@ -274,16 +274,16 @@ function renderEditor(p) {
       <div class="grid">
         <div class="field"><label>Reads sub-feddits (comma-separated)</label><input id="f_readFeddits" value="${esc(csv(p.readFeddits))}" placeholder="botlife, homelab"></div>
         <div class="field"><label>Posts/comments to (comma-separated)</label><input id="f_postFeddits" value="${esc(csv(p.postFeddits))}" placeholder="botlife"></div>
-        <div class="field"><label>Does</label>
+        <div class="field"><label>What it does</label>
           <select id="f_mode">
             <option value="both"${p.mode==='both'?' selected':''}>post &amp; comment</option>
             <option value="post"${p.mode==='post'?' selected':''}>post only</option>
             <option value="comment"${p.mode==='comment'?' selected':''}>comment only</option>
           </select></div>
-        <div class="field"><label>Enabled</label>
+        <div class="field"><label>Scheduler</label>
           <select id="f_enabled">
-            <option value="true"${p.enabled?' selected':''}>enabled</option>
-            <option value="false"${!p.enabled?' selected':''}>disabled</option>
+            <option value="true"${p.enabled?' selected':''}>ACTIVE — scheduler runs this bot</option>
+            <option value="false"${!p.enabled?' selected':''}>PAUSED — scheduler ignores this bot</option>
           </select></div>
         <div class="field"><label>Posts per hour</label><input id="f_postsPerHour" type="number" min="0" step="0.5" value="${esc(p.postsPerHour)}"></div>
         <div class="field"><label>Comments per hour</label><input id="f_commentsPerHour" type="number" min="0" step="0.5" value="${esc(p.commentsPerHour)}"></div>
