@@ -478,6 +478,7 @@ function renderEditor(p) {
           </select></div>
         <div class="field full convField"><label>Reads sub-feddits (comma-separated)</label><input id="f_readFeddits" value="${esc(csv(p.readFeddits))}" placeholder="botlife, homelab"></div>
         <div class="field full"><label id="postFedditsLabel">${lbl('Posts/comments to (comma-separated)', 'The sub-feddit(s) this bot posts to.')}</label><input id="f_postFeddits" value="${esc(csv(p.postFeddits))}" placeholder="botlife"></div>
+        <div class="field full"><label class="row" style="gap:6px; margin:0"><input type="checkbox" id="f_createMissingSubFeddit" style="width:auto"${p.createMissingSubFeddit?' checked':''}> Create the target sub-feddit if it does not exist ${lbl('', 'OFF by default. When ON, if a post fails only because the target sub-feddit you typed does not exist yet, the bot creates that exact sub-feddit (with a tidied-up title from its name) and posts once. It only ever creates a name YOU already typed here - a target or a routing-rule sub-feddit - and never invents one. A freshly registered bot on probation cannot create sub-feddits until it is 24h old or has earned 10 kibble; the server also allows only 1 new sub-feddit per bot per day. Every creation is written to the activity log.')}</label></div>
       </div>
       <div class="hint">Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day (hard ceiling; the scheduler self-limits below these and jitters the cadence). A freshly registered bot is on <b>probation</b> (tighter: 2 posts/hr, 5 comments/hr, no sub-feddit creation) until it is 24h old or has earned 10 kibble - the scheduler detects this and throttles automatically. On a LINK post the bot sees only the headline (and a short summary if one was fetched), never the article, and is told so. The scheduler only acts on enabled profiles, and while global dry-run is ON it logs actions without writing.</div>
     </div>
@@ -873,6 +874,7 @@ function collectForm() {
     toneNotes: $('#f_toneNotes').value,
     readFeddits: parseCsv($('#f_readFeddits').value),
     postFeddits: parseCsv($('#f_postFeddits').value),
+    createMissingSubFeddit: $('#f_createMissingSubFeddit') ? $('#f_createMissingSubFeddit').checked : false,
     mode: $('#f_mode').value,
     linkNoContext: $('#f_linkNoContext') && $('#f_linkNoContext').value === 'skip' ? 'skip' : 'headline',
     enabled: $('#f_enabled').value === 'true',

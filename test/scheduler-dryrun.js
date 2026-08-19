@@ -146,6 +146,7 @@ function profile(over) {
     toneNotes: over.toneNotes != null ? over.toneNotes : '',
     readFeddits: over.readFeddits || [],
     postFeddits: over.postFeddits || [],
+    createMissingSubFeddit: over.createMissingSubFeddit || false,
     mode: over.mode || 'both',
     linkNoContext: over.linkNoContext || 'headline',
     probation: over.probation || { onProbation: null, checkedAt: 0 },
@@ -246,8 +247,10 @@ function makeFeddit(world) {
     },
     submit: async (args) => { world.calls.submit.push(args); return world.onSubmit ? world.onSubmit(args) : { ok: true, status: 201, data: { post: { data: { id: 9999 } } } }; },
     comment: async (args) => { world.calls.comment.push(args); return world.onComment ? world.onComment(args) : { ok: true, status: 201, data: { comment: { data: { id: 8888 } } } }; },
-    // Spy: the scheduler must NEVER call this (esp. on probation, where it is blocked).
-    createFeddit: async (args) => { world.calls.createFeddit.push(args); return { ok: true, status: 201, data: { feddit: {} } }; },
+    // Sub-feddit creation. Default: succeeds (201). A scenario can override via
+    // world.onCreateFeddit(args) to force a 429 (daily cap) or a failure, or to
+    // assert the scheduler must NEVER call it (e.g. on probation, where it is blocked).
+    createFeddit: async (args) => { world.calls.createFeddit.push(args); return world.onCreateFeddit ? world.onCreateFeddit(args) : { ok: true, status: 201, data: { feddit: {} } }; },
   };
   client.calls = world.calls; // expose call log on the client too
   return client;
@@ -1831,6 +1834,142 @@ async function scenarioNewsVoice() {
   }
 }
 
+// ============================================================================
+// Scenario: opt-in "create the target sub-feddit if it does not exist".
+// The bot has NO autonomy here - it may create ONLY a name the owner already
+// typed (a default target or a routing-rule sub-feddit), and ONLY when a submit
+// failed BECAUSE that sub-feddit does not exist. Proves, for BOTH bot types:
+//   - checkbox OFF: a missing-sub submit failure is left completely alone;
+//   - checkbox ON:  the sub is created ONCE and the submit retried ONCE (only);
+//   - on probation: creation is NOT attempted, and the refusal is logged (why);
+//   - a 429 on creation (1 new sub-feddit/bot/day) is handled without looping;
+//   - a submit failure for ANY OTHER reason never triggers a creation.
+// The missing-sub error shape is the EXACT Feddit contract, read from
+// V:/feddit/src/api/: PostService::submit -> FedditService::requireByName throws
+// ApiException::notFound('No such feddit.') -> HTTP 404 + envelope
+// { error: { code: 'not_found', message: 'No such feddit.' } } (router.php).
+// ============================================================================
+async function scenarioCreateMissingSubFeddit() {
+  console.log('\n[X] create-missing-target-sub-feddit (opt-in; probation-blocked; 429-safe; tightly scoped)');
+
+  // The response shapes the feddit.js client surfaces (status + parsed envelope).
+  const missingFeddit = () => ({ ok: false, status: 404, data: { error: { code: 'not_found', message: 'No such feddit.' } }, error: 'Feddit /submit: No such feddit.' });
+  const submitOk = () => ({ ok: true, status: 201, data: { post: { data: { id: 4242 } } } });
+  const onProbInfo = () => ({ ok: true, status: 200, data: { probation: { on_probation: true } } });
+
+  // --- pure helpers (no clock, no network) ---
+  eq(scheduler.deriveFedditTitle('localnews'), 'Localnews', 'title: localnews -> Localnews (mechanical, no model)');
+  eq(scheduler.deriveFedditTitle('local_news_uk'), 'Local News Uk', 'title: underscores become spaces, Title-Cased');
+  eq(scheduler.deriveFedditTitle('localNews'), 'Local News', 'title: camelCase humps are split');
+  ok(scheduler.isMissingFedditError(missingFeddit()), 'isMissingFedditError: 404 + not_found IS the missing-sub signal');
+  ok(!scheduler.isMissingFedditError({ ok: false, status: 403, data: { error: { code: 'forbidden', message: 'x' } } }), 'isMissingFedditError: a 403 is NOT the signal');
+  ok(!scheduler.isMissingFedditError({ ok: false, status: 500, data: { error: { code: 'internal_error', message: 'x' } } }), 'isMissingFedditError: a 500 is NOT the signal');
+  ok(!scheduler.isMissingFedditError({ ok: true, status: 201, data: { post: {} } }), 'isMissingFedditError: a success is NOT the signal');
+
+  // Run ONE live conversational post tick against a stub world; returns state.
+  async function postTick(over, world) {
+    const clock = makeClock(1_000_000);
+    const p = profile({ id: 'cm', fedditUsername: 'cm', mode: 'post', botType: 'conversational', postsPerHour: 5, postFeddits: ['localnews'], createMissingSubFeddit: over.createMissingSubFeddit });
+    p.sched.nextPostAt = clock.now();
+    const store = makeStore([p]);
+    store.updateSettings({ dryRun: false }); // LIVE so the submit is actually attempted (against the stub)
+    const feddit = makeFeddit(world);
+    const sched = scheduler.createScheduler({ store, providers: makeProviders(), feddit, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    await sched.runTick();
+    return { store, feddit, profile: store.getProfile('cm') };
+  }
+
+  // (1) OFF: a missing-sub submit failure is left completely alone.
+  {
+    const world = { feddits: {}, comments: {}, onSubmit: () => missingFeddit() };
+    const { feddit, profile: pr } = await postTick({ createMissingSubFeddit: false }, world);
+    eq(feddit.calls.submit.length, 1, 'OFF: exactly one submit attempt (no retry)');
+    eq(feddit.calls.createFeddit.length, 0, 'OFF: never tried to create the missing sub-feddit');
+    ok((pr.activity || []).some((e) => e.ok === false && /No such feddit/i.test(e.note || '')), 'OFF: the plain submit failure was logged, untouched');
+  }
+
+  // (2) ON + retry succeeds: sub created ONCE, submit retried ONCE.
+  {
+    let n = 0;
+    const world = { feddits: {}, comments: {}, onSubmit: () => (++n === 1 ? missingFeddit() : submitOk()) };
+    const { feddit, profile: pr } = await postTick({ createMissingSubFeddit: true }, world);
+    eq(feddit.calls.submit.length, 2, 'ON: submitted, then retried exactly once after creation');
+    eq(feddit.calls.createFeddit.length, 1, 'ON: created the missing sub-feddit exactly once');
+    eq(feddit.calls.createFeddit[0].name, 'localnews', 'ON: created the EXACT owner-typed name (never invented)');
+    eq(feddit.calls.createFeddit[0].title, 'Localnews', 'ON: title mechanically derived from the name (no model)');
+    ok((pr.activity || []).some((e) => e.ok === true && /Created sub-feddit f\/localnews/.test(e.note || '')), 'ON: creation clearly logged (which sub, for this profile)');
+    ok((pr.activity || []).some((e) => e.ok === true && /Posted:/.test(e.note || '')), 'ON: the retried post then succeeded');
+  }
+
+  // (2b) ON but the sub is STILL missing on retry (pathological): create ONCE,
+  // retry ONCE, then STOP - never a second creation, never a third submit.
+  {
+    const world = { feddits: {}, comments: {}, onSubmit: () => missingFeddit() }; // always missing
+    const { feddit } = await postTick({ createMissingSubFeddit: true }, world);
+    eq(feddit.calls.createFeddit.length, 1, 'ON+still-missing: creation attempted exactly once (no repeat)');
+    eq(feddit.calls.submit.length, 2, 'ON+still-missing: retried once then stopped (no loop)');
+  }
+
+  // (3) On probation: creation is NOT attempted; the refusal is logged with why.
+  {
+    const world = { feddits: {}, comments: {}, onSubmit: () => missingFeddit(), onBotInfo: onProbInfo };
+    const { feddit, profile: pr } = await postTick({ createMissingSubFeddit: true }, world);
+    eq(feddit.calls.createFeddit.length, 0, 'probation: did NOT attempt creation (server blocks it on probation)');
+    eq(feddit.calls.submit.length, 1, 'probation: no retry (nothing was created)');
+    eq(pr.probation.onProbation, true, 'probation: the profile was observed ON probation');
+    ok((pr.activity || []).some((e) => e.ok === false && /probation/i.test(e.note || '') && /lifts/i.test(e.note || '')), 'probation: logged plainly WHY (probation) and WHEN it lifts');
+  }
+
+  // (4) A 429 on creation (1 new sub-feddit/bot/day): handled, no loop, no retry.
+  {
+    const world = {
+      feddits: {}, comments: {}, onSubmit: () => missingFeddit(),
+      onCreateFeddit: () => ({ ok: false, status: 429, retryAfterSec: 3600, error: 'Rate limited by Feddit (429), retry in 3600s.' }),
+    };
+    const { feddit, profile: pr } = await postTick({ createMissingSubFeddit: true }, world);
+    eq(feddit.calls.createFeddit.length, 1, '429: creation attempted exactly once');
+    eq(feddit.calls.submit.length, 1, '429: creation rate-limited, so the submit was NOT retried (no loop)');
+    ok((pr.activity || []).some((e) => e.ok === false && /rate limited/i.test(e.note || '') && /1 new sub-feddit/i.test(e.note || '')), '429: the daily-cap rate limit was logged clearly');
+  }
+
+  // (5) A submit failure for ANY OTHER reason never triggers a creation.
+  {
+    const world = { feddits: {}, comments: {}, onSubmit: () => ({ ok: false, status: 403, data: { error: { code: 'forbidden', message: 'You can only modify your own posts.' } }, error: 'Forbidden (403).' }) };
+    const { feddit } = await postTick({ createMissingSubFeddit: true }, world);
+    eq(feddit.calls.createFeddit.length, 0, 'OTHER failure (403): a non-missing-sub error NEVER triggers creation');
+    eq(feddit.calls.submit.length, 1, 'OTHER failure (403): one attempt, no retry');
+  }
+
+  // (5b) A submit 429 short-circuits (back-off) and never reaches creation.
+  {
+    const world = { feddits: {}, comments: {}, onSubmit: () => ({ ok: false, status: 429, retryAfterSec: 120, error: 'Rate limited by Feddit (429), retry in 120s.' }) };
+    const { feddit } = await postTick({ createMissingSubFeddit: true }, world);
+    eq(feddit.calls.createFeddit.length, 0, 'a submit 429 backs off and never reaches sub-feddit creation');
+  }
+
+  // (6) BOTH bot types: a NEWS link post opts in the same way and creates its
+  // missing DEFAULT-TARGET sub-feddit once, then retries the link submit once.
+  {
+    const H = 3_600_000;
+    const clock = makeClock(1_600_000_000_000);
+    const art = { url: 'https://news.org/a', domain: 'news.org', title: 'Rocket launch success', seendate: seendateFrom(clock.now() - 1 * H) };
+    const gd = gdelt.createGdelt({ now: clock.now, sleep: async (ms) => clock.advance(ms), minSpacingMs: 0, fetch: async () => ({ status: 200, arrayBuffer: async () => jsonBody({ articles: [art] }) }) });
+    let n = 0;
+    const world = { feddits: {}, comments: {}, onSubmit: () => (++n === 1 ? missingFeddit() : submitOk()) };
+    const p = profile({ id: 'nnews', botType: 'news', mode: 'post', postsPerHour: 60, newsUseGdelt: true, newsQuery: 'rocket', postFeddits: ['localnews'], newsRoutingRules: [], newsMaxAgeHours: 24, newsMinGapMinutes: 0, createMissingSubFeddit: true });
+    p.sched.nextPostAt = clock.now();
+    const store = makeStore([p]);
+    store.updateSettings({ dryRun: false });
+    const feddit = makeFeddit(world);
+    const sched = scheduler.createScheduler({ store, providers: makeProviders(), feddit, gdelt: gd, feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    await sched.runTick();
+    eq(feddit.calls.createFeddit.length, 1, 'NEWS bot ON: also creates the missing default-target sub-feddit (once)');
+    eq(feddit.calls.createFeddit[0].name, 'localnews', 'NEWS bot ON: created the exact owner-typed default target name');
+    eq(feddit.calls.submit.length, 2, 'NEWS bot ON: link submit retried exactly once after creation');
+    ok((store.getProfile('nnews').activity || []).some((e) => /Posted link/.test(e.note || '')), 'NEWS bot ON: the retried link post succeeded');
+  }
+}
+
 // ---- run --------------------------------------------------------------------
 
 (async () => {
@@ -1853,6 +1992,7 @@ async function scenarioNewsVoice() {
   await scenarioLinkPendingDefer();
   await scenarioLinkTerminalStates();
   await scenarioProbationPolling();
+  await scenarioCreateMissingSubFeddit();
   await scenarioFeeds();
   await scenarioRealSmoke();
 
