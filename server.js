@@ -337,6 +337,15 @@ async function handleApi(req, res, urlPath, query) {
       return sendJson(res, 200, out);
     }
 
+    // GET /api/profiles/:id/preview-status - live progress for an in-flight
+    // preview (so the button isn't frozen while GDELT is being retried). Returns
+    // { message } (message null when nothing is running).
+    if (method === 'GET' && sub === '/preview-status') {
+      if (!existing) return sendJson(res, 404, { error: 'No such profile' });
+      const prog = schedulerHandle.getPreviewProgress(id);
+      return sendJson(res, 200, { message: prog ? prog.message : null });
+    }
+
     // POST /api/profiles/:id/clear-posted - wipe this profile's posted-article
     // history (and per-domain counts). Needed because dry-run consumes the dedupe.
     if (method === 'POST' && sub === '/clear-posted') {

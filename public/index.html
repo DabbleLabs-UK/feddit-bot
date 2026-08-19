@@ -832,12 +832,20 @@ async function previewNews(id) {
   const meta = $('#newsPreviewMeta');
   // Save the current form first so the preview uses what's on screen.
   try { await api('/api/profiles/' + encodeURIComponent(id), { method: 'PUT', body: collectForm() }); } catch (e) {}
-  btn.disabled = true; out.textContent = 'Querying GDELT (shared 8s queue; may wait) and generating a title...'; meta.textContent = '';
+  btn.disabled = true; out.textContent = 'Querying GDELT (shared 20s queue; may retry a throttled response for up to ~90s)...'; meta.textContent = '';
+  // Poll the server for live retry progress so the button never looks frozen.
+  const poll = setInterval(async () => {
+    try {
+      const s = await api('/api/profiles/' + encodeURIComponent(id) + '/preview-status');
+      if (s && s.message) out.textContent = s.message;
+    } catch (e) { /* transient - keep the last message */ }
+  }, 1500);
   try {
     const r = await api('/api/profiles/' + encodeURIComponent(id) + '/preview-news', { method: 'POST' });
     if (!r.ok) { out.textContent = r.error || 'No article chosen.'; return; }
     const a = r.article || {};
     out.innerHTML =
+      (r.stale ? '<div class="hint" style="margin-bottom:6px">Served from a slightly old cache (GDELT was rate limiting); the headline may not be the very latest.</div>' : '') +
       '<div><b>Would post to:</b> f/' + esc(r.subFeddit) + (r.routedBy ? ' <span class="hint">(' + esc(r.routedBy) + ')</span>' : '') + '</div>' +
       '<div style="margin-top:6px"><b>Domain:</b> <small class="mono">' + esc(a.domain || '') + '</small></div>' +
       '<div style="margin-top:4px"><b>Headline:</b> ' + esc(a.title || '') + '</div>' +
@@ -849,7 +857,7 @@ async function previewNews(id) {
   } catch (e) {
     out.textContent = '';
     toast('Preview failed: ' + e.message, 'err');
-  } finally { btn.disabled = false; }
+  } finally { clearInterval(poll); btn.disabled = false; }
 }
 
 async function clearPosted(id) {

@@ -163,7 +163,7 @@ lib/providers/index.js    provider facade: routing + ollama single-flight + deep
 lib/providers/ollama.js   Ollama client: default model, keep_alive -1, single-flight
 lib/providers/deepseek.js DeepSeek client: OpenAI-compatible, Bearer auth, 401/402/429 handling
 lib/feddit.js             Feddit /api/v1 client: browser UA, 429 handling, register/read/write
-lib/gdelt.js              shared GDELT DOC 2.0 client: single 8s-spaced request queue, 15min cache, non-JSON/429 back-off (news bots)
+lib/gdelt.js              shared GDELT DOC 2.0 client: single 20s-spaced request queue, 15min cache, in-queue retry on a throttle (~5 tries/~90s) with stale-cache fallback (news bots)
 public/index.html         self-contained vanilla-JS control panel (no CDN, no build)
 test/scheduler-dryrun.js  stubbed dry-run harness proving the scheduler's guarantees
 ```
@@ -243,6 +243,7 @@ DELETE /api/profiles/:id                    delete
 POST   /api/profiles/:id/register           register on Feddit, store token
 POST   /api/profiles/:id/test-generate      generate sample reply via the profile's provider, no posting
 POST   /api/profiles/:id/preview-news        run the news pick (query -> filter -> choose -> title), no posting
+GET    /api/profiles/:id/preview-status      live progress for an in-flight preview (GDELT retry message)
 POST   /api/profiles/:id/clear-posted        wipe the news posted-article dedupe history
 ```
 
@@ -264,9 +265,12 @@ the global pause + dry-run flags live. Key guarantees, all proved by
 - the monthly spend cap skips DeepSeek profiles (not ollama) when exceeded, and
   per-generation cost is recorded and summed for the UI;
 - news profiles share all of the above and add: a single process-wide GDELT
-  request queue (min 8s spacing, plus a 15min per-query cache) that no profile
-  can bypass; non-JSON / plain-text 429 bodies treated as rate limiting with
-  escalating back-off; permanent canonical-URL dedupe (recorded before submit,
+  request queue (min 20s spacing, plus a 15min per-query cache) that no profile
+  can bypass; non-JSON / plain-text 429 bodies treated as throttling and RETRIED
+  in-queue (~5 tries over ~90s with jittered spacing) rather than dead-ending, a
+  stale-cache fallback when retries are exhausted, and non-blocking scheduling so
+  a news profile waiting on GDELT never stalls another profile's tick; permanent
+  canonical-URL dedupe (recorded before submit,
   and in dry-run); and freshness / per-domain-cap / denylist filtering plus
   OPTIONAL routing (rule matches route by weight, non-matches fall back to the
   default target unless `newsStrictRouting` is on, and a rule-less profile posts

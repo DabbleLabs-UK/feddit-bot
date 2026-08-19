@@ -615,58 +615,86 @@ async function scenarioCostMaths() {
 }
 
 // ============================================================================
-// Scenario 9: the shared GDELT queue - 8s spacing across profiles, a plain-text
-// 429 body handled without throwing (escalating back-off), and the per-query
-// cache. Drives the REAL createGdelt() queue with a fake clock + stub fetch, so
-// there is NO live network call here.
+// Scenario 9: the shared GDELT queue as REBUILT against measured reality (GDELT
+// throttles erratically even at 3x its stated spacing, and a 429 does NOT mean
+// the next request fails). Proves: 20s spacing across profiles; a single 429 does
+// NOT fail the operation (it retries in-queue and succeeds, per the observed
+// 429/200/429 pattern); the retry budget is bounded and gives up cleanly; the
+// per-query cache; and the stale-cache fallback when every retry is exhausted.
+// Drives the REAL createGdelt() with a fake clock + stub fetch: NO live network,
+// NO real waiting.
 // ============================================================================
 async function scenarioGdeltQueue() {
-  console.log('\n[9] GDELT shared queue: 8s spacing + plain-text 429 back-off + cache');
+  console.log('\n[9] GDELT queue: 20s spacing + in-queue retry (429/200) + bounded budget + stale fallback + cache');
 
-  // 9a: three DISTINCT queries fired at once must be issued >= 8s apart.
+  // 9a: three DISTINCT queries fired at once must be issued >= 20s apart (the new
+  // default spacing), and the client advertises that default.
   {
     const clock = makeClock(1_000_000);
     const issuedAt = [];
     const body = jsonBody({ articles: [{ url: 'https://x.com/a', title: 'A', seendate: '20200101T000000Z', domain: 'x.com' }] });
     const gd = gdelt.createGdelt({
-      now: clock.now, sleep: async (ms) => clock.advance(ms), minSpacingMs: 8000,
+      now: clock.now, sleep: async (ms) => clock.advance(ms), random: () => 0,
       fetch: async () => { issuedAt.push(clock.now()); return { status: 200, arrayBuffer: async () => body }; },
     });
+    eq(gd.MIN_SPACING_MS, 20_000, 'the default minimum spacing is now 20s');
     const [r1, r2, r3] = await Promise.all([gd.fetchArticles('alpha'), gd.fetchArticles('bravo'), gd.fetchArticles('charlie')]);
     ok(r1.ok && r2.ok && r3.ok, 'all three queued GDELT requests succeeded');
     eq(issuedAt.length, 3, 'exactly three real requests were issued (queue serialised them)');
     const gaps = issuedAt.slice(1).map((t, i) => t - issuedAt[i]);
-    ok(gaps.every((g) => g >= 8000), 'no two requests issued within 8s even with several due at once (gaps=' + gaps.join(',') + 'ms)');
+    ok(gaps.every((g) => g >= 20_000), 'no two requests issued within 20s even with several due at once (gaps=' + gaps.join(',') + 'ms)');
   }
 
-  // 9b: a plain-text 429 body is NOT JSON.parsed blindly - handled, and it backs
-  // off so a follow-up does not immediately re-request.
+  // 9b: THE IMPORTANT ONE. A single 429 must NOT dead-end the operation - it
+  // retries inside the queue and the follow-up 200 succeeds (the measured DELL
+  // pattern is 429, 200, 429; the second attempt wins).
   {
     const clock = makeClock(2_000_000);
-    let fetchCount = 0;
+    let call = 0;
+    const seq = [429, 200, 429];
+    const body = jsonBody({ articles: [{ url: 'https://n.com/1', title: 'N', seendate: '20200101T000000Z', domain: 'n.com' }] });
     const gd = gdelt.createGdelt({
-      now: clock.now, sleep: async (ms) => clock.advance(ms), minSpacingMs: 8000, backoffSteps: [15_000, 30_000],
-      fetch: async () => { fetchCount++; return { status: 429, arrayBuffer: async () => Buffer.from('Too many requests. Please slow down.', 'utf8') }; },
+      now: clock.now, sleep: async (ms) => clock.advance(ms), random: () => 0,
+      fetch: async () => {
+        const s = seq[Math.min(call, seq.length - 1)]; call++;
+        if (s === 200) return { status: 200, arrayBuffer: async () => body };
+        return { status: 429, arrayBuffer: async () => Buffer.from('Too many requests. Please slow down.', 'utf8') };
+      },
     });
     let threw = false, res = null;
     try { res = await gd.fetchArticles('boom'); } catch { threw = true; }
-    ok(!threw, 'plain-text 429 body did NOT throw (no blind JSON.parse)');
-    ok(res && res.ok === false && res.rateLimited === true, '429 surfaced as { ok:false, rateLimited:true }');
-    eq(fetchCount, 1, 'one request attempted');
-    const res2 = await gd.fetchArticles('boom-different');
-    ok(res2 && res2.backoff === true, 'a follow-up while backed off short-circuits (no request)');
-    eq(fetchCount, 1, 'no new request issued during the back-off window (no hammering)');
+    ok(!threw, 'a plain-text 429 body did NOT throw (no blind JSON.parse)');
+    ok(res && res.ok === true, 'a single 429 does NOT fail the operation - it retried and the 2nd attempt succeeded');
+    eq(call, 2, 'exactly two attempts were needed: the first 429, the second 200');
+    eq(res.articles.length, 1, 'the successful retry returned the article');
   }
 
-  // 9c: an HTML error page (status 200 but non-JSON) is also treated as rate limiting.
+  // 9c: when EVERY attempt throttles and nothing is cached, the retry chain is
+  // BOUNDED (by attempt count and the ~90s budget) and gives up cleanly.
   {
     const clock = makeClock(3_000_000);
+    let call = 0;
     const gd = gdelt.createGdelt({
-      now: clock.now, sleep: async (ms) => clock.advance(ms),
+      now: clock.now, sleep: async (ms) => clock.advance(ms), random: () => 0,
+      minSpacingMs: 20_000, maxRetries: 5, retryBudgetMs: 90_000,
+      fetch: async () => { call++; return { status: 429, arrayBuffer: async () => Buffer.from('slow down', 'utf8') }; },
+    });
+    const start = clock.now();
+    const res = await gd.fetchArticles('storm');
+    ok(res && res.ok === false && res.rateLimited === true, 'relentless throttling with no cache -> a clean rate-limited failure');
+    ok(call >= 3 && call <= 5, 'it retried a few times, then gave up (attempts=' + call + ', not unbounded)');
+    ok((clock.now() - start) <= 90_000, 'the whole retry chain stayed within the ~90s budget (' + (clock.now() - start) + 'ms)');
+  }
+
+  // 9c2: an HTML error page (status 200 but non-JSON) is also treated as throttling.
+  {
+    const clock = makeClock(3_500_000);
+    const gd = gdelt.createGdelt({
+      now: clock.now, sleep: async (ms) => clock.advance(ms), random: () => 0, maxRetries: 2,
       fetch: async () => ({ status: 200, arrayBuffer: async () => Buffer.from('<html><body>error</body></html>', 'utf8') }),
     });
     const res = await gd.fetchArticles('htmlerr');
-    ok(res && res.ok === false && res.rateLimited === true, 'HTML (non-JSON) 200 body treated as rate limiting, not parsed');
+    ok(res && res.ok === false && res.rateLimited === true, 'an HTML (non-JSON) 200 body is treated as throttling, not parsed');
   }
 
   // 9d: overlapping/identical queries are served from the ~15min cache.
@@ -683,6 +711,93 @@ async function scenarioGdeltQueue() {
     eq(fetchCount, 1, 'two calls for the same query hit the API only once (per-query cache)');
     ok(b.cached === true, 'the second identical query was a cache hit');
   }
+
+  // 9e: STALE-CACHE FALLBACK. A query succeeds once, its cache entry ages past the
+  // 15-min TTL, and then GDELT throttles relentlessly. Rather than fail, the past-
+  // TTL entry is served and clearly marked stale.
+  {
+    const clock = makeClock(5_000_000);
+    let mode = 'ok';
+    const body = jsonBody({ articles: [{ url: 'https://s.com/1', title: 'Stale One', seendate: '20200101T000000Z', domain: 's.com' }] });
+    const gd = gdelt.createGdelt({
+      now: clock.now, sleep: async (ms) => clock.advance(ms), random: () => 0,
+      cacheTtlMs: 900_000, minSpacingMs: 20_000, maxRetries: 3, retryBudgetMs: 90_000,
+      fetch: async () => (mode === 'ok'
+        ? { status: 200, arrayBuffer: async () => body }
+        : { status: 429, arrayBuffer: async () => Buffer.from('slow down', 'utf8') }),
+    });
+    const first = await gd.fetchArticles('weather');
+    ok(first.ok && !first.stale, 'first call succeeded and populated the cache (fresh, not stale)');
+    clock.advance(900_000 + 60_000); // age the cache entry past its TTL
+    mode = '429';
+    const res = await gd.fetchArticles('weather');
+    ok(res && res.ok === true && res.stale === true, 'retries exhausted -> the past-TTL entry is served, marked stale');
+    eq(res.articles[0].title, 'Stale One', 'the stale fallback returned the previously-cached article');
+    ok(res.staleAgeMs >= 900_000, 'the stale entry is reported as older than the 15-min TTL (' + res.staleAgeMs + 'ms)');
+  }
+}
+
+// ============================================================================
+// Scenario 9x: a news profile stuck retrying GDELT must NOT stall unrelated work.
+// A UI Preview is parked mid-retry (holding the shared GDELT queue on a gated
+// sleep); meanwhile a scheduler tick with a conversational profile AND a second
+// news profile still completes - the conversational profile generates and the
+// scheduled news profile DEFERS (non-blocking) rather than blocking behind the
+// held queue. If the tick were serialised behind the stuck retry, runTick() would
+// never resolve (the gate is never released before we await it).
+// ============================================================================
+async function scenarioGdeltNonBlocking() {
+  console.log('\n[9x] a stuck GDELT retry does not block a conversational tick (non-blocking scheduling)');
+  const flush = async (n) => { for (let i = 0; i < n; i++) await Promise.resolve(); };
+
+  const clock = makeClock(6_000_000);
+  const gates = []; // every gated sleep parks here until we release it
+  const gd = gdelt.createGdelt({
+    now: clock.now,
+    sleep: () => new Promise((r) => gates.push(r)), // NEVER resolves on its own
+    random: () => 0,
+    maxRetries: 2, // one retry -> one gate park, so cleanup is a single release
+    fetch: async () => ({ status: 429, arrayBuffer: async () => Buffer.from('slow down', 'utf8') }),
+  });
+
+  const rule = [{ keywords: [], subFeddit: 'general', weight: 1 }];
+  // The preview target is DISABLED so the tick ignores it; it exists only to hold
+  // the queue via previewNews().
+  const previewP = profile({ id: 'prev', botType: 'news', mode: 'post', enabled: false, postsPerHour: 60, newsQuery: 'q', newsRoutingRules: rule, newsMinGapMinutes: 0 });
+  const schedNewsP = profile({ id: 'snews', botType: 'news', mode: 'post', postsPerHour: 60, newsQuery: 'q', newsRoutingRules: rule, newsMinGapMinutes: 0 });
+  const convP = profile({ id: 'conv', botType: 'conversational', mode: 'post', postsPerHour: 60, postFeddits: ['general'] });
+  schedNewsP.sched.nextPostAt = clock.now();
+  convP.sched.nextPostAt = clock.now();
+
+  const store = makeStore([schedNewsP, convP, previewP]);
+  const providers = makeProviders();
+  const sched = scheduler.createScheduler({ store, providers, feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: gd, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+
+  // Kick off the preview but do NOT await it - it parks on the retry sleep.
+  let previewResolved = false;
+  const previewPromise = sched.previewNews('prev').then((r) => { previewResolved = true; return r; });
+  await flush(50); // let it reach the gated retry wait
+
+  ok(!previewResolved, 'the preview is still retrying (parked on the backoff wait)');
+  ok(gd.isBusy(), 'the shared GDELT queue is held by the stuck preview');
+  eq(gates.length, 1, 'the preview is parked on exactly one gated sleep');
+  const prog = sched.getPreviewProgress('prev');
+  ok(prog && /retrying \(2 of 2\)/.test(prog.message), 'the UI progress reports the retry (' + (prog && prog.message) + ')');
+
+  // Now run a normal tick. It MUST resolve even though the preview is stuck.
+  const tick = await sched.runTick();
+  ok(tick && !tick.error, 'the tick completed while the news preview was stuck retrying (not serialised behind it)');
+  ok(tick.results.some((r) => r && r.action === 'post' && r.acted), 'the conversational profile still posted this tick');
+  ok(providers.stats().calls >= 1, 'the conversational profile still generated via ollama');
+  ok(schedNewsP.sched.nextPostAt === clock.now(), 'the scheduled news profile deferred (still due) rather than blocking on the held queue');
+  ok(!schedNewsP.activity.length, 'the deferred news profile logged nothing (no spam, no false failure)');
+  ok(!previewResolved, 'the tick did NOT wait for the stuck preview to finish');
+
+  // Cleanup: release the gate so the parked preview finishes and nothing dangles.
+  while (gates.length) gates.shift()();
+  await flush(50);
+  const pv = await previewPromise;
+  ok(pv && pv.ok === false, 'once released, the exhausted preview returns a clean rate-limited result');
 }
 
 // ============================================================================
@@ -918,8 +1033,12 @@ async function scenarioShortlistFallback() {
 
 // ============================================================================
 // Scenario 12: best-effort LIVE smoke test. At most ONE real GDELT call and ONE
-// short real ollama generation in total. Both are guarded: unreachable => SKIP
-// (not a failure), so the suite stays green offline.
+// short real ollama generation in total. On DELL (where the jobs actually run)
+// BOTH are reachable - GDELT returns real articles and ollama has Cy's model
+// resident. A timeout here does NOT mean "no connectivity from this box": GDELT
+// throttles unpredictably (retry shortly), and an ollama call that appears to
+// hang is queueing behind Cy's continuous generation (expected). So a timeout is
+// time-boxed to a SKIP (not a failure) rather than treated as unreachable.
 // ============================================================================
 async function scenarioRealSmoke() {
   console.log('\n[12] best-effort live smoke (at most ONE real GDELT call + ONE real ollama gen)');
@@ -928,14 +1047,14 @@ async function scenarioRealSmoke() {
 
   try {
     const r = await Promise.race([gdelt.fetchArticles('technology', { maxRecords: 1, timespanHours: 24 }), timeout(9000)]);
-    if (r && r.__timeout) console.log('  SKIP  real GDELT call timed out (offline?) - not a failure');
-    else if (r && r.ok) { console.log('  PASS  real GDELT returned ' + r.articles.length + ' article(s)'); passed++; }
-    else console.log('  SKIP  real GDELT not ok (' + JSON.stringify(r).slice(0, 90) + ') - not a failure');
+    if (r && r.__timeout) console.log('  SKIP  real GDELT call timed out (throttling; retry shortly) - not a failure');
+    else if (r && r.ok) { console.log('  PASS  real GDELT returned ' + r.articles.length + ' article(s)' + (r.stale ? ' (stale fallback)' : '')); passed++; }
+    else console.log('  SKIP  real GDELT throttled (' + JSON.stringify(r).slice(0, 90) + ') - not a failure');
   } catch (e) { console.log('  SKIP  real GDELT threw: ' + e.message + ' - not a failure'); }
 
   try {
     const g = await Promise.race([providersReal.ollama.generate({ system: 'You are terse.', prompt: 'Say hi in one word.', numPredict: 5, temperature: 0 }), timeout(9000)]);
-    if (g && g.__timeout) console.log('  SKIP  real ollama gen timed out - not a failure');
+    if (g && g.__timeout) console.log('  SKIP  real ollama gen timed out (queued behind Cy\'s generation) - not a failure');
     else if (g && typeof g.text === 'string') { console.log('  PASS  real ollama gen: ' + JSON.stringify(g.text.slice(0, 40))); passed++; }
     else console.log('  SKIP  real ollama gen returned nothing - not a failure');
   } catch (e) { console.log('  SKIP  real ollama unavailable: ' + e.message + ' - not a failure'); }
@@ -1242,6 +1361,7 @@ async function scenarioProbationPolling() {
   await scenarioSpendCap();
   await scenarioCostMaths();
   await scenarioGdeltQueue();
+  await scenarioGdeltNonBlocking();
   await scenarioNews();
   await scenarioNewsOptionalRouting();
   await scenarioShortlistFallback();
