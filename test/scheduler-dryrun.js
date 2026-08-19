@@ -175,9 +175,8 @@ function profile(over) {
     newsDomainDenylist: over.newsDomainDenylist || [],
     newsPaywallFilter: over.newsPaywallFilter != null ? over.newsPaywallFilter : false,
     newsRequireImage: over.newsRequireImage || false,
-    newsTitleStyle: over.newsTitleStyle || 'straight',
+    newsTitleVoice: over.newsTitleVoice || 'straight',
     newsTitleCustom: over.newsTitleCustom || '',
-    newsTitleFaithfulness: over.newsTitleFaithfulness || 'loose',
     newsLetBotChoose: over.newsLetBotChoose || false,
     postedNews: over.postedNews || [],
     newsDomainDaily: over.newsDomainDaily || {},
@@ -1152,6 +1151,42 @@ function scenarioProfileMigration() {
   // Robust against junk input.
   eq(JSON.stringify(store.migrateProfiles([])), '[]', 'migrateProfiles([]) is empty, no crash');
   eq(JSON.stringify(store.migrateProfiles(null)), '[]', 'migrateProfiles(null) is empty, no crash');
+
+  // ---- Title voice merge (Problem 2 migration) -----------------------------
+  // The old split newsTitleStyle x newsTitleFaithfulness (which could be set to
+  // contradictory values) collapses onto the single newsTitleVoice preset, and
+  // BOTH dead fields are purged like displayName - no orphans left behind.
+  const tv = store.migrateProfiles([
+    // style drives it; a plain style keeps its preset...
+    { id: 's1', newsTitleStyle: 'straight', newsTitleFaithfulness: 'close' },
+    { id: 's2', newsTitleStyle: 'straight', newsTitleFaithfulness: 'loose' },
+    // ...but the contradictory 'straight + wild' combo lifts to full-character.
+    { id: 's3', newsTitleStyle: 'straight', newsTitleFaithfulness: 'wild' },
+    { id: 'd1', newsTitleStyle: 'deadpan', newsTitleFaithfulness: 'wild' },
+    // tabloid/punny already sit at the expressive end - wild does not change them.
+    { id: 't1', newsTitleStyle: 'tabloid', newsTitleFaithfulness: 'wild' },
+    { id: 'pu', newsTitleStyle: 'punny', newsTitleFaithfulness: 'close' },
+    // custom is preserved, and its free-text instruction carries over untouched.
+    { id: 'cu', newsTitleStyle: 'custom', newsTitleFaithfulness: 'wild', newsTitleCustom: 'always a question' },
+    // an old record with the fields missing entirely lands on the safe default.
+    { id: 'none', fedditUsername: '' },
+  ]);
+  const byId = Object.fromEntries(tv.map((p) => [p.id, p]));
+  eq(byId.s1.newsTitleVoice, 'straight', 'migrate: straight+close -> straight');
+  eq(byId.s2.newsTitleVoice, 'straight', 'migrate: straight+loose -> straight');
+  eq(byId.s3.newsTitleVoice, 'full-character', 'migrate: contradictory straight+wild -> full-character');
+  eq(byId.d1.newsTitleVoice, 'full-character', 'migrate: deadpan+wild -> full-character');
+  eq(byId.t1.newsTitleVoice, 'tabloid', 'migrate: tabloid+wild stays tabloid (already expressive)');
+  eq(byId.pu.newsTitleVoice, 'punny', 'migrate: punny stays punny');
+  eq(byId.cu.newsTitleVoice, 'custom', 'migrate: custom stays custom');
+  eq(byId.cu.newsTitleCustom, 'always a question', 'migrate: custom free-text instruction preserved (no data loss)');
+  eq(byId.none.newsTitleVoice, 'straight', 'migrate: missing fields -> safe default voice');
+  // BOTH dead fields gone for good on EVERY record (no orphans, like displayName).
+  ok(tv.every((p) => !('newsTitleStyle' in p)), 'migrate: newsTitleStyle purged from every record');
+  ok(tv.every((p) => !('newsTitleFaithfulness' in p)), 'migrate: newsTitleFaithfulness purged from every record');
+  // Idempotent: a record already on the new shape keeps its voice, no old fields.
+  const again = store.migrateProfiles([{ id: 're', newsTitleVoice: 'punny' }]);
+  eq(again[0].newsTitleVoice, 'punny', 'migrate: idempotent - an already-migrated record keeps its voice');
 }
 
 // ============================================================================
@@ -1657,7 +1692,7 @@ async function scenarioNewsVoice() {
   //     of the old faithfulness-to-phrasing wording.
   {
     const clock = makeClock(1_600_000_000_000);
-    const p = mk({ newsTitleFaithfulness: 'loose' });
+    const p = mk({ newsTitleVoice: 'deadpan' });
     const store = makeStore([p]);
     const providers = makeProviders(); // default responder -> a clearly non-similar title
     const s = scheduler.createScheduler({ store, providers, feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: makeGd(clock), feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY });
@@ -1681,14 +1716,14 @@ async function scenarioNewsVoice() {
     ok(!/do NOT state any fact/i.test(tp), '(1) old "do NOT state any fact" HARD RULE is gone');
     ok(!/invent nothing/i.test(tp), '(1) old "invent nothing" wording is gone');
     ok(!/stay vague/i.test(tp), '(1) old "if unsure, stay vague" wording is gone');
-    ok(!/stay\s+(?:fairly\s+)?close/i.test(tp) && !/close to the headline/i.test(tp), '(1) a loose profile is NOT told to stay close to the headline');
+    ok(!/stay\s+(?:fairly\s+)?close/i.test(tp) && !/close to the headline/i.test(tp), '(1) a departing voice is NOT told to stay close to the headline');
   }
 
   // (2) anti-verbatim / similarity: a near-verbatim first attempt triggers a
   //     LOGGED regeneration; the voiced second attempt is accepted.
   {
     const clock = makeClock(1_600_000_000_000);
-    const p = mk({ id: 'voice2', newsTitleFaithfulness: 'loose' });
+    const p = mk({ id: 'voice2', newsTitleVoice: 'deadpan' });
     const store = makeStore([p]);
     let titleCall = 0;
     const providers = makeProviders({ textFor: (gopts) => {
@@ -1714,27 +1749,85 @@ async function scenarioNewsVoice() {
     ok(scheduler.titleSimilarity('duran on FIRE!!! celtic cruising lol', HEADLINE) < scheduler.TITLE_SIMILARITY_LIMIT, '(3) a strongly-voiced rewrite scores below the limit');
   }
 
-  // (4) the faithfulness control moves BOTH the prompt wording AND the temperature.
+  // (4) the single Title voice preset moves BOTH the prompt wording AND the
+  //     temperature together (the two can no longer be set against each other).
   {
-    const runFaith = async (mode) => {
+    const runVoice = async (voice, custom) => {
       const clock = makeClock(1_600_000_000_000);
-      const p = mk({ id: 'f_' + mode, newsTitleFaithfulness: mode });
+      const p = mk({ id: 'v_' + voice, newsTitleVoice: voice, newsTitleCustom: custom || '' });
       const store = makeStore([p]);
       const providers = makeProviders();
       const s = scheduler.createScheduler({ store, providers, feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: makeGd(clock), feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY });
-      await s.previewNews('f_' + mode);
+      await s.previewNews('v_' + voice);
       const call = providers.genCalls.find((c) => /TITLE:\s*$/.test(c.prompt));
       return { prompt: call.prompt, temp: call.temperature };
     };
-    const close = await runFaith('close');
-    const loose = await runFaith('loose');
-    const wild = await runFaith('wild');
+    const straight = await runVoice('straight');
+    const tabloid = await runVoice('tabloid');
+    const full = await runVoice('full-character');
+    const custom = await runVoice('custom', 'always frame it as a question');
 
-    ok(/STAY FAIRLY CLOSE/.test(close.prompt), '(4) close mode injects the "stay fairly close" directive');
-    ok(/GO WILD/.test(wild.prompt), '(4) wild mode injects the "go wild" directive');
-    ok(!/STAY FAIRLY CLOSE/.test(loose.prompt) && !/GO WILD/.test(loose.prompt), '(4) loose mode uses neither extreme directive');
-    ok(close.temp < loose.temp && loose.temp < wild.temp, '(4) title temperature rises close < loose < wild  (' + close.temp + ' < ' + loose.temp + ' < ' + wild.temp + ')');
-    ok(close.temp !== 0.8, '(4) title temperature overrides the profile base 0.8');
+    // Each preset injects its OWN style + departure wording (restrained -> extreme).
+    ok(/straight and clear/.test(straight.prompt), '(4) straight voice injects the plain-and-clear style');
+    ok(/tabloid energy/.test(tabloid.prompt), '(4) tabloid voice injects the punchy tabloid style');
+    ok(/GO ALL IN as this character/.test(full.prompt), '(4) full-character voice leans hardest on the persona');
+    // Temperature rises monotonically restrained -> extreme, and overrides base 0.8.
+    ok(straight.temp < tabloid.temp && tabloid.temp < full.temp, '(4) title temperature rises straight < tabloid < full-character  (' + straight.temp + ' < ' + tabloid.temp + ' < ' + full.temp + ')');
+    ok(straight.temp !== 0.8, '(4) title temperature overrides the profile base 0.8');
+    // The custom escape hatch feeds the owner's own instruction in as the style.
+    ok(/always frame it as a question/.test(custom.prompt), '(4) custom voice injects the owner free-text instruction as the style');
+  }
+
+  // (5) THE VERBATIM-LEAK REGRESSION (Problem 1). A stub provider that returns the
+  //     publisher HEADLINE verbatim on EVERY call (initial + every regen) must
+  //     NEVER cause the headline to be emitted. The preview path (the reported
+  //     repro) must FAIL clearly, and the verbatim string must be nowhere in the
+  //     output. This exercises the REAL title path end-to-end, not prompt shape.
+  {
+    const clock = makeClock(1_600_000_000_000);
+    const p = mk({ id: 'verbatim', newsTitleVoice: 'tabloid' });
+    const store = makeStore([p]);
+    let titleCalls = 0;
+    const providers = makeProviders({ textFor: (gopts) => {
+      if (/TITLE:\s*$/.test(gopts.prompt)) { titleCalls++; return HEADLINE; } // model refuses to depart, ever
+      return 'x\n\nbody';
+    } });
+    const s = scheduler.createScheduler({ store, providers, feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: makeGd(clock), feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    const r = await s.previewNews('verbatim');
+
+    ok(r && r.ok === false, '(5) preview REFUSES rather than returning the verbatim headline');
+    ok(r && r.title == null, '(5) no title field is emitted at all (not the headline)');
+    ok(r && typeof r.error === 'string' && r.error !== HEADLINE, '(5) the failure is surfaced as a clear error, not the headline');
+    ok(r && /would not depart|verbatim|never acceptable/i.test(r.error || ''), '(5) the error explains the model would not depart from the headline');
+    // Every regeneration in the budget actually ran (initial + TITLE_MAX_REGENS).
+    eq(titleCalls, 3, '(5) it tried the full regen budget (1 initial + 2 regens) before refusing');
+    // The single ironclad invariant: the verbatim headline is NOWHERE in the result.
+    ok(!JSON.stringify(r).includes(HEADLINE), '(5) the verbatim headline appears NOWHERE in the preview result');
+  }
+
+  // (6) The same refusal on the LIVE (dry-run) POSTING path via runTick: the
+  //     verbatim headline is never submitted, the article is NOT consumed, and the
+  //     activity log shows the clear failure (not a fake "posted" success).
+  {
+    const clock = makeClock(1_600_000_000_000);
+    const p = mk({ id: 'verbatim-live', newsTitleVoice: 'tabloid' });
+    p.sched.nextPostAt = clock.now();
+    const store = makeStore([p]);
+    const providers = makeProviders({ textFor: (gopts) => (/TITLE:\s*$/.test(gopts.prompt) ? HEADLINE : 'x\n\nbody') });
+    const world = { feddits: {}, comments: {} };
+    const feddit = makeFeddit(world);
+    const s = scheduler.createScheduler({ store, providers, feddit, gdelt: makeGd(clock), feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    const tick = await s.runTick();
+    const a = (tick.results || []).find((x) => x && x.action === 'news');
+
+    ok(a && a.ok === false, '(6) the live tick reports the news action as a FAILURE, not a post');
+    eq(world.calls.submit.length, 0, '(6) nothing was submitted to Feddit');
+    const live = store.getProfile('verbatim-live');
+    eq((live.postedNews || []).length, 0, '(6) the article was NOT consumed (no dedupe recorded) - a working model can still post it later');
+    const failLog = (live.activity || []).find((e) => /would not depart|never acceptable/i.test(e.note || ''));
+    ok(!!failLog && failLog.ok === false, '(6) the activity log carries a clear failure entry');
+    ok(!(live.activity || []).some((e) => /Posted link/.test(e.note || '')), '(6) NO "Posted link" entry was logged');
+    ok(!(live.activity || []).some((e) => (e.note || '').includes(HEADLINE) && /Posted|would post/i.test(e.note || '')), '(6) the verbatim headline was never logged as a posted title');
   }
 }
 

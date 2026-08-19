@@ -528,17 +528,14 @@ function renderEditor(p) {
         <div class="field"><label>${lbl('Max article age (hours)', 'Freshness cap: the bot ignores any article older than this many hours, so it never posts stale news. Example: 24 means only stories from the last day are eligible.')}</label><input id="f_newsMaxAgeHours" type="number" min="1" step="1" value="${esc(p.newsMaxAgeHours)}"></div>
         <div class="field"><label>${lbl('Max posts per source domain / day', 'Stops one outlet dominating the bot output. Set to 2 and the bot posts at most two BBC articles a day even if BBC dominates the results. 0 means no limit.')}</label><input id="f_newsMaxPerDomainPerDay" type="number" min="0" step="1" value="${esc(p.newsMaxPerDomainPerDay)}"></div>
         <div class="field"><label>${lbl('Minimum gap between posts (minutes)', 'The shortest time the bot will wait between two news posts, on top of the posts-per-hour cadence. Example: 30 means at least half an hour between link posts even if more articles are ready.')}</label><input id="f_newsMinGapMinutes" type="number" min="0" step="1" value="${esc(p.newsMinGapMinutes)}"></div>
-        <div class="field"><label>${lbl('Title style', 'The voice the model uses when writing the post title from the headline. straight = plain and clear; deadpan = flat and understated; tabloid = punchy (never invents facts); punny = light wordplay; custom = your own instruction in the box below.')}</label>
-          <select id="f_newsTitleStyle">
-            ${['straight','deadpan','tabloid','punny','custom'].map(s=>'<option value="'+s+'"'+(p.newsTitleStyle===s?' selected':'')+'>'+s+'</option>').join('')}
-          </select></div>
-        <div class="field"><label>${lbl('Title faithfulness', "How closely the title should stick to the publisher's original wording (this is about PHRASING, not facts - the bot never invents facts either way). close = keep it near the real headline, just reworded; loose (default) = the bot's own reaction in its own voice, free to depart from the headline; wild = a loud personal reaction that barely resembles the original. Loose/wild also run the title generation at a higher temperature. Most persona bots want loose or wild - close is for a bot that should read like a straight news wire.")}</label>
-          <select id="f_newsTitleFaithfulness">
-            ${['close','loose','wild'].map(s=>'<option value="'+s+'"'+((p.newsTitleFaithfulness||'loose')===s?' selected':'')+'>'+s+'</option>').join('')}
-          </select></div>
         <div class="field full"><label>${lbl('Domain denylist (comma-separated)', 'Publisher domains the bot will NEVER post from (subdomains matched too). Comma-separated. Example: dailymail.co.uk, example.com - this also blocks www.dailymail.co.uk.')}</label><input id="f_newsDomainDenylist" value="${esc(csv(p.newsDomainDenylist))}" placeholder="dailymail.co.uk, example.com"></div>
-        <div class="field full" id="titleCustomField"><label>Custom title-style instruction</label><input id="f_newsTitleCustom" value="${esc(p.newsTitleCustom)}" placeholder="e.g. always frame it as a question"></div>
       </div>
+
+      <div class="field full" style="margin-top:14px"><label>${lbl('Title voice', "The single dial for how the bot writes the post title from the headline - it sets the wording, how far it departs from the publisher's phrasing, and the temperature all at once, so nothing can contradict. Runs from restrained to extreme. straight/plain = describe the story clearly in the bot's own words (least departure); deadpan = flat and understated; punny = light wordplay; tabloid = loud and grabby; full-character = leans hardest on this bot's own persona and tone, furthest from the headline. custom = write your own instruction in the box below. The bot NEVER invents facts and NEVER just reprints the headline at any setting.")}</label>
+        <select id="f_newsTitleVoice">
+          ${['straight','deadpan','punny','tabloid','full-character','custom'].map(s=>'<option value="'+s+'"'+((p.newsTitleVoice||'straight')===s?' selected':'')+'>'+s+'</option>').join('')}
+        </select></div>
+      <div class="field full" id="titleCustomField"><label>Custom title-voice instruction</label><textarea id="f_newsTitleCustom" rows="2" placeholder="e.g. always frame it as a question">${esc(p.newsTitleCustom)}</textarea></div>
 
       <div class="row" style="margin-top:10px">
         <label class="row" style="gap:6px"><input type="checkbox" id="f_newsPaywallFilter" style="width:auto"${p.newsPaywallFilter?' checked':''}> Skip known paywall domains ${lbl('', 'When on, drops articles from a built-in list of hard-paywall publishers (NYT, WSJ, FT, Bloomberg and similar) so followers do not hit a paywall. Subdomains are matched too.')}</label>
@@ -629,7 +626,7 @@ function renderEditor(p) {
   $('#f_model').addEventListener('input', renderProviderView);
   $('#f_provider').addEventListener('change', renderProviderView);
   $('#f_botType').addEventListener('change', renderBotTypeView);
-  $('#f_newsTitleStyle').addEventListener('change', renderBotTypeView);
+  $('#f_newsTitleVoice').addEventListener('change', renderBotTypeView);
   $('#f_newsLetBotChoose').addEventListener('change', () => {
     $('#letChooseWarn').style.display = $('#f_newsLetBotChoose').checked ? 'block' : 'none';
   });
@@ -665,7 +662,7 @@ function renderEditor(p) {
     $('#postFedditsLabel').innerHTML = news
       ? lbl('Default target sub-feddit(s) (comma-separated)', 'Where this news bot posts articles by default. With no routing rules it posts EVERYTHING its query matches here; with rules, it is the fallback for articles that match no rule. List several to spread posts across them. Example: worldnews, tech. Required unless every article is placed by a routing rule.')
       : lbl('Posts/comments to (comma-separated)', 'The sub-feddit(s) this bot posts to.');
-    $('#titleCustomField').style.display = (news && $('#f_newsTitleStyle').value === 'custom') ? '' : 'none';
+    $('#titleCustomField').style.display = (news && $('#f_newsTitleVoice').value === 'custom') ? '' : 'none';
     $('#botTypeHint').textContent = news
       ? 'News bot: finds fresh articles from publisher RSS feeds (and optionally GDELT), filters them by your keywords, and submits them as link posts with a generated title. It does not comment. The persona still shapes the title voice.'
       : 'Conversational bot: writes original posts and replies in character, driven by the mode and cadence below.';
@@ -900,8 +897,7 @@ function collectForm() {
     newsDomainDenylist: parseCsv($('#f_newsDomainDenylist').value),
     newsPaywallFilter: $('#f_newsPaywallFilter').checked,
     newsRequireImage: $('#f_newsRequireImage').checked,
-    newsTitleStyle: $('#f_newsTitleStyle').value,
-    newsTitleFaithfulness: $('#f_newsTitleFaithfulness') ? $('#f_newsTitleFaithfulness').value : 'loose',
+    newsTitleVoice: $('#f_newsTitleVoice') ? $('#f_newsTitleVoice').value : 'straight',
     newsTitleCustom: $('#f_newsTitleCustom').value.trim(),
     newsLetBotChoose: $('#f_newsLetBotChoose').checked,
   };
