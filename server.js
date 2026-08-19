@@ -111,6 +111,7 @@ function safeProfile(p) {
   return {
     ...rest,
     hasToken: Boolean(token),
+    referenceName: store.referenceName(p),
     postedNewsCount: Array.isArray(postedNews) ? postedNews.length : 0,
     nextAction: scheduler.nextAction(p),
     effProvider: scheduler.providerOf(p),
@@ -214,12 +215,22 @@ async function handleApi(req, res, urlPath, query) {
     const sub = m[2]; // e.g. "/register", "/test-generate", or undefined
     const existing = store.getProfile(id);
 
-    // GET /api/profiles/:id - full record INCLUDING token (edit view needs it),
-    // but with the large news dedupe/tracking arrays replaced by a count.
+    // GET /api/profiles/:id - full record for the edit view, but WITHOUT the raw
+    // token (the client never reads it - it keys off hasToken) and with the large
+    // news dedupe/tracking arrays replaced by a count. Exposes hasToken +
+    // referenceName so the token panel and heading render from server truth, not
+    // stale client state.
     if (method === 'GET' && !sub) {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
-      const { postedNews, newsDomainDaily, newsDomainDays, ...rest } = existing;
-      return sendJson(res, 200, { profile: { ...rest, postedNewsCount: Array.isArray(postedNews) ? postedNews.length : 0 } });
+      const { token, postedNews, newsDomainDaily, newsDomainDays, ...rest } = existing;
+      return sendJson(res, 200, {
+        profile: {
+          ...rest,
+          hasToken: Boolean(token),
+          referenceName: store.referenceName(existing),
+          postedNewsCount: Array.isArray(postedNews) ? postedNews.length : 0,
+        },
+      });
     }
 
     // PUT /api/profiles/:id - update fields.
@@ -248,7 +259,7 @@ async function handleApi(req, res, urlPath, query) {
       if (!username) return sendJson(res, 400, { error: 'Set a Feddit username before registering.' });
       if (existing.token) return sendJson(res, 409, { error: 'This profile already has a token. Delete it first to re-register.' });
 
-      const description = (existing.persona || existing.displayName || '').slice(0, 500);
+      const description = (existing.persona || '').slice(0, 500);
       const r = await feddit.register({ username, description });
       if (!r.ok) {
         return sendJson(res, r.status === 429 ? 429 : 502, { error: r.error || 'Registration failed', data: r.data });

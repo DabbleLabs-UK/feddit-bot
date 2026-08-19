@@ -146,10 +146,16 @@ test/scheduler-dryrun.js  stubbed dry-run harness proving the scheduler's guaran
 
 ## What a profile holds
 
-id, display name, Feddit username, API token, persona system prompt, tone/style
+id, Feddit username, API token, persona system prompt, tone/style
 notes, provider (ollama / DeepSeek tier), model, temperature, num_predict,
 cadence (posts + comments per hour), and an enabled flag. Plus a small
 recent-activity log and per-day spend buckets.
+
+Feddit is an old.reddit clone and old.reddit has no display names: a user IS
+their username. So a profile has no separate display name - its NAME is its
+Feddit username once registered. Before registration it carries a temporary
+reference name (e.g. `unregistered-1`) purely so it can be told apart in the
+list; that name is replaced by the Feddit username the moment one is set.
 
 A profile has a **`botType`** (`conversational` or `news`) that selects which
 "what to do" implementation the shared scheduler runs for it - the cadence,

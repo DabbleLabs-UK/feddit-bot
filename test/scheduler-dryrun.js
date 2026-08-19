@@ -12,6 +12,7 @@
 const scheduler = require('../lib/scheduler');
 const gdelt = require('../lib/gdelt');
 const cost = require('../lib/cost');
+const store = require('../lib/store'); // migrateProfiles/referenceName are pure - no disk touched
 
 // ---- tiny assert framework --------------------------------------------------
 
@@ -133,7 +134,6 @@ function makeStore(profiles) {
 function profile(over) {
   return {
     id: over.id,
-    displayName: over.id,
     fedditUsername: over.fedditUsername || over.id,
     token: over.token || 'feddit_stub',
     persona: 'a terse forum poster',
@@ -794,9 +794,72 @@ async function scenarioRealSmoke() {
   } catch (e) { console.log('  SKIP  real ollama unavailable: ' + e.message + ' - not a failure'); }
 }
 
+// ============================================================================
+// Scenario 13: store-level profile migration (displayName scrapped -> reference
+// name model). Pure - exercises store.migrateProfiles / store.referenceName only.
+// ============================================================================
+function scenarioProfileMigration() {
+  console.log('\n[13] profile migration: displayName scrapped, reference-name model');
+
+  // Old records as they'd sit on disk: BOTH carry the now-obsolete displayName;
+  // one is registered (has a username), one is not.
+  const migrated = store.migrateProfiles([
+    { id: 'a', displayName: 'Cy Inmate', fedditUsername: 'cy_inmate7734', token: 't' },
+    { id: 'b', displayName: 'SEA_IS_FLAT', fedditUsername: '' },
+  ]);
+  const a = migrated[0];
+  const b = migrated[1];
+
+  // displayName is gone for good on every record - not hidden, not deprecated.
+  ok(!('displayName' in a), 'registered record: displayName removed entirely');
+  ok(!('displayName' in b), 'unregistered record: displayName removed entirely');
+
+  // A registered profile's reference name IS its username (the temp name model
+  // does not apply once a username exists).
+  eq(store.referenceName(a), 'cy_inmate7734', 'registered: reference name is the Feddit username');
+  eq(a.fedditUsername, 'cy_inmate7734', 'registered: username preserved (no data loss)');
+
+  // An unregistered profile gets an obviously-temporary reference name that does
+  // NOT look like a real Feddit username.
+  eq(b.fedditUsername, '', 'unregistered: still has no username');
+  eq(b.refName, 'unregistered-1', 'unregistered: assigned a temporary reference name');
+  eq(store.referenceName(b), 'unregistered-1', 'unregistered: reference name is the temp name');
+  ok(/^unregistered-\d+$/.test(b.refName), 'temp name is obviously temporary, not a real-looking username');
+
+  // Defaults are backfilled onto old records (e.g. botType) - no crash, no missing fields.
+  eq(a.botType, 'conversational', 'migration backfills new default fields onto old records');
+  ok(Array.isArray(b.postedNews), 'migration backfills array defaults too');
+
+  // Two unregistered records must get DISTINCT temp names (no collision)...
+  const two = store.migrateProfiles([
+    { id: 'x', fedditUsername: '' },
+    { id: 'y', fedditUsername: '' },
+  ]);
+  ok(two[0].refName !== two[1].refName, 'two unregistered profiles get distinct temp names');
+  eq(JSON.stringify([two[0].refName, two[1].refName]), JSON.stringify(['unregistered-1', 'unregistered-2']),
+    'temp names are numbered in order');
+
+  // ...and a fresh temp name must never collide with one already on disk.
+  const mixed = store.migrateProfiles([
+    { id: 'p', fedditUsername: '', refName: 'unregistered-1' }, // already had one
+    { id: 'q', fedditUsername: '' },                            // needs a new one
+  ]);
+  eq(mixed[0].refName, 'unregistered-1', 'existing temp name is preserved, not reissued');
+  ok(mixed[1].refName !== 'unregistered-1', 'new temp name does not collide with an existing one');
+
+  // referenceName(): a username always wins over any lingering temp name.
+  eq(store.referenceName({ fedditUsername: 'real_user', refName: 'unregistered-9' }), 'real_user',
+    'referenceName: username takes precedence over a temp name');
+
+  // Robust against junk input.
+  eq(JSON.stringify(store.migrateProfiles([])), '[]', 'migrateProfiles([]) is empty, no crash');
+  eq(JSON.stringify(store.migrateProfiles(null)), '[]', 'migrateProfiles(null) is empty, no crash');
+}
+
 // ---- run --------------------------------------------------------------------
 
 (async () => {
+  scenarioProfileMigration();
   await scenarioTargetingDedupe();
   await scenarioCadenceCeiling();
   await scenarioThreadCap();

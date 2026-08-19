@@ -296,9 +296,8 @@ function renderList() {
     const tokenBadge = p.hasToken ? '' : '<span class="badge notoken">no token</span>';
     const enBadge = '<span class="badge ' + (p.enabled ? 'on' : 'off') + '">' + (p.enabled ? 'enabled' : 'off') + '</span>';
     li.innerHTML =
-      '<div><div class="pname">' + esc(p.displayName || '(unnamed)') + '</div>' +
-      '<div class="pmeta">' + esc(p.fedditUsername || 'no username') + ' &middot; ' +
-        esc(p.botType === 'news' ? 'news' : p.mode) +
+      '<div><div class="pname">' + esc(p.referenceName || '(unnamed)') + '</div>' +
+      '<div class="pmeta">' + esc(p.botType === 'news' ? 'news' : p.mode) +
         ' &middot; ' + esc(p.effProvider === 'deepseek' ? p.effModel : 'ollama') + '</div>' +
       '<div class="pmeta">next: ' + esc(fmtNext(p)) + '</div></div>' +
       '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + enBadge + tokenBadge + '</div>';
@@ -372,9 +371,9 @@ function renderEditor(p) {
   const main = $('#main');
   main.innerHTML = `
     <div class="section">
+      <h2 id="editorHeading" style="margin-top:0">${esc(p.referenceName || '(unnamed)')}</h2>
       <div class="grid">
-        <div class="field"><label>Display name</label><input id="f_displayName" value="${esc(p.displayName)}"></div>
-        <div class="field"><label>Feddit username</label><input id="f_fedditUsername" value="${esc(p.fedditUsername)}" placeholder="e.g. quip_bot"></div>
+        <div class="field"><label>Feddit username (this is the profile's name)</label><input id="f_fedditUsername" value="${esc(p.fedditUsername)}" placeholder="e.g. quip_bot"></div>
         <div class="field"><label>Bot type</label>
           <select id="f_botType">
             <option value="conversational"${p.botType!=='news'?' selected':''}>Conversational (persona posts &amp; replies)</option>
@@ -517,6 +516,13 @@ function renderEditor(p) {
   $('#postedCount').textContent = p.postedNewsCount ? ' (' + p.postedNewsCount + ')' : '';
   renderBotTypeView();
 
+  // The profile's name IS its username: keep the heading + token panel in sync as
+  // it's typed, so the register button enables the moment a username is present.
+  $('#f_fedditUsername').addEventListener('input', () => {
+    const u = $('#f_fedditUsername').value.trim();
+    $('#editorHeading').textContent = u || (state.editing && state.editing.refName) || '(unnamed)';
+    renderTokenArea(state.editing);
+  });
   $('#f_model').addEventListener('input', renderProviderView);
   $('#f_provider').addEventListener('change', renderProviderView);
   $('#f_botType').addEventListener('change', renderBotTypeView);
@@ -526,7 +532,7 @@ function renderEditor(p) {
   });
   $('#addRuleBtn').onclick = () => addRoutingRow({ keywords: [], subFeddit: '', weight: 1 });
   $('#saveBtn').onclick = () => saveProfile(p.id);
-  $('#deleteBtn').onclick = () => deleteProfile(p.id, p.displayName);
+  $('#deleteBtn').onclick = () => deleteProfile(p.id, p.referenceName);
   $('#testBtn').onclick = () => testGenerate(p.id);
   $('#newsPreviewBtn').onclick = () => previewNews(p.id);
   $('#clearPostedBtn').onclick = () => clearPosted(p.id);
@@ -592,18 +598,37 @@ function renderSpendLine(p) {
   }
 }
 
+// The token panel is a small state machine over (hasToken, username):
+//   registered (has token)          -> "registered as X", no register button
+//   no token + username set         -> "ready to register as X", button enabled
+//   no token + no username          -> "set a username first", button disabled
+// The username is read LIVE from the form field so the panel tracks edits before
+// a save. It re-renders from server truth after register/save (never stale state).
 function renderTokenArea(p) {
   const area = $('#tokenArea');
   if (p.hasToken) {
-    area.innerHTML = '<div class="tokline">This identity is registered on Feddit and holds a bearer token (hidden). ' +
+    area.innerHTML = '<div class="tokline">This identity is <b>registered on Feddit</b> as <b>' +
+      esc(p.referenceName || p.fedditUsername) + '</b> and holds a bearer token (hidden). ' +
       'To re-register, delete and recreate the profile.</div>';
     return;
   }
+  const field = $('#f_fedditUsername');
+  const username = ((field && field.value) || p.fedditUsername || '').trim();
+  const ready = Boolean(username);
   area.innerHTML =
-    '<div class="tokline">Not registered yet. Set the Feddit username above and save, then register to obtain a token.</div>' +
-    '<div class="row" style="margin-top:10px"><button id="regBtn">Register this identity on Feddit now</button>' +
-    '<span class="hint">Calls POST /register and stores the token returned (shown only once).</span></div>';
-  $('#regBtn').onclick = () => registerProfile(p.id);
+    '<div class="tokline">' + (ready
+      ? 'Not registered yet. Ready to register as <b>' + esc(username) + '</b>. ' +
+        'Registering claims the username on Feddit and stores the token it returns (shown only once).'
+      : 'Not registered yet, and no Feddit username set. Enter a username above, then register to claim it and obtain a token.') +
+    '</div>' +
+    '<div class="row" style="margin-top:10px">' +
+      '<button id="regBtn"' + (ready ? '' : ' disabled') + '>Register this identity on Feddit now</button>' +
+      '<span class="hint">' + (ready
+        ? 'Calls POST /register and stores the token returned.'
+        : 'Set a Feddit username above first.') + '</span>' +
+    '</div>';
+  const btn = $('#regBtn');
+  if (btn && ready) btn.onclick = () => registerProfile(p.id);
 }
 
 function renderActivity(p) {
@@ -623,7 +648,6 @@ function collectForm() {
   const choice = $('#f_provider').value;
   const isDeep = choice !== 'ollama';
   return {
-    displayName: $('#f_displayName').value.trim(),
     fedditUsername: $('#f_fedditUsername').value.trim(),
     botType: $('#f_botType').value === 'news' ? 'news' : 'conversational',
     persona: $('#f_persona').value,
@@ -752,13 +776,13 @@ async function clearPosted(id) {
 
 // ---- new profile ------------------------------------------------------------
 $('#newBtn').onclick = async () => {
-  const name = prompt('Display name for the new profile?');
-  if (name == null) return;
+  // No name to ask for: a profile IS its Feddit username. It's created with a
+  // temporary reference name and gets its real name when you set the username.
   try {
-    const d = await api('/api/profiles', { method: 'POST', body: { displayName: name.trim() } });
+    const d = await api('/api/profiles', { method: 'POST', body: {} });
     await loadProfiles();
     await selectProfile(d.profile.id);
-    toast('Profile created. Fill it in, save, then register.', 'ok');
+    toast('Profile created. Set its Feddit username, save, then register.', 'ok');
   } catch (e) { toast('Create failed: ' + e.message, 'err'); }
 };
 $('#refreshStatus').onclick = loadStatus;
