@@ -368,6 +368,69 @@ async function handleApi(req, res, urlPath, query) {
       store.clearPostedNews(id);
       return sendJson(res, 200, { ok: true });
     }
+
+    // POST /api/profiles/:id/create-feddit - explicitly create a sub-feddit with
+    // THIS profile's bot token. The owner authors name + title + description +
+    // ordered rules + nsfw in the panel; NO model is involved. Length caps are
+    // enforced client-side (see index.html) AND here as a backstop, then the
+    // three server outcomes (name taken / probation / daily cap) are surfaced as
+    // plain-English messages. On success the created community + its rules come
+    // back so the panel can show it, and the create is written to the log.
+    if (method === 'POST' && sub === '/create-feddit') {
+      if (!existing) return sendJson(res, 404, { error: 'No such profile' });
+      if (!existing.token) return sendJson(res, 400, { error: 'This profile has no Feddit token yet. Register the bot first.' });
+
+      const body = await readBody(req);
+      const name = String(body.name || '').trim();
+      const title = String(body.title || '').trim();
+      const description = String(body.description || '').trim();
+      const nsfw = body.nsfw === true;
+      const rules = Array.isArray(body.rules) ? body.rules : [];
+
+      // Backstop the exact Feddit caps (read from V:/feddit/src/api/Validate.php):
+      // name [A-Za-z0-9_]{3,24}, title 1..255, description <=2000, at most 15
+      // rules, rule title 1..100, rule detail <=500.
+      if (!/^[A-Za-z0-9_]{3,24}$/.test(name)) {
+        return sendJson(res, 400, { error: 'Name must be 3-24 characters: letters, numbers or underscore only.' });
+      }
+      if (title.length < 1 || title.length > 255) {
+        return sendJson(res, 400, { error: 'Title is required and must be at most 255 characters.' });
+      }
+      if (description.length > 2000) {
+        return sendJson(res, 400, { error: 'Description must be at most 2000 characters.' });
+      }
+      if (rules.length > 15) {
+        return sendJson(res, 400, { error: 'A sub-feddit can have at most 15 rules.' });
+      }
+      for (let i = 0; i < rules.length; i++) {
+        const rt = String((rules[i] && rules[i].title) || '').trim();
+        const rd = String((rules[i] && rules[i].detail) || '').trim();
+        if (rt.length < 1 || rt.length > 100) {
+          return sendJson(res, 400, { error: 'Rule ' + (i + 1) + ': a title is required and must be at most 100 characters.' });
+        }
+        if (rd.length > 500) {
+          return sendJson(res, 400, { error: 'Rule ' + (i + 1) + ' detail must be at most 500 characters.' });
+        }
+      }
+
+      const r = await feddit.createFeddit({ token: existing.token, name, title, description, nsfw, rules });
+      if (!r.ok) {
+        const msg = feddit.createErrorMessage(r, name);
+        store.logActivity(id, { kind: 'feddit', ok: false, target: 'f/' + name, note: 'Create failed: ' + msg });
+        // Preserve the server status so the panel can react (409/403/429/other).
+        const status = [409, 403, 429].includes(r.status) ? r.status : (r.status && r.status >= 400 ? r.status : 502);
+        return sendJson(res, status, { error: msg });
+      }
+
+      const created = (r.data && r.data.feddit) || { name, title };
+      const ruleCount = Array.isArray(created.rules) ? created.rules.length : rules.length;
+      store.logActivity(id, {
+        kind: 'feddit', ok: true, target: 'f/' + name,
+        note: 'Created sub-feddit f/' + name + ' (' + ruleCount + ' rule(s)'
+          + (nsfw ? ', NSFW' : '') + '). The post can now be retried.',
+      });
+      return sendJson(res, 201, { ok: true, feddit: created, profile: safeProfile(store.getProfile(id)) });
+    }
   }
 
   return sendJson(res, 404, { error: 'Unknown API route' });

@@ -401,6 +401,84 @@ function collectRoutingRules() {
   })).filter((r) => r.subFeddit);
 }
 
+// One editable sub-feddit RULE row in the create form: an ordered title +
+// optional detail, with move-up / move-down (reorder) and remove. Feddit stores
+// rules as an ordered, structured, machine-readable list (title + optional
+// detail) that other bots read - so this is a row list, NOT a prose textarea;
+// the row's position IS the rule number.
+function addFedditRuleRow(rule) {
+  const wrap = $('#cf_rules');
+  if (!wrap) return;
+  const row = document.createElement('div');
+  row.className = 'row cfRuleRow';
+  row.style.cssText = 'gap:6px; margin-bottom:6px; align-items:flex-start';
+  row.innerHTML =
+    '<div style="flex:1; display:flex; flex-direction:column; gap:4px">' +
+      '<input class="cf_rtitle" maxlength="100" placeholder="rule title (required, up to 100 chars)" value="' + esc((rule && rule.title) || '') + '">' +
+      '<input class="cf_rdetail" maxlength="500" placeholder="detail (optional, up to 500 chars)" value="' + esc((rule && rule.detail) || '') + '">' +
+    '</div>' +
+    '<button type="button" class="cf_rup" title="move up" style="padding:6px 10px">up</button>' +
+    '<button type="button" class="cf_rdown" title="move down" style="padding:6px 10px">dn</button>' +
+    '<button type="button" class="cf_rdel danger" title="remove" style="padding:6px 10px">x</button>';
+  row.querySelector('.cf_rup').onclick = () => { const prev = row.previousElementSibling; if (prev) wrap.insertBefore(row, prev); };
+  row.querySelector('.cf_rdown').onclick = () => { const next = row.nextElementSibling; if (next) wrap.insertBefore(next, row); };
+  row.querySelector('.cf_rdel').onclick = () => row.remove();
+  wrap.appendChild(row);
+}
+
+// Read the rule rows back in DOM (owner-chosen) order.
+function collectFedditRules() {
+  return [...document.querySelectorAll('#cf_rules .cfRuleRow')].map((row) => ({
+    title: row.querySelector('.cf_rtitle').value.trim(),
+    detail: row.querySelector('.cf_rdetail').value.trim(),
+  }));
+}
+
+// Explicit, owner-authored sub-feddit creation with THIS profile's bot token.
+// Enforces the EXACT Feddit caps (read from V:/feddit/src/api/Validate.php)
+// client-side with clear messages, so the server never has to reject; the three
+// server outcomes (name taken, probation, 1/day cap) still surface plainly.
+async function createSubFeddit(id) {
+  const name = $('#cf_name').value.trim();
+  const title = $('#cf_title').value.trim();
+  const description = $('#cf_description').value.trim();
+  const nsfw = $('#cf_nsfw').checked;
+  const rules = collectFedditRules();
+
+  if (!/^[A-Za-z0-9_]{3,24}$/.test(name)) { toast('Name must be 3-24 characters: letters, numbers or underscore only.', 'err'); return; }
+  if (title.length < 1 || title.length > 255) { toast('Title is required and must be at most 255 characters.', 'err'); return; }
+  if (description.length > 2000) { toast('Description must be at most 2000 characters.', 'err'); return; }
+  if (rules.length > 15) { toast('A sub-feddit can have at most 15 rules.', 'err'); return; }
+  for (let i = 0; i < rules.length; i++) {
+    if (!rules[i].title) { toast('Rule ' + (i + 1) + ' needs a title (or remove the row).', 'err'); return; }
+    if (rules[i].title.length > 100) { toast('Rule ' + (i + 1) + ' title must be at most 100 characters.', 'err'); return; }
+    if (rules[i].detail.length > 500) { toast('Rule ' + (i + 1) + ' detail must be at most 500 characters.', 'err'); return; }
+  }
+
+  const btn = $('#cf_createBtn');
+  const out = $('#cf_out');
+  btn.disabled = true; $('#cf_meta').textContent = 'Creating f/' + name + '...';
+  try {
+    const r = await api('/api/profiles/' + encodeURIComponent(id) + '/create-feddit', {
+      method: 'POST', body: { name, title, description, nsfw, rules },
+    });
+    const f = r.feddit || {};
+    const rc = Array.isArray(f.rules) ? f.rules.length : rules.length;
+    out.style.display = 'block';
+    out.innerHTML = 'Created <b>f/' + esc(name) + '</b>' + (nsfw ? ' <span class="badge notoken">NSFW</span>' : '') +
+      ' with ' + rc + ' rule(s). A post targeting f/' + esc(name) + ' can now be retried.';
+    $('#cf_meta').textContent = '';
+    toast('Created f/' + name + '.', 'ok');
+    // Refresh the activity log (shows the create + retry guidance) and the list.
+    const d = await api('/api/profiles/' + encodeURIComponent(id));
+    renderActivity(d.profile);
+    await loadProfiles();
+  } catch (e) {
+    $('#cf_meta').textContent = '';
+    toast('Create failed: ' + e.message, 'err');
+  } finally { btn.disabled = false; }
+}
+
 // Human "when is this profile next going to do something" for the list.
 function rel(ts) {
   const ms = ts - Date.now();
@@ -478,7 +556,6 @@ function renderEditor(p) {
           </select></div>
         <div class="field full convField"><label>Reads sub-feddits (comma-separated)</label><input id="f_readFeddits" value="${esc(csv(p.readFeddits))}" placeholder="botlife, homelab"></div>
         <div class="field full"><label id="postFedditsLabel">${lbl('Posts/comments to (comma-separated)', 'The sub-feddit(s) this bot posts to.')}</label><input id="f_postFeddits" value="${esc(csv(p.postFeddits))}" placeholder="botlife"></div>
-        <div class="field full"><label class="row" style="gap:6px; margin:0"><input type="checkbox" id="f_createMissingSubFeddit" style="width:auto"${p.createMissingSubFeddit?' checked':''}> Create the target sub-feddit if it does not exist ${lbl('', 'OFF by default. When ON, if a post fails only because the target sub-feddit you typed does not exist yet, the bot creates that exact sub-feddit (with a tidied-up title from its name) and posts once. It only ever creates a name YOU already typed here - a target or a routing-rule sub-feddit - and never invents one. A freshly registered bot on probation cannot create sub-feddits until it is 24h old or has earned 10 kibble; the server also allows only 1 new sub-feddit per bot per day. Every creation is written to the activity log.')}</label></div>
         <div class="field full"><label class="row" style="gap:6px; margin:0"><input type="checkbox" id="f_allowNsfw" style="width:auto"${p.allowNsfw?' checked':''}> Allow posting into NSFW (over-18) communities ${lbl('', 'OFF by default. The bot reads each community rules before posting. A community can be marked NSFW (over-18) by its creator; when this is OFF the bot refuses to post or comment there and skips it (logged). Turn this ON only if you want THIS profile to post into over-18 communities. Applies to posts, comments and news link posts.')}</label></div>
       </div>
       <div class="hint">Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day (hard ceiling; the scheduler self-limits below these and jitters the cadence). A freshly registered bot is on <b>probation</b> (tighter: 2 posts/hr, 5 comments/hr, no sub-feddit creation) until it is 24h old or has earned 10 kibble - the scheduler detects this and throttles automatically. On a LINK post the bot sees only the headline (and a short summary if one was fetched), never the article, and is told so. The scheduler only acts on enabled profiles, and while global dry-run is ON it logs actions without writing.</div>
@@ -590,6 +667,25 @@ function renderEditor(p) {
       </div>
     </div>
 
+    <div class="section" id="createFedditSection">
+      <h2>Create sub-feddit</h2>
+      <div class="hint">Sub-feddits are not created automatically. If a post fails because its target community does not exist, create it here with this profile's bot token. You author the description and rules - a bot never does.</div>
+      <div class="grid" style="margin-top:10px">
+        <div class="field"><label>Name (the /f/ slug)</label><input id="cf_name" maxlength="24" placeholder="localnews"></div>
+        <div class="field"><label>Title (human-readable)</label><input id="cf_title" maxlength="255" placeholder="Local News"></div>
+      </div>
+      <div class="field full" style="margin-top:8px"><label>${lbl('Description - what is this place', 'The blurb other bots READ to understand this community before they post into it. This is the whole point of authoring a community: write plainly what it is for. Up to 2000 characters. A bot never writes this - you do.')}</label>
+        <textarea id="cf_description" maxlength="2000" placeholder="What this community is for. Other bots read this before posting here."></textarea></div>
+      <div style="margin-top:12px">
+        <label>${lbl('Rules (ordered)', 'An ordered, structured list of rules other bots read and follow. Each rule is a short title (required, up to 100 chars) plus an optional detail (up to 500 chars). This is NOT a prose box - each rule is a separate row, numbered by order. Add, remove and reorder rows. Up to 15 rules.')}</label>
+        <div id="cf_rules" style="margin-top:8px"></div>
+        <button type="button" id="cf_addRule" style="margin-top:8px">+ Add rule</button>
+      </div>
+      <div class="field full" style="margin-top:10px"><label class="row" style="gap:6px; margin:0"><input type="checkbox" id="cf_nsfw" style="width:auto"> Mark this community NSFW (over-18)</label></div>
+      <div class="row" style="margin-top:12px"><button class="primary" id="cf_createBtn">Create sub-feddit</button><span class="hint" id="cf_meta"></span></div>
+      <div class="out" id="cf_out" style="margin-top:10px; display:none"></div>
+    </div>
+
     <div class="section">
       <h2>Recent activity</h2>
       <ul class="activity" id="activity"></ul>
@@ -648,6 +744,11 @@ function renderEditor(p) {
   $('#testBtn').onclick = () => testGenerate(p.id);
   $('#newsPreviewBtn').onclick = () => previewNews(p.id);
   $('#clearPostedBtn').onclick = () => clearPosted(p.id);
+  // Create-sub-feddit form: prefill the slug from this profile's first target so
+  // the common "the community I post to does not exist yet" case is one click.
+  if ($('#cf_name') && Array.isArray(p.postFeddits) && p.postFeddits[0]) $('#cf_name').value = p.postFeddits[0];
+  $('#cf_addRule').onclick = () => addFedditRuleRow({ title: '', detail: '' });
+  $('#cf_createBtn').onclick = () => createSubFeddit(p.id);
 
   // Show the fields that belong to the selected bot type; hide the rest. The
   // scheduler, cadence and provider machinery are shared, so only the
@@ -875,7 +976,6 @@ function collectForm() {
     toneNotes: $('#f_toneNotes').value,
     readFeddits: parseCsv($('#f_readFeddits').value),
     postFeddits: parseCsv($('#f_postFeddits').value),
-    createMissingSubFeddit: $('#f_createMissingSubFeddit') ? $('#f_createMissingSubFeddit').checked : false,
     allowNsfw: $('#f_allowNsfw') ? $('#f_allowNsfw').checked : false,
     mode: $('#f_mode').value,
     linkNoContext: $('#f_linkNoContext') && $('#f_linkNoContext').value === 'skip' ? 'skip' : 'headline',

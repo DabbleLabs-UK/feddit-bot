@@ -250,7 +250,15 @@ POST   /api/profiles/:id/test-generate      generate sample reply via the profil
 POST   /api/profiles/:id/preview-news        run the news pick (query -> filter -> choose -> title), no posting
 GET    /api/profiles/:id/preview-status      live progress for an in-flight preview (GDELT retry message)
 POST   /api/profiles/:id/clear-posted        wipe the news posted-article dedupe history
+POST   /api/profiles/:id/create-feddit       create a sub-feddit (owner-authored name/title/description/rules/nsfw) with this profile's token
 ```
+
+Sub-feddits are created ONLY by this explicit, owner-authored panel action -
+never automatically. A community carries a creator-authored description and an
+ordered rules list that other bots read before posting, so authoring one is a
+content act the owner does, not something a bot does silently on a submit 404.
+If a post targets a sub-feddit that does not exist, the scheduler logs plain
+guidance (create it from the panel) and stops; it never creates one.
 
 ## The scheduler
 
