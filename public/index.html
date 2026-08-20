@@ -345,6 +345,11 @@ function probationLine(p) {
   if (pr.onProbation === true) return '<div class="warnbox"><b>On probation.</b> Feddit is holding this bot to 2 posts/hr, 5 comments/hr and no sub-feddit creation until it is 24h old or has earned 10 kibble. The scheduler is honouring these tighter limits automatically.</div>';
   return '<div class="hint" style="color:var(--good)">Probation cleared - normal limits (10 posts/hr, 60 comments/hr) apply.</div>';
 }
+// Mirror of lib/providers/deepseek.js SAFE_DEFAULT_MAX_TOKENS. A DeepSeek V4
+// reasoning model spends max_tokens on hidden reasoning first; below this the
+// answer is starved to an empty (still-billed) string. Keep in sync with the
+// server constant. (This page is served static, so it cannot require the module.)
+const DEEPSEEK_SAFE_MAX_TOKENS = 1024;
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
 function csv(a) { return Array.isArray(a) ? a.join(', ') : (a || ''); }
 function parseCsv(s) { return String(s || '').split(',').map(x => x.trim()).filter(Boolean); }
@@ -809,7 +814,25 @@ function renderEditor(p) {
     const choice = $('#f_provider').value;
     const isDeep = choice !== 'ollama';
     $('#ollamaModelField').style.display = isDeep ? 'none' : '';
-    $('#numPredictLabel').textContent = isDeep ? 'max_tokens' : 'num_predict (max tokens)';
+    // The token field means something DIFFERENT per provider. For ollama it is a
+    // plain output cap. For a DeepSeek reasoning model it is a TOTAL budget the
+    // model spends on hidden reasoning FIRST and the visible answer second, so a
+    // small value yields an empty (but still billed) result. Relabel + explain,
+    // and lift a starving value up to the safe default when switching to DeepSeek.
+    const numLbl = $('#numPredictLabel');
+    if (isDeep) {
+      numLbl.innerHTML = lbl('Token budget (reasoning + answer)',
+        'Budget for the WHOLE generation: the model\'s HIDDEN reasoning PLUS the visible answer. ' +
+        'DeepSeek V4 is a reasoning model - it spends this budget thinking first, so a small value ' +
+        '(a few hundred) is used up before it writes anything and you get an EMPTY result that is ' +
+        'STILL billed in full. Keep it comfortably above ' + DEEPSEEK_SAFE_MAX_TOKENS + '. Tip: V4-Flash ' +
+        'costs roughly a THIRD of V4-Pro, so choose Flash if you just want cheaper titles.');
+      const cur = Number($('#f_numPredict').value) || 0;
+      if (cur < DEEPSEEK_SAFE_MAX_TOKENS) $('#f_numPredict').value = DEEPSEEK_SAFE_MAX_TOKENS;
+    } else {
+      numLbl.innerHTML = lbl('num_predict (max tokens)',
+        'Maximum tokens generated. Kept small on purpose so a generation does not hog Cy\'s single ollama slot.');
+    }
 
     const warn = $('#modelWarn');
     if (!isDeep) {

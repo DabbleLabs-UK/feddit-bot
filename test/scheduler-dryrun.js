@@ -16,6 +16,7 @@ const gdelt = require('../lib/gdelt');
 const feeds = require('../lib/feeds');
 const cost = require('../lib/cost');
 const store = require('../lib/store'); // migrateProfiles/referenceName are pure - no disk touched
+const deepseek = require('../lib/providers/deepseek'); // generate() drivable with an injected fetch stub - no network
 
 // ---- tiny assert framework --------------------------------------------------
 
@@ -2169,6 +2170,185 @@ async function scenarioAboutRules() {
   }
 }
 
+// ============================================================================
+// Scenario 20: DeepSeek reasoning-model token budget. V4 models spend max_tokens
+// on INVISIBLE reasoning first and the visible answer second, so a small budget
+// starves the answer to an empty (still-billed) string. Proves, with a stubbed
+// fetch (NO network):
+//   - the MINIMUM budget floor is applied (a small num_predict is lifted);
+//   - a floor does NOT lower an already-healthy larger budget;
+//   - an empty-content + finish_reason 'length' response is DETECTED as a starved
+//     budget and RETRIED once with a substantially larger budget;
+//   - a persistently-starved generation FAILS with a cause that names the token
+//     budget / reasoning, NOT a headline refusal;
+//   - cost includes reasoning tokens (completion_tokens carries them).
+// Then, at the scheduler level, that an EMPTY provider response and a model that
+// keeps ECHOING the headline are reported as DIFFERENT problems (task 4).
+// ============================================================================
+
+// Build an OpenAI-compatible chat-completion body. `reasoningTokens` populates
+// completion_tokens_details.reasoning_tokens; completion_tokens is the TOTAL
+// (reasoning + answer), matching the measured DeepSeek shape.
+function dsBody({ content = '', finishReason = 'stop', promptTokens = 1000, completionTokens = 0, reasoningTokens = 0, cached = 0 }) {
+  const msg = { content };
+  if (reasoningTokens) msg.reasoning_content = 'internal chain-of-thought (diagnostic only)';
+  return {
+    choices: [{ message: msg, finish_reason: finishReason }],
+    usage: {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      completion_tokens_details: { reasoning_tokens: reasoningTokens },
+      prompt_tokens_details: { cached_tokens: cached },
+    },
+  };
+}
+
+// A fetch stub for deepseek.generate: `responder(maxTokens, callIndex)` returns
+// the completion body to serve. Records every max_tokens actually sent.
+function makeDeepseekFetch(responder) {
+  const sent = [];
+  const fetchImpl = async (url, opts) => {
+    const body = JSON.parse(opts.body);
+    const maxTokens = body.max_tokens;
+    sent.push(maxTokens);
+    const out = responder(maxTokens, sent.length - 1);
+    return { ok: true, status: 200, text: async () => JSON.stringify(out) };
+  };
+  return { fetchImpl, sent };
+}
+
+async function scenarioDeepseekReasoning() {
+  console.log('\n[20] DeepSeek reasoning-model token budget: floor + starve-detect + retry + honest cause + cost');
+  const FLOOR = deepseek.MIN_REASONING_BUDGET;
+  const RETRY = deepseek.RETRY_REASONING_BUDGET;
+  ok(FLOOR >= 1000, 'the reasoning floor leaves real headroom over the measured ~255 reasoning tokens (floor=' + FLOOR + ')');
+  ok(RETRY > FLOOR, 'the starve-retry budget is substantially larger than the floor (' + RETRY + ' > ' + FLOOR + ')');
+
+  // (1) FLOOR APPLIED: a tiny num_predict is lifted to the floor on the wire, and a
+  //     healthy first answer needs no retry.
+  {
+    const { fetchImpl, sent } = makeDeepseekFetch(() =>
+      dsBody({ content: 'a punchy in-persona title', finishReason: 'stop', completionTokens: 300, reasoningTokens: 255 }));
+    const res = await deepseek.generate({ prompt: 'x', model: 'deepseek-v4-pro', apiKey: 'k', numPredict: 200, fetchImpl });
+    eq(sent.length, 1, '(1) a healthy response took exactly one request (no needless retry)');
+    eq(sent[0], FLOOR, '(1) num_predict 200 was lifted to the reasoning floor (' + FLOOR + ') on the wire, not sent as 200');
+    eq(res.text, 'a punchy in-persona title', '(1) the visible answer is returned');
+  }
+
+  // (2) FLOOR DOES NOT LOWER a healthy larger budget.
+  {
+    const { fetchImpl, sent } = makeDeepseekFetch(() =>
+      dsBody({ content: 'title', finishReason: 'stop', completionTokens: 400, reasoningTokens: 300 }));
+    await deepseek.generate({ prompt: 'x', model: 'deepseek-v4-pro', apiKey: 'k', numPredict: 2000, fetchImpl });
+    eq(sent[0], 2000, '(2) a num_predict already above the floor (2000) is sent unchanged');
+  }
+
+  // (3) STARVE DETECTED + RETRIED: the measured failure - empty content,
+  //     finish_reason 'length', reasoning ate the whole budget - is retried once
+  //     with a bigger budget, and the second (healthy) answer is returned.
+  {
+    const { fetchImpl, sent } = makeDeepseekFetch((maxTokens, i) => i === 0
+      ? dsBody({ content: '', finishReason: 'length', completionTokens: maxTokens, reasoningTokens: maxTokens }) // starved: burned it all reasoning
+      : dsBody({ content: 'lask were absolutely pathetic, duran tore them apart', finishReason: 'stop', completionTokens: 320, reasoningTokens: 255 }));
+    const res = await deepseek.generate({ prompt: 'x', model: 'deepseek-v4-pro', apiKey: 'k', numPredict: 200, fetchImpl });
+    eq(sent.length, 2, '(3) the starved first attempt triggered exactly one retry');
+    eq(sent[0], FLOOR, '(3) the first attempt used the floor budget');
+    ok(sent[1] > sent[0] && sent[1] >= RETRY, '(3) the retry used a substantially larger budget (' + sent[1] + ' >= ' + RETRY + ')');
+    eq(res.text, 'lask were absolutely pathetic, duran tore them apart', '(3) the retry produced a real answer, returned as the text');
+    eq(res.reasoningTokens, 255, '(3) the surfaced reasoning-token diagnostic reflects the successful attempt');
+    ok(!/internal chain-of-thought/.test(JSON.stringify(res)), '(3) reasoning_content text NEVER leaks into the result (diagnostics are counts only)');
+  }
+
+  // (4) PERSISTENT STARVE -> a clear failure that names the TOKEN BUDGET / reasoning,
+  //     never a headline refusal.
+  {
+    const { fetchImpl, sent } = makeDeepseekFetch((maxTokens) =>
+      dsBody({ content: '', finishReason: 'length', completionTokens: maxTokens, reasoningTokens: maxTokens }));
+    let err = null;
+    try { await deepseek.generate({ prompt: 'x', model: 'deepseek-v4-pro', apiKey: 'k', numPredict: 200, fetchImpl }); }
+    catch (e) { err = e; }
+    ok(err, '(4) a persistently starved generation throws rather than returning empty');
+    eq(err && err.code, 'REASONING_BUDGET_EXHAUSTED', '(4) it is surfaced with the distinct REASONING_BUDGET_EXHAUSTED code');
+    ok(err && /budget|reasoning/i.test(err.message), '(4) the message names the real cause (token budget exhausted by reasoning)');
+    ok(err && !/headline|depart/i.test(err.message), '(4) the message does NOT blame the model for refusing to depart from a headline');
+    eq(sent.length, 2, '(4) it tried once at the floor and once at the larger retry budget, then gave up');
+  }
+
+  // (5) COST INCLUDES REASONING TOKENS. completion_tokens carries the reasoning, and
+  //     we map it straight to outputTokens - so the recorded cost pays for the
+  //     invisible reasoning, exactly as DeepSeek bills it.
+  {
+    const { fetchImpl } = makeDeepseekFetch(() =>
+      dsBody({ content: 'title', finishReason: 'stop', promptTokens: 1000, completionTokens: 300, reasoningTokens: 255 }));
+    const res = await deepseek.generate({ prompt: 'x', model: 'deepseek-v4-pro', apiKey: 'k', numPredict: 2000, fetchImpl });
+    eq(res.usage.outputTokens, 300, '(5) outputTokens = completion_tokens (300), which INCLUDES the 255 reasoning tokens');
+    const price = cost.defaultPricing();
+    const usd = cost.estimateCost('deepseek-v4-pro', res.usage, price);
+    approx(usd, (1000 * 0.435 + 300 * 0.87) / 1e6, '(5) recorded cost charges all 300 completion tokens (reasoning billed as output)');
+    const answerOnly = cost.estimateCost('deepseek-v4-pro', { inputTokens: 1000, outputTokens: 45, cachedInputTokens: 0 }, price);
+    ok(usd > answerOnly, '(5) the reasoning tokens make the cost strictly higher than charging the ~45 answer tokens alone');
+  }
+
+  // (6) SCHEDULER (task 4): an EMPTY provider response and a HEADLINE-echoing model
+  //     are reported as DIFFERENT problems, not conflated.
+  const H = 3_600_000;
+  const HEADLINE = 'Duran stars as Celtic ease to comfortable win over LASK';
+  const mkNews = (over) => profile(Object.assign({
+    id: 'dsnews', botType: 'news', mode: 'post', postsPerHour: 60, provider: 'ollama',
+    persona: 'a terse fan', newsUseGdelt: true, newsQuery: 'celtic',
+    newsRoutingRules: [{ keywords: [], subFeddit: 'football', weight: 1 }], newsMaxAgeHours: 24, newsMinGapMinutes: 0,
+  }, over || {}));
+  const mkGd = (clock) => gdelt.createGdelt({
+    now: clock.now, sleep: async (ms) => clock.advance(ms), minSpacingMs: 0,
+    fetch: async () => ({ status: 200, arrayBuffer: async () => jsonBody({ articles: [
+      { url: 'https://sport.example.com/celtic', domain: 'sport.example.com', title: HEADLINE, seendate: seendateFrom(clock.now() - 1 * H) },
+    ] }) }),
+  });
+
+  // (6a) provider returns EMPTY on every title call -> "returned nothing" cause,
+  //      NOT a headline refusal.
+  {
+    const clock = makeClock(1_600_000_000_000);
+    const p = mkNews({ id: 'empty' });
+    const st = makeStore([p]);
+    const providers = makeProviders({ textFor: (g) => (/TITLE:\s*$/.test(g.prompt) ? '' : 'x\n\nbody') });
+    const s = scheduler.createScheduler({ store: st, providers, feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: mkGd(clock), feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    const r = await s.previewNews('empty');
+    ok(r && r.ok === false, '(6a) an empty provider response fails the preview (nothing to post)');
+    ok(/empty response|returned an empty|EMPTY response/i.test(r.error || ''), '(6a) the cause names an EMPTY provider response');
+    ok(!/would not depart|verbatim/i.test(r.error || ''), '(6a) it does NOT blame the model for refusing to depart from the headline');
+    ok(/token budget|max_tokens|reasoning/i.test(r.error || ''), '(6a) it points at the token-budget fix for a reasoning model');
+  }
+
+  // (6b) provider ECHOES the headline verbatim on every call -> the SEPARATE
+  //      "would not depart" cause, and NOT the empty-response one.
+  {
+    const clock = makeClock(1_600_000_000_000);
+    const p = mkNews({ id: 'echo', newsTitleVoice: 'tabloid' });
+    const st = makeStore([p]);
+    const providers = makeProviders({ textFor: (g) => (/TITLE:\s*$/.test(g.prompt) ? HEADLINE : 'x\n\nbody') });
+    const s = scheduler.createScheduler({ store: st, providers, feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: mkGd(clock), feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    const r = await s.previewNews('echo');
+    ok(r && r.ok === false, '(6b) a headline-echoing model fails the preview too');
+    ok(/would not depart|verbatim|never acceptable/i.test(r.error || ''), '(6b) the cause is the model would not depart from the headline');
+    ok(!/empty response|returned an empty/i.test(r.error || ''), '(6b) it is NOT reported as an empty provider response (different problem, different fix)');
+  }
+
+  // (7) STORE MIGRATION: a deepseek profile stuck at a starving num_predict is
+  //     bumped to the safe default; ollama profiles keep their small value.
+  {
+    const migrated = store.migrateProfiles([
+      { id: 'ds-starve', provider: 'deepseek', numPredict: 200 },
+      { id: 'ds-ok', provider: 'deepseek', numPredict: 3000 },
+      { id: 'oll', provider: 'ollama', numPredict: 200 },
+    ]);
+    const byId = Object.fromEntries(migrated.map((p) => [p.id, p]));
+    eq(byId['ds-starve'].numPredict, deepseek.SAFE_DEFAULT_MAX_TOKENS, '(7) a starving deepseek profile (200) is migrated up to the safe default');
+    eq(byId['ds-ok'].numPredict, 3000, '(7) a deepseek profile already above the safe default is left unchanged');
+    eq(byId['oll'].numPredict, 200, '(7) an ollama profile keeps its small deliberate num_predict (not a reasoning model)');
+  }
+}
+
 // ---- run --------------------------------------------------------------------
 
 (async () => {
@@ -2194,6 +2374,7 @@ async function scenarioAboutRules() {
   await scenarioSubFedditCreation();
   await scenarioFeeds();
   await scenarioAboutRules();
+  await scenarioDeepseekReasoning();
   await scenarioRealSmoke();
 
   console.log('\n----------------------------------------');
