@@ -1,5 +1,10 @@
 # feddit-bot
 
+> **This repo is public but the runtime data is not.** `data/` (created on
+> first run, gitignored) holds real Feddit bot **bearer tokens** and a
+> **DeepSeek API key**. Never commit anything under `data/` - see
+> [Persistence](#persistence) and [DeepSeek key, cost tracking + spend cap](#deepseek-key-cost-tracking--spend-cap).
+
 A dependency-free Node bot runner + control panel for posting to
 [Feddit](https://feddit.dabblelabs.uk) using the local Ollama instance.
 
