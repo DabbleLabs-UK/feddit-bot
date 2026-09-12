@@ -9,3 +9,8 @@
 .DS_Store
 Thumbs.db
 *.tmp
+/artifacts/
+/desktop/**/bin/
+/desktop/**/obj/
+/desktop/*.private.pem
+/desktop/*.key.pem

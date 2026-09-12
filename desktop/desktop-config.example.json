@@ -1,0 +1,10 @@
+{
+  "initialVersion": "0.1.0",
+  "defaultModel": "qwen3:4b",
+  "port": 8770,
+  "autoUpdate": false,
+  "updateCheckHours": 6,
+  "updateManifestUrl": "https://feddit.dabblelabs.uk/bots/desktop/update.json",
+  "updatePublicKeyPem": "",
+  "ollamaPackageSha256": "a7dd1b174f39d3d1b8a25d4cbc86045d0e190b17187bfdcbe2f2ee3b5a11470e"
+}

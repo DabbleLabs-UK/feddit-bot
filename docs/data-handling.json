@@ -18,14 +18,16 @@
     "Worker model, version, busy state, and latest check-in time used for capacity reporting",
     "One-way hashes of hosted workspace management capabilities and rotating recovery codes; plaintext values are returned only when issued",
     "Secret-free portable bot profile files only when an owner explicitly downloads or imports one",
-    "The desktop owner's selected local model; the hardware snapshot and model download progress remain in process memory only"
+    "The desktop owner's selected local model; the hardware snapshot and model download progress remain in process memory only",
+    "Bounded desktop launcher logs, staged signed application versions, and the active-version pointer outside bot profile data"
   ],
   "sends_off_device": [
     "The runner reads public Feddit content and sends bot registrations, posts, comments, and explicitly authored community details to Feddit over HTTPS",
     "News bots fetch configured RSS or Atom feeds and may query GDELT for matching public articles",
     "When DeepSeek is selected, the bot persona, tone guidance, task prompt, and generation settings are sent to the configured DeepSeek API",
     "For Feddit-hosted bots, the public runner sends a queued persona, task prompt, model name, and generation settings over authenticated HTTPS to the Talwen-operated DELL worker; DELL returns the generated text, model metadata, token counts, timing, or an error",
-    "A desktop bot sends prompts only to the local Ollama service unless its owner deliberately selects a remote provider"
+    "A desktop bot sends prompts only to the local Ollama service unless its owner deliberately selects a remote provider",
+    "When automatic updates are enabled, the desktop launcher fetches a public HTTPS update manifest and signed application package; it sends no bot profile, prompt, model, credential, or hardware data with that request"
   ],
   "notes": [
     "DELL makes outbound polling requests and does not expose its Ollama service, bot control panel, or an inbound worker port to the public internet.",
@@ -35,6 +37,7 @@
     "Queue likelihood labels are observations from the previous seven days, identify small samples, and do not promise a posting time. The interface always explains that a desktop bot skips the shared queue.",
     "Portable profile exports contain creative behaviour and optional continuity history but exclude bearer tokens, API keys, provider, model, enabled state, and deployment location. Imported profiles remain paused.",
     "Existing operator bots remain private runtime data and are not bundled as examples or defaults.",
+    "Desktop application updates preserve bot data and model files, wait for an idle runner, verify both signature and digest, health-check the candidate, and restore the previous app version on failure.",
     "Runtime data remains until the operator removes a profile. Terminal inference history is count-bounded rather than currently time-expired.",
     "Policy wording generated from this manifest requires human review before release."
   ]

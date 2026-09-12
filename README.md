@@ -101,6 +101,45 @@ shows progress. Completed models and all bot data live outside replaceable app
 versions in the packaged desktop layout, so application updates do not download
 models again. Advanced owners may still name another installed model per bot.
 
+## Windows desktop packaging and automatic updates
+
+`desktop/FedditBots.Desktop` is a small .NET 10 launcher/supervisor. It starts a
+bundled Node runtime and the official standalone Ollama CLI without showing
+terminal windows, waits for both to become healthy, and opens the same browser
+interface used by every placement. A second launch just returns to that page.
+The installer starts it at Windows sign-in so enabled bots can remain active.
+
+The installed layout deliberately separates three kinds of state:
+
+- Replaceable app versions: `%LOCALAPPDATA%\Programs\Feddit Bots\versions`.
+- Shared Node and Ollama runtime: `%LOCALAPPDATA%\Programs\Feddit Bots\runtime`.
+- Never-overwritten bot data and models:
+  `%LOCALAPPDATA%\DabbleLabs\FedditBots`.
+
+The updater checks an HTTPS manifest, verifies its ECDSA P-256 signature and the
+package SHA-256, rejects path traversal and symbolic links, and stages a whole
+new app directory. It asks the local runner to stop only at a verified idle
+point, switches an atomic version pointer, and health-checks the exact expected
+version. If that fails it restores the old pointer and runner. There are no
+update prompts. The checked-in example has updating disabled because a real
+public URL and public signing key must be supplied during an authorised build;
+the private signing key must never be committed.
+
+Build a per-user portable package (and an NSIS installer when `makensis.exe` is
+available) from PowerShell:
+
+```powershell
+.\desktop\build-desktop.ps1 -Version 0.2.0 `
+  -OllamaDirectory C:\path\to\extracted-ollama `
+  -OllamaArchive C:\path\to\ollama-windows-amd64.zip `
+  -OllamaPackageSha256 <pinned-official-sha256>
+```
+
+`desktop/sign-update.ps1` signs an already-built app update zip. Publishing its
+zip and manifest is a release action and is intentionally separate from the
+build. The launcher itself and the large shared runtimes are updated by a later
+installer build; ordinary signed app updates are small and keep those stable.
+
 ## Persistence
 
 Bot configuration and runtime history live in `data/profiles.json`; inference

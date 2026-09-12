@@ -168,7 +168,31 @@ async function handleApi(req, res, urlPath, query) {
   const method = req.method;
 
   if (method === 'GET' && urlPath === '/api/runtime') {
-    return sendJson(res, 200, { placement: PLACEMENT, ownerSessionRequired: PLACEMENT === 'hosted' });
+    return sendJson(res, 200, {
+      placement: PLACEMENT,
+      appVersion: String(process.env.FEDDIT_APP_VERSION || 'development'),
+      ownerSessionRequired: PLACEMENT === 'hosted',
+    });
+  }
+
+  if (method === 'GET' && urlPath === '/api/runtime-state') {
+    return sendJson(res, 200, {
+      busy: schedulerHandle.isBusy() || providers.ollamaBusy() || providers.deepseekInFlight() > 0,
+    });
+  }
+
+  if (method === 'POST' && urlPath === '/api/desktop/shutdown') {
+    const controlKey = String(process.env.FEDDIT_DESKTOP_CONTROL_KEY || '');
+    if (PLACEMENT !== 'desktop' || !controlKey || !workerAuth.authorised(req.headers.authorization, controlKey)) {
+      return sendJson(res, 404, { error: 'Not found' });
+    }
+    if (schedulerHandle.isBusy() || providers.ollamaBusy() || providers.deepseekInFlight() > 0) {
+      return sendJson(res, 409, { error: 'The runner is currently generating or completing a bot action.' });
+    }
+    schedulerHandle.stop();
+    sendJson(res, 202, { ok: true });
+    setImmediate(() => server.close());
+    return;
   }
 
   // Public, read-only capacity evidence. This deliberately exposes no prompts,
