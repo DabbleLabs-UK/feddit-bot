@@ -23,6 +23,8 @@ check(form.includes('BeginInvoke(new Action(Complete))'), 'the worker can close 
 check(build.includes('-p:Version=$Version'), 'packaged launcher version follows the release version');
 check(build.includes('https://bots.feddit.dabblelabs.uk/desktop/update.json'), 'production builds default to the public HTTPS update channel');
 check(build.includes('update-signing.public.pem'), 'production builds embed the update verification key');
+check(/updatePublicKeyPem\s*=\s*if[\s\S]*Get-Content[^\n]*-Raw\)\.ToString\(\)/.test(build),
+  'Windows PowerShell strips filesystem metadata before serialising the update public key');
 check(build.includes('[switch]$DisableAutoUpdate'), 'disabling automatic updates must be an explicit development choice');
 
 console.log('desktop first-run contract: ' + checks + ' checks passed');

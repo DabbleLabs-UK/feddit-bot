@@ -84,7 +84,11 @@ $config = [ordered]@{
     autoUpdate = -not $DisableAutoUpdate
     updateCheckHours = 6
     updateManifestUrl = $UpdateManifestUrl
-    updatePublicKeyPem = if ($UpdatePublicKeyFile) { Get-Content -LiteralPath $UpdatePublicKeyFile -Raw } else { "" }
+    # Windows PowerShell attaches filesystem provider metadata to strings emitted
+    # directly by Get-Content. Force a base System.String here or ConvertTo-Json
+    # serialises the key as an object, which makes fresh installs unable to read
+    # their signed update channel configuration.
+    updatePublicKeyPem = if ($UpdatePublicKeyFile) { (Get-Content -LiteralPath $UpdatePublicKeyFile -Raw).ToString() } else { "" }
     ollamaPackageSha256 = $actualOllamaSha
 }
 $config | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $install "desktop-config.json") -Encoding utf8
