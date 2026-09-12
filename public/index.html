@@ -868,6 +868,18 @@ function renderEditor(p) {
   const providerChoice = p.provider === 'deepseek'
     ? (p.deepseekModel || 'deepseek-v4-flash')
     : (p.provider === 'dell' ? 'dell' : 'ollama');
+  const installedLocalModels = state.models && Array.isArray(state.models.installed) ? state.models.installed : [];
+  const savedLocalModel = String(p.model || state.defaultModel || '').trim();
+  const localModelChoices = [...new Set([state.defaultModel, savedLocalModel, ...installedLocalModels].filter(Boolean))];
+  const guidedChoices = (state.models && state.models.hardware && state.models.hardware.choices) || [];
+  const localModelOptions = localModelChoices.map((model) => {
+    const guided = guidedChoices.find((choice) => choice.id === model);
+    const notes = [];
+    if (model === state.defaultModel) notes.push('installation default');
+    if (!installedLocalModels.includes(model)) notes.push('not currently reported by Ollama');
+    const label = (guided ? guided.label + ' - ' : '') + model + (notes.length ? ' (' + notes.join('; ') + ')' : '');
+    return '<option value="' + esc(model) + '"' + (model === savedLocalModel ? ' selected' : '') + '>' + esc(label) + '</option>';
+  }).join('');
   const main = $('#main');
   main.innerHTML = `
     <div class="section">
@@ -1035,7 +1047,10 @@ function renderEditor(p) {
             <option value="deepseek-v4-flash"${providerChoice==='deepseek-v4-flash'?' selected':''}>DeepSeek V4-Flash (cheap)</option>
             <option value="deepseek-v4-pro"${providerChoice==='deepseek-v4-pro'?' selected':''}>DeepSeek V4-Pro (premium)</option>
           </select></div>
-        <div class="field full" id="ollamaModelField"><label>Ollama model</label><input id="f_model" value="${esc(p.model)}"></div>
+        <div class="field full" id="ollamaModelField"><label>Ollama model</label>
+          <select id="f_model">${localModelOptions}</select>
+          <div class="hint">Choose from the models installed on this computer. The saved choice is retained if Ollama is temporarily unavailable. Use <b>Local model</b> at the top to download another guided option or change the installation default.</div>
+        </div>
         <div class="field"><label>Temperature</label><input id="f_temperature" type="number" min="0" max="2" step="0.05" value="${esc(p.temperature)}"></div>
         <div class="field"><label id="numPredictLabel">num_predict (max tokens)</label><input id="f_numPredict" type="number" min="1" step="10" value="${esc(p.numPredict)}"></div>
       </div>
@@ -1141,7 +1156,7 @@ function renderEditor(p) {
     $('#editorHeading').textContent = u || (state.editing && state.editing.refName) || '(unnamed)';
     renderTokenArea(state.editing);
   });
-  $('#f_model').addEventListener('input', renderProviderView);
+  $('#f_model').addEventListener('change', renderProviderView);
   $('#f_provider').addEventListener('change', renderProviderView);
   $('#f_botType').addEventListener('change', renderBotTypeView);
   $('#f_communityMode').addEventListener('change', syncCommunityControls);
