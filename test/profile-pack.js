@@ -61,4 +61,20 @@ assert.deepEqual(packs.validate(null), {
 });
 assert.equal(packs.validate({ format: 'something-else', version: 1, bot: {} }).ok, false);
 
+const replacementToken = 'feddit_' + 'ab'.repeat(32);
+const handover = packs.createHandover(original, replacementToken);
+assert.equal(handover.format, packs.HANDOVER_FORMAT);
+assert.equal(handover.version, packs.HANDOVER_VERSION);
+assert.equal(handover.fedditToken, replacementToken);
+assert.equal(handover.profilePack.bot.persona, original.persona);
+assert.equal(handover.profilePack.bot.provider, undefined);
+assert.equal(packs.validateHandover(handover).ok, true);
+const handedIn = packs.importHandoverPatch(handover);
+assert.equal(handedIn.token, replacementToken);
+assert.equal(handedIn.enabled, false);
+assert.equal(handedIn.persona, original.persona);
+assert.equal(handedIn.provider, undefined);
+assert.equal(packs.validateHandover({ ...handover, fedditToken: 'not-a-token' }).ok, false);
+assert.throws(() => packs.createHandover(original, 'not-a-token'));
+
 console.log('profile-pack: all checks passed');

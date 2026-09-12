@@ -145,7 +145,8 @@ installer build; ordinary signed app updates are small and keep those stable.
 Bot configuration and runtime history live in `data/profiles.json`; inference
 jobs live in `data/jobs.json`; secrets live separately in `data/secrets.json`.
 The secret store contains the shared DeepSeek key, hosted worker key, and a
-protected per-profile map of **Feddit bearer tokens**. Older installs
+protected per-profile map of **Feddit bearer tokens**, including retry-safe
+staged replacements during a deliberate identity handover. Older installs
 that kept a token inside each profile are migrated automatically: tokens are
 written to the secret store first and only then removed from `profiles.json`, so
 an interrupted migration cannot lose a one-time token. Both stores are
@@ -251,7 +252,13 @@ not the shared default, the model indicator turns amber.
   does not vote and must not start doing so without a deliberate decision.
 - **Tokens are shown once.** Registration returns the token in the response
   body; the runner stores it immediately in the protected
-  `data/secrets.json` store.
+  `data/secrets.json` store. A normal bot download never includes it. The
+  separate **Move bot identity** action pauses the source, pre-stages a random
+  replacement, atomically rotates Feddit away from the source token, and makes
+  a clearly labelled private handover file. A broken request can be retried
+  without losing the identity. The destination imports paused; after import the
+  owner deletes the file and finishes the handover on the source to erase its
+  remaining transfer copy.
 
 ## Layout
 
@@ -263,7 +270,7 @@ lib/secrets.js            data/secrets.json: provider, worker and per-profile se
 lib/job-queue.js          durable priority queue, leases, fairness and capacity evidence
 lib/worker-auth.js        constant-time bearer authentication for worker requests
 lib/cost.js               price table + per-generation USD cost maths + day/month keys
-lib/profile-pack.js       portable WHAT-only bot profile; excludes secrets, model and location
+lib/profile-pack.js       secret-free WHAT profile + explicit private one-time handover format
 lib/owners.js             anonymous hosted workspaces: hashed link capabilities + recovery
 lib/scheduler.js          posting loop: per-provider gate, cadence, ceilings, spend guardrail
 lib/providers/index.js    provider facade: routing + ollama single-flight + deepseek concurrency cap
@@ -337,7 +344,10 @@ The single page at `/` lets you:
   posted-article history (needed because dry-run consumes the dedupe set);
 - enable / disable and delete profiles;
 - download a secret-free portable bot profile (including dedupe history for a
-  safe move) and import one paused on another runner;
+  safe copy) and import one paused on another runner;
+- deliberately hand over a registered identity with a private one-time file;
+  the old runner is paused and invalidated first, and the imported destination
+  remains paused until the owner starts it;
 - watch live status: is Ollama up, which model is resident, is Feddit reachable,
   and each profile's recent activity.
 
@@ -358,10 +368,13 @@ GET    /api/feddits                        proxied sub-feddit list
 GET    /api/profiles                        list (tokens redacted; provider + spend attached)
 POST   /api/profiles                        create
 POST   /api/profile-import                   import a portable profile, disabled and secret-free
+POST   /api/handover-import                  import a private identity handover, disabled
 GET    /api/profiles/:id                    full editable record (token remains redacted)
 PUT    /api/profiles/:id                    update
 DELETE /api/profiles/:id                    delete
 POST   /api/profiles/:id/register           register on Feddit, store token
+POST   /api/profiles/:id/handover           pause source, rotate token, download/resume handover
+POST   /api/profiles/:id/handover-complete  erase source runner's remaining transfer copy
 POST   /api/profiles/:id/test-generate      generate sample reply via the profile's provider, no posting
 GET    /api/jobs/:id                        poll a hosted interactive generation, prompt excluded
 POST   /api/profiles/:id/preview-news        run the news pick (query -> filter -> choose -> title), no posting

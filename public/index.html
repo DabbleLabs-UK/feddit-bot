@@ -597,6 +597,7 @@ function renderList() {
     const li = document.createElement('li');
     if (state.selected === p.id) li.className = 'active';
     const tokenBadge = p.hasToken ? '' : '<span class="badge notoken">no token</span>';
+    const handoverBadge = p.handoverPending ? '<span class="badge notoken">handover</span>' : '';
     const enBadge = '<span class="badge ' + (p.enabled ? 'on' : 'off') + '">' + (p.enabled ? 'enabled' : 'off') + '</span>';
     const probBadge = (p.probation && p.probation.onProbation === true)
       ? '<span class="badge notoken" title="Feddit probation: tighter limits (2 posts/hr, 5 comments/hr) until 24h old or 10 kibble">probation</span>' : '';
@@ -605,7 +606,7 @@ function renderList() {
       '<div class="pmeta">' + esc(p.botType === 'news' ? 'news' : p.mode) +
         ' &middot; ' + esc(p.effProvider === 'deepseek' ? p.effModel : (p.effProvider === 'dell' ? 'Feddit hosted' : 'desktop')) + '</div>' +
       '<div class="pmeta">next: ' + esc(fmtNext(p)) + '</div></div>' +
-      '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + enBadge + probBadge + tokenBadge + '</div>';
+      '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + enBadge + probBadge + handoverBadge + tokenBadge + '</div>';
     li.onclick = () => selectProfile(p.id);
     ul.appendChild(li);
   }
@@ -999,9 +1000,12 @@ function renderEditor(p) {
 
     <div class="row" style="margin: 6px 0 30px">
       <button class="primary" id="saveBtn">Save changes</button>
-      <button id="exportBtn">Download / move this bot</button>
+      <button id="exportBtn">Download a safe copy</button>
+      ${(p.hasToken || p.handoverPending) ? '<button id="handoverBtn">' + (p.handoverPending ? 'Resume bot handover' : 'Move bot identity') + '</button>' : ''}
+      ${p.handoverPending ? '<button id="handoverCompleteBtn">Finish handover here</button>' : ''}
       <button class="danger" id="deleteBtn" style="margin-left:auto">Delete profile</button>
     </div>
+    ${p.handoverPending ? '<div class="warnbox" style="margin-top:-20px;margin-bottom:24px"><b>This source is paused for handover.</b> Resume to download the private file again. After it is imported on the destination, finish here to erase this runner\'s transfer copy.</div>' : ''}
   `;
 
   renderTokenArea(p);
@@ -1048,6 +1052,8 @@ function renderEditor(p) {
   $('#feedHealthBtn').onclick = () => renderFeedHealth(p.id);
   $('#saveBtn').onclick = () => saveProfile(p.id);
   $('#exportBtn').onclick = () => exportProfile(p.id, p.referenceName);
+  if ($('#handoverBtn')) $('#handoverBtn').onclick = () => handoverProfile(p.id, p.referenceName, p.handoverPending);
+  if ($('#handoverCompleteBtn')) $('#handoverCompleteBtn').onclick = () => completeHandover(p.id);
   $('#deleteBtn').onclick = () => deleteProfile(p.id, p.referenceName);
   $('#testBtn').onclick = () => testGenerate(p.id);
   $('#newsPreviewBtn').onclick = () => previewNews(p.id);
@@ -1504,19 +1510,54 @@ async function clearPosted(id) {
 }
 
 // ---- portable profiles ------------------------------------------------------
+function downloadJson(value, filename) {
+  const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  const objectUrl = a.href;
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
+
 async function exportProfile(id, name) {
   try {
     const d = await api('/api/profiles/' + encodeURIComponent(id) + '/export');
-    const blob = new Blob([JSON.stringify(d.profilePack, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = String(name || 'feddit-bot').replace(/[^A-Za-z0-9_-]+/g, '-') + '.feddit-bot.json';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    toast('Portable bot downloaded without its token or model settings.', 'ok');
+    const filename = String(name || 'feddit-bot').replace(/[^A-Za-z0-9_-]+/g, '-') + '.feddit-bot.json';
+    downloadJson(d.profilePack, filename);
+    toast('Safe copy downloaded without its token or model settings.', 'ok');
   } catch (e) { toast('Download failed: ' + e.message, 'err'); }
+}
+
+async function handoverProfile(id, name, resume) {
+  if (!resume && !confirm(
+    'Move this bot identity to another runner?\n\n' +
+    'This copy will be paused and its old Feddit credential will stop working. The downloaded file is private: anyone with it can publish as this bot.'
+  )) return;
+  try {
+    const d = await api('/api/profiles/' + encodeURIComponent(id) + '/handover', { method: 'POST' });
+    const filename = String(name || 'feddit-bot').replace(/[^A-Za-z0-9_-]+/g, '-') + '.feddit-bot-handover.json';
+    downloadJson(d.handover, filename);
+    await loadProfiles();
+    await selectProfile(id);
+    alert('Private handover downloaded. Import it on the destination, delete the downloaded file, then return here and choose Finish handover here. The destination stays paused until you start it.');
+  } catch (e) {
+    await loadProfiles();
+    await selectProfile(id);
+    toast('Handover paused safely: ' + e.message, 'err');
+  }
+}
+
+async function completeHandover(id) {
+  if (!confirm('Has the private handover file been imported on the destination? This removes the source runner\'s remaining transfer copy.')) return;
+  try {
+    await api('/api/profiles/' + encodeURIComponent(id) + '/handover-complete', { method: 'POST' });
+    await loadProfiles();
+    await selectProfile(id);
+    toast('Handover finished here. This source remains paused and has no publishing credential.', 'ok');
+  } catch (e) { toast('Could not finish handover: ' + e.message, 'err'); }
 }
 
 async function loadCapacity() {
@@ -1569,10 +1610,16 @@ $('#importFile').addEventListener('change', async (ev) => {
   if (!file) return;
   try {
     const pack = JSON.parse(await file.text());
-    const d = await api('/api/profile-import', { method: 'POST', body: { pack } });
+    const handover = pack && pack.format === 'feddit-bot-handover';
+    const endpoint = handover ? '/api/handover-import' : '/api/profile-import';
+    const d = await api(endpoint, { method: 'POST', body: { pack } });
     await loadProfiles();
     await selectProfile(d.profile.id);
-    toast('Bot imported safely and left paused. Its token was not in the file.', 'ok');
+    if (handover) {
+      alert('Bot identity imported and left paused. Delete the private handover file now, then finish the handover on the source runner. Start this copy only when you are ready.');
+    } else {
+      toast('Bot imported safely and left paused. Its token was not in the file.', 'ok');
+    }
   } catch (e) { toast('Import failed: ' + e.message, 'err'); }
 });
 

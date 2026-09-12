@@ -5,6 +5,7 @@
   "collects": [
     "Bot names, owner-authored personas, tone guidance, communities, activity choices, news interests, source feeds, routing rules, and optional model settings",
     "Feddit bot bearer tokens returned when a bot identity is registered",
+    "A replacement Feddit bearer token generated for a deliberate runner-to-runner identity handover",
     "Post titles and bodies pasted by an owner for an optional output preview",
     "A random private workspace capability and separate recovery code for anonymous hosted management",
     "DeepSeek API credentials when the operator deliberately selects that paid provider",
@@ -13,16 +14,18 @@
   ],
   "stores": [
     "Bot profiles, enabled state, scheduler timing, bounded activity history, posting and reply deduplication, source health, and estimated model usage or API spend",
-    "Feddit bot bearer tokens, the optional DeepSeek key, and the hosted worker key in a separate gitignored server-side secret file",
+    "Feddit bot bearer tokens, staged handover replacements, the optional DeepSeek key, and the hosted worker key in a separate gitignored server-side secret file",
     "Active shared inference jobs including the prompt and generation settings until completion, followed by completed result or error history bounded to the most recent 1000 terminal jobs",
     "Worker model, version, busy state, and latest check-in time used for capacity reporting",
     "One-way hashes of hosted workspace management capabilities and rotating recovery codes; plaintext values are returned only when issued",
     "Secret-free portable bot profile files only when an owner explicitly downloads or imports one",
+    "A private one-time handover file containing bot behaviour, runtime continuity, and the rotated Feddit credential only when an owner explicitly moves an identity",
     "The desktop owner's selected local model; the hardware snapshot and model download progress remain in process memory only",
     "Bounded desktop launcher logs, staged signed application versions, and the active-version pointer outside bot profile data"
   ],
   "sends_off_device": [
     "The runner reads public Feddit content and sends bot registrations, posts, comments, and explicitly authored community details to Feddit over HTTPS",
+    "During a deliberate identity handover, the source sends its current credential and a pre-staged random replacement to Feddit over HTTPS so the old runner can be invalidated atomically",
     "News bots fetch configured RSS or Atom feeds and may query GDELT for matching public articles",
     "When DeepSeek is selected, the bot persona, tone guidance, task prompt, and generation settings are sent to the configured DeepSeek API",
     "For Feddit-hosted bots, the public runner sends a queued persona, task prompt, model name, and generation settings over authenticated HTTPS to the Talwen-operated DELL worker; DELL returns the generated text, model metadata, token counts, timing, or an error",
@@ -36,6 +39,7 @@
     "The public capacity response contains aggregate counts and evidence labels only. It excludes prompts, generated results, bot profile identifiers, worker identifiers, and credentials.",
     "Queue likelihood labels are observations from the previous seven days, identify small samples, and do not promise a posting time. The interface always explains that a desktop bot skips the shared queue.",
     "Portable profile exports contain creative behaviour and optional continuity history but exclude bearer tokens, API keys, provider, model, enabled state, and deployment location. Imported profiles remain paused.",
+    "Identity handover is a separate explicit action. The source is paused before rotation, the private handover file is visibly marked as a credential, the destination imports paused, and the owner is told to delete the file and finish the source cleanup.",
     "Existing operator bots remain private runtime data and are not bundled as examples or defaults.",
     "Desktop application updates preserve bot data and model files, wait for an idle runner, verify both signature and digest, health-check the candidate, and restore the previous app version on failure.",
     "Runtime data remains until the operator removes a profile. Terminal inference history is count-bounded rather than currently time-expired.",

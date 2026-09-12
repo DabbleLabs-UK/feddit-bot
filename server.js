@@ -133,6 +133,7 @@ function safeProfile(p) {
   return {
     ...rest,
     hasToken: Boolean(token),
+    handoverPending: Boolean(secrets.getFedditHandover(p.id)),
     referenceName: store.referenceName(p),
     postedNewsCount: Array.isArray(postedNews) ? postedNews.length : 0,
     nextAction: scheduler.nextAction(p),
@@ -484,6 +485,34 @@ async function handleApi(req, res, urlPath, query) {
     return sendJson(res, 201, { profile: safeProfile(store.getProfile(created.id)) });
   }
 
+  // POST /api/handover-import - import the private, one-time form of a bot pack.
+  // Unlike an ordinary profile copy this carries the rotated bearer token. The
+  // destination is still paused: importing a file is never permission to post.
+  if (method === 'POST' && urlPath === '/api/handover-import') {
+    const body = await readBody(req);
+    const pack = body && body.pack ? body.pack : body;
+    const checked = profilePack.validateHandover(pack);
+    if (!checked.ok) return sendJson(res, 400, { error: checked.error });
+    const patch = profilePack.importHandoverPatch(pack);
+    if (requestOwner) {
+      patch.ownerId = requestOwner.id;
+      patch.provider = 'dell';
+      patch.model = store.DEFAULT_MODEL;
+    } else {
+      patch.model = activeDefaultModel();
+    }
+    const username = String(patch.fedditUsername || '').trim().toLowerCase();
+    if (store.listProfiles().some((p) => String(p.fedditUsername || '').trim().toLowerCase() === username)) {
+      return sendJson(res, 409, { error: 'A profile for this Feddit bot already exists on this runner.' });
+    }
+    const created = store.createProfile(patch, { preserveCreatedAt: true });
+    store.logActivity(created.id, { kind: 'handover-in', ok: true, note: 'Imported bot identity; publishing remains off until deliberately started.' });
+    return sendJson(res, 201, {
+      profile: safeProfile(store.getProfile(created.id)),
+      warning: 'Delete the private handover file now, then finish the handover on the source runner.',
+    });
+  }
+
   // Routes under /api/profiles/:id
   const m = urlPath.match(/^\/api\/profiles\/([^/]+)(\/[^/]+)?$/);
   if (m) {
@@ -504,6 +533,7 @@ async function handleApi(req, res, urlPath, query) {
         profile: {
           ...rest,
           hasToken: Boolean(token),
+          handoverPending: Boolean(secrets.getFedditHandover(existing.id)),
           referenceName: store.referenceName(existing),
           postedNewsCount: Array.isArray(postedNews) ? postedNews.length : 0,
         },
@@ -530,6 +560,10 @@ async function handleApi(req, res, urlPath, query) {
         body.provider = 'dell';
         body.model = store.DEFAULT_MODEL;
       }
+      const pendingHandover = secrets.getFedditHandover(id);
+      if (pendingHandover && (body.enabled === true || Object.prototype.hasOwnProperty.call(body, 'token'))) {
+        return sendJson(res, 409, { error: 'Finish or resume this bot handover before changing the source credential or starting this copy.' });
+      }
       // Never let the client blank an existing token by omission; only overwrite
       // token when a non-empty token is explicitly provided.
       if (body.token === '' || body.token == null) delete body.token;
@@ -551,6 +585,7 @@ async function handleApi(req, res, urlPath, query) {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
       const username = (existing.fedditUsername || '').trim();
       if (!username) return sendJson(res, 400, { error: 'Set a Feddit username before registering.' });
+      if (secrets.getFedditHandover(id)) return sendJson(res, 409, { error: 'This bot has a handover in progress.' });
       if (existing.token) return sendJson(res, 409, { error: 'This profile already has a token. Delete it first to re-register.' });
 
       const description = (existing.persona || '').slice(0, 500);
@@ -565,6 +600,81 @@ async function handleApi(req, res, urlPath, query) {
       store.updateProfile(id, { token });
       store.logActivity(id, { kind: 'register', ok: true, note: 'Registered as ' + username });
       return sendJson(res, 200, { ok: true, bot, profile: safeProfile(store.getProfile(id)) });
+    }
+
+    // POST /api/profiles/:id/handover - pause this source, pre-stage a
+    // replacement credential, rotate Feddit to it, then return a resumable
+    // private handover file. If a response is lost, retrying proves whether the
+    // staged token took effect, so the identity is never stranded between hosts.
+    if (method === 'POST' && sub === '/handover') {
+      if (!existing) return sendJson(res, 404, { error: 'No such profile' });
+      const username = String(existing.fedditUsername || '').trim();
+      if (!username) return sendJson(res, 409, { error: 'Register this bot on Feddit before moving its identity.' });
+
+      let source = existing;
+      if (source.enabled) source = store.updateProfile(id, { enabled: false });
+      if (schedulerHandle.isBusy() || providers.ollamaBusy() || providers.deepseekInFlight() > 0) {
+        return sendJson(res, 409, {
+          error: 'This source is paused, but the runner is still finishing work already in flight. Try Move bot identity again in a moment.',
+          retrySafe: true,
+        });
+      }
+      let pending = secrets.getFedditHandover(id);
+      if (!pending) {
+        if (!source.token) return sendJson(res, 409, { error: 'This profile has no Feddit token to hand over.' });
+        pending = secrets.stageFedditHandover(id, feddit.createReplacementToken());
+      }
+
+      if (pending.status !== 'ready') {
+        let rotated = null;
+        if (source.token) rotated = await feddit.rotateToken(source.token, pending.token);
+        const returnedToken = rotated && rotated.ok && rotated.data
+          ? String(rotated.data.token || '')
+          : '';
+        let confirmedToken = /^feddit_[a-f0-9]{64}$/.test(returnedToken) ? returnedToken : '';
+        let replacementWorks = Boolean(confirmedToken);
+
+        // The rotation may have succeeded even if its HTTP response was lost.
+        // Probing the pre-staged replacement turns that ambiguity into a safe,
+        // repeatable result without publishing or changing profile content.
+        if (!replacementWorks) {
+          const probe = await feddit.verifyToken(pending.token);
+          replacementWorks = probe.ok;
+          if (replacementWorks) confirmedToken = pending.token;
+        }
+        if (!replacementWorks) {
+          const detail = rotated && rotated.error
+            ? rotated.error
+            : 'Feddit could not confirm the replacement credential.';
+          return sendJson(res, 502, {
+            error: detail + ' The bot is paused and the handover is safely staged; use Resume handover to retry.',
+            retrySafe: true,
+          });
+        }
+        pending = secrets.markFedditHandoverReady(id, confirmedToken);
+        source = store.getProfile(id);
+        store.logActivity(id, { kind: 'handover-out', ok: true, note: 'Paused here and prepared a private handover file.' });
+      }
+
+      return sendJson(res, 200, {
+        handover: profilePack.createHandover(source, pending.token),
+        profile: safeProfile(source),
+      });
+    }
+
+    // POST /api/profiles/:id/handover-complete - after the destination import,
+    // erase the source runner's last protected copy of the replacement token.
+    // The source profile remains as a disabled, secret-free record.
+    if (method === 'POST' && sub === '/handover-complete') {
+      if (!existing) return sendJson(res, 404, { error: 'No such profile' });
+      const pending = secrets.getFedditHandover(id);
+      if (!pending) return sendJson(res, 200, { ok: true, profile: safeProfile(existing) });
+      if (pending.status !== 'ready') {
+        return sendJson(res, 409, { error: 'Resume the handover first so Feddit can confirm the replacement credential.' });
+      }
+      secrets.completeFedditHandover(id);
+      store.logActivity(id, { kind: 'handover-complete', ok: true, note: 'Removed this runner\'s transfer credential copy.' });
+      return sendJson(res, 200, { ok: true, profile: safeProfile(store.getProfile(id)) });
     }
 
     // POST /api/profiles/:id/test-generate - generate a sample reply against a
