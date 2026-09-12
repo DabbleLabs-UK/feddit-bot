@@ -68,11 +68,17 @@ The public runner and DELL receive the same strong `FEDDIT_WORKER_KEY`. DELL
 also receives the public HTTPS base URL and then makes outbound requests only:
 
 ```bash
-export FEDDIT_RUNNER_URL=https://feddit.dabblelabs.uk/bots/
+export FEDDIT_RUNNER_URL=https://bots.feddit.dabblelabs.uk
 export FEDDIT_WORKER_KEY='set-this-outside-the-repo'
 export FEDDIT_WORKER_ID=dell
 node worker.js
 ```
+
+The runner needs its own root-level HTTPS origin because its browser app and
+JSON routes use absolute `/api/...` paths. The planned public origin is
+`https://bots.feddit.dabblelabs.uk`; do not mount it below the existing Feddit
+site's `/bots/` path. See [Hosted deployment](docs/hosted-deployment.md) for the
+production order and persistence boundary.
 
 `FEDDIT_WORKER_MODELS` may be a comma-separated allowlist. Its safe default is
 only the model already used by Cy, which prevents an arbitrary queued profile
