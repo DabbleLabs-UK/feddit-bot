@@ -24,6 +24,8 @@ const profilePack = require('./lib/profile-pack');
 const { createQueue } = require('./lib/job-queue');
 const workerAuth = require('./lib/worker-auth');
 const { createOwnerStore } = require('./lib/owners');
+const modelCatalog = require('./lib/model-catalog');
+const { createModelInstaller } = require('./lib/model-installer');
 
 const ollama = providers.ollama; // the ollama provider (status/isBusy/generate)
 
@@ -41,6 +43,15 @@ const jobQueue = createQueue({ file: path.join(store.DATA_DIR, 'jobs.json') });
 providers.configureDellQueue(jobQueue);
 const hostedPreviewTasks = new Map();
 const ownerStore = createOwnerStore({ file: path.join(store.DATA_DIR, 'owners.json') });
+const modelInstaller = createModelInstaller({
+  pullModel: ollama.pullModel,
+  onReady: (model) => store.updateSettings({ localDefaultModel: model }),
+});
+
+function activeDefaultModel() {
+  const settings = store.getSettings();
+  return String(settings.localDefaultModel || store.DEFAULT_MODEL);
+}
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -166,6 +177,48 @@ async function handleApi(req, res, urlPath, query) {
     return sendJson(res, 200, { capacity: jobQueue.capacity() });
   }
 
+  // Local model setup is intentionally a small guided choice, not an Ollama
+  // administration screen. Hosted owners never see or control DELL's models.
+  if (urlPath.startsWith('/api/models')) {
+    if (PLACEMENT === 'hosted') return sendJson(res, 404, { error: 'Not found' });
+    if (method === 'GET' && urlPath === '/api/models') {
+      const status = await ollama.status();
+      const hardware = modelCatalog.adviseHardware({
+        totalMemoryBytes: os.totalmem(),
+        cpuCount: os.cpus().length,
+        platform: os.platform(),
+        arch: os.arch(),
+      });
+      return sendJson(res, 200, {
+        hardware,
+        installed: status.models || [],
+        ollama: { up: status.up, error: status.error },
+        selectedModel: activeDefaultModel(),
+        downloads: modelInstaller.list(),
+      });
+    }
+    if (method === 'POST' && urlPath === '/api/models/pull') {
+      const body = await readBody(req);
+      try {
+        const download = modelInstaller.start(body.model);
+        return sendJson(res, 202, { download });
+      } catch (error) {
+        return sendJson(res, 409, { error: error.message });
+      }
+    }
+    if (method === 'PUT' && urlPath === '/api/models/default') {
+      const body = await readBody(req);
+      const model = String(body.model || '').trim();
+      const status = await ollama.status();
+      if (!(status.models || []).includes(model)) {
+        return sendJson(res, 409, { error: 'Download this model before selecting it.' });
+      }
+      const settings = store.updateSettings({ localDefaultModel: model });
+      return sendJson(res, 200, { selectedModel: settings.localDefaultModel });
+    }
+    return sendJson(res, 405, { error: 'Method not allowed' });
+  }
+
   // Authenticated outbound worker protocol. These are the only routes DELL
   // needs. The shared worker key is server-only and is never accepted in a URL.
   if (urlPath.startsWith('/api/worker/')) {
@@ -273,7 +326,7 @@ async function handleApi(req, res, urlPath, query) {
       return sendJson(res, 200, {
         placement: PLACEMENT,
         feddit: fed,
-        defaultModel: store.DEFAULT_MODEL,
+        defaultModel: modelCatalog.DELL_SHARED_MODEL,
         settings: { paused: settings.paused, dryRun: settings.dryRun },
       });
     }
@@ -292,7 +345,7 @@ async function handleApi(req, res, urlPath, query) {
       ollama: oll,
       deepseek: ds,               // { up, hasKey, keyOk, error }
       feddit: fed,
-      defaultModel: store.DEFAULT_MODEL,
+      defaultModel: activeDefaultModel(),
       deepseekModels: providers.deepseek.MODELS,
       secret: secrets.publicView(), // { hasKey, redacted }
       spend: {
@@ -374,6 +427,8 @@ async function handleApi(req, res, urlPath, query) {
       body.ownerId = requestOwner.id;
       body.provider = 'dell';
       body.model = store.DEFAULT_MODEL;
+    } else if (!body.model) {
+      body.model = activeDefaultModel();
     }
     const p = store.createProfile(body);
     return sendJson(res, 201, { profile: safeProfile(p) });
@@ -393,6 +448,8 @@ async function handleApi(req, res, urlPath, query) {
       patch.ownerId = requestOwner.id;
       patch.provider = 'dell';
       patch.model = store.DEFAULT_MODEL;
+    } else {
+      patch.model = activeDefaultModel();
     }
     const username = String(patch.fedditUsername || '').trim().toLowerCase();
     if (username && store.listProfiles().some((p) => String(p.fedditUsername || '').trim().toLowerCase() === username)) {

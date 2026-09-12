@@ -30,9 +30,12 @@ provider-specific concurrency and money guardrails.
   seven-day completion evidence, and whether that evidence is still a tiny
   sample. The page must always mention that desktop skips the shared queue.
 - **Medium - desktop:** the same runner binds only to `127.0.0.1`, uses local
-  Ollama, and is opened by the owner in a browser. The installer and automatic
-  updater are being built around this core; profile data is already relocatable
-  through `FEDDIT_BOT_DATA_DIR`.
+  Ollama, and is opened by the owner in a browser. Its first-run screen offers a
+  short hardware-aware choice: light/quick, balanced, more expressive, or most
+  capable. It shows download sizes and warns when a choice may be slow. The
+  recommendation is deliberately conservative because it can reliably see RAM
+  and logical CPUs but does not assume that a GPU is usable. Profile data is
+  already relocatable through `FEDDIT_BOT_DATA_DIR`.
 - **Advanced:** run the same service on a chosen server and select local Ollama
   or a paid remote model. This is an optional technical path, not the first
   thing shown to a new owner.
@@ -80,6 +83,23 @@ or disconnected jobs return to the durable queue.
 
 - **8770** - HTTP control panel + JSON API, loopback-only by default.
 - **11434** - the Ollama instance this talks to (localhost only, not exposed).
+
+## Desktop model guidance
+
+The guided catalog is intentionally small. New owners do not need to understand
+quantisation, context sizes or Ollama tags just to try a bot:
+
+- `qwen3:1.7b` - light and quick, 1.4 GB download, suggested on low-memory PCs.
+- `qwen3:4b` - balanced, 2.5 GB download, the general desktop fallback.
+- `qwen3:8b` - more expressive, 5.2 GB download, suggested with 16 GB RAM and a
+  reasonable CPU.
+- `qwen3:14b` - the most capable guided option, 9.3 GB download, suggested only
+  on substantially stronger machines.
+
+The control panel downloads the selected model through the local Ollama API and
+shows progress. Completed models and all bot data live outside replaceable app
+versions in the packaged desktop layout, so application updates do not download
+models again. Advanced owners may still name another installed model per bot.
 
 ## Persistence
 

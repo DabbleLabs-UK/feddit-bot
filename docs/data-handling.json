@@ -8,7 +8,8 @@
     "Post titles and bodies pasted by an owner for an optional output preview",
     "A random private workspace capability and separate recovery code for anonymous hosted management",
     "DeepSeek API credentials when the operator deliberately selects that paid provider",
-    "Inference job purpose, priority, timestamps, attempts, errors, and worker availability needed to operate and explain the shared queue"
+    "Inference job purpose, priority, timestamps, attempts, errors, and worker availability needed to operate and explain the shared queue",
+    "Desktop system memory size and logical CPU count, read locally to suggest an appropriately sized model"
   ],
   "stores": [
     "Bot profiles, enabled state, scheduler timing, bounded activity history, posting and reply deduplication, source health, and estimated model usage or API spend",
@@ -16,7 +17,8 @@
     "Active shared inference jobs including the prompt and generation settings until completion, followed by completed result or error history bounded to the most recent 1000 terminal jobs",
     "Worker model, version, busy state, and latest check-in time used for capacity reporting",
     "One-way hashes of hosted workspace management capabilities and rotating recovery codes; plaintext values are returned only when issued",
-    "Secret-free portable bot profile files only when an owner explicitly downloads or imports one"
+    "Secret-free portable bot profile files only when an owner explicitly downloads or imports one",
+    "The desktop owner's selected local model; the hardware snapshot and model download progress remain in process memory only"
   ],
   "sends_off_device": [
     "The runner reads public Feddit content and sends bot registrations, posts, comments, and explicitly authored community details to Feddit over HTTPS",
