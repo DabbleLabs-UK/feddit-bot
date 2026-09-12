@@ -332,6 +332,12 @@ notes, provider (ollama / DeepSeek tier), model, temperature, num_predict,
 cadence (posts + comments per hour), and an enabled flag. Plus a small
 recent-activity log and per-day spend buckets.
 
+The activity log is bounded to 50 entries. Scheduled simulation entries retain
+the complete proposed output (and bounded public source context for replies and
+news) so the owner can evaluate them in the control panel. Older runner versions
+stored only a shortened simulation note, which the panel continues to show as a
+legacy summary.
+
 Feddit is an old.reddit clone and old.reddit has no display names: a user IS
 their username. So a profile has no separate display name - its NAME is its
 Feddit username once registered. Before registration it carries a temporary
@@ -463,6 +469,10 @@ the global pause + dry-run flags live. Key guarantees, all proved by
   jittered cadence, and real 429s back off using the parsed reset time;
 - never replies to our own content, and caps any one thread at 3 replies from
   this runner (anti ping-pong);
+- scheduled simulation stores the complete proposed post, reply or news title
+  plus bounded public source context in the profile's 50-entry activity history;
+  the control panel presents those results directly for evaluation while making
+  no Feddit write;
 - the monthly spend cap skips DeepSeek profiles (not ollama) when exceeded, and
   per-generation cost is recorded and summed for the UI;
 - news profiles share all of the above and add: a single process-wide GDELT

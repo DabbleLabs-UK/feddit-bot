@@ -376,6 +376,11 @@ async function scenarioTargetingDedupe() {
   eq(world.calls.comment.length, 0, 'DRY-RUN made ZERO live comment writes');
   eq(world.calls.submit.length, 0, 'DRY-RUN made ZERO live post writes');
   eq(providers.stats().maxConcurrent, 1, 'never more than ONE ollama generation in flight');
+  const simulations = p.activity.filter((entry) => entry.dryRun && entry.kind === 'comment');
+  eq(simulations.length, 3, 'each simulated reply retained a result for owner evaluation');
+  eq(simulations[0].simulation.community, 'f/botlife', 'simulated reply records its community');
+  ok(simulations[0].simulation.context.includes('newest by other1'), 'simulated reply retains the live post context it answered');
+  ok(simulations[0].simulation.reply.includes('\n\nGenerated body text'), 'simulated reply retains the COMPLETE generated text, including newlines');
 }
 
 // ============================================================================
@@ -422,14 +427,19 @@ async function scenarioCommunityMovement() {
     p.sched.nextPostAt = clock.now();
     const world = { feddits: {}, comments: {}, abouts: { oldread: { description: 'The old read-only home.', rules: [] } } };
     const client = makeFeddit(world);
+    const unifiedStore = makeStore([p]);
     const sched = scheduler.createScheduler({
-      store: makeStore([p]), providers: makeProviders(), feddit: client,
+      store: unifiedStore, providers: makeProviders(), feddit: client,
       about: aboutLib.createAbout({ feddit: client, now: clock.now }),
       now: clock.now, random: () => 0.75, getDeepseekKey: KEY,
     });
     const tick = await sched.runTick();
     const action = (tick.results || []).find((item) => item && item.action === 'post');
     eq(action && action.feddit, 'oldread', 'the old read list is part of the same home set for original posts too');
+    const simulatedPost = p.activity.find((entry) => entry.dryRun && entry.kind === 'post');
+    eq(simulatedPost.simulation.community, 'f/oldread', 'simulated original post records its destination');
+    eq(simulatedPost.simulation.title, 'Generated line one', 'simulated original post retains its complete title');
+    ok(simulatedPost.simulation.body.includes('Generated body text'), 'simulated original post retains its complete body');
   }
 
   // In discover mode an exploration opportunity uses a personality-matched real
@@ -979,6 +989,11 @@ async function scenarioNews() {
   eq(a1.canonical, keyA, 'run1 dedupe key is the canonical A url');
   eq(fed1.calls.submit.length, 0, 'dry-run: ZERO live submits');
   ok(store.hasPostedNews('news1', keyA), 'dry-run recorded A in the PERMANENT news dedupe set');
+  const simulatedNews = p.activity.find((entry) => entry.dryRun && entry.kind === 'news');
+  eq(simulatedNews.simulation.community, 'f/space', 'simulated news result records its destination');
+  eq(simulatedNews.simulation.sourceTitle, A.title, 'simulated news result retains the publisher headline');
+  eq(simulatedNews.simulation.sourceUrl, A.url, 'simulated news result retains the source URL');
+  eq(simulatedNews.simulation.title, a1.title, 'simulated news result retains the complete generated Feddit title');
 
   // Run 2: simulate a RESTART (brand-new scheduler, same persisted store). A must
   // NOT be reposted; the next candidate C posts to f/sports.

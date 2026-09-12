@@ -111,7 +111,7 @@
   .toast.ok { border-color: var(--good); }
   .activity { list-style: none; margin: 0; padding: 0; font-size: 12px; color: var(--dim); }
   .activity li { padding: 3px 0; border-bottom: 1px solid var(--line); }
-  small.mono { font-family: ui-monospace, monospace; }
+  small.mono, .mono { font-family: ui-monospace, monospace; }
   .runnerbar {
     display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
     padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
@@ -148,6 +148,13 @@
   .preview-explainer { margin: 7px 0 12px; color: var(--dim); font-size: 12px; }
   .preview-explainer summary { color: var(--accent); cursor: pointer; }
   .preview-explainer > div { margin-top: 6px; }
+  .simulation-list { display: grid; gap: 10px; margin-top: 12px; }
+  .simulation-card { border: 1px solid var(--line); border-radius: 6px; padding: 11px 13px; background: var(--panel2); }
+  .simulation-card h3 { margin: 0; font-size: 13px; color: var(--text); }
+  .simulation-output { margin-top: 8px; padding: 9px 11px; border-radius: 5px; background: #0e1114; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .simulation-label { margin-top: 9px; color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+  .simulation-context { margin-top: 8px; color: var(--dim); }
+  .simulation-context summary { cursor: pointer; color: var(--accent); }
   @media (max-width: 760px) {
     .layout { grid-template-columns: 1fr; height: auto; }
     .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -882,6 +889,15 @@ function renderEditor(p) {
       ${probationLine(p)}
     </div>
 
+    <div class="section" id="simulationResultsSection">
+      <div class="row" style="justify-content:space-between; margin-bottom:8px">
+        <h2 style="margin:0">Scheduled simulation results <span class="badge" id="simulationCount"></span></h2>
+        <button type="button" id="refreshSimulationBtn">Refresh results</button>
+      </div>
+      <div class="hint"><b>Nothing is posted to a separate sandbox site.</b> When scheduled simulation is ON, this panel keeps the complete post, reply or news title the scheduler would have published, together with enough source context to evaluate it. Feddit itself remains unchanged.</div>
+      <div class="simulation-list" id="simulationResults"></div>
+    </div>
+
     <div class="section">
       <h2>Persona</h2>
       <div class="field full"><label>Persona system prompt</label>
@@ -1081,9 +1097,10 @@ function renderEditor(p) {
     </details>
 
     <details class="section progressive">
-      <summary>Recent activity</summary>
+      <summary>Technical activity history</summary>
       <div class="progressive-body">
-      <h2>Recent activity</h2>
+      <h2>Technical activity history</h2>
+      <div class="hint" style="margin-bottom:8px">Status, failures and shortened scheduler notes live here. Use Scheduled simulation results above to evaluate complete rehearsed output.</div>
       <ul class="activity" id="activity"></ul>
       </div>
     </details>
@@ -1100,6 +1117,7 @@ function renderEditor(p) {
 
   renderTokenArea(p);
   renderProviderView();
+  renderSimulationResults(p);
   renderActivity(p);
   renderSpendLine(p);
 
@@ -1142,6 +1160,7 @@ function renderEditor(p) {
   $('#feedAllBtn').onclick = () => { document.querySelectorAll('#feedPicker .feedPick').forEach((c) => { c.checked = true; }); };
   $('#feedNoneBtn').onclick = () => { document.querySelectorAll('#feedPicker .feedPick').forEach((c) => { c.checked = false; }); };
   $('#feedHealthBtn').onclick = () => renderFeedHealth(p.id);
+  $('#refreshSimulationBtn').onclick = () => refreshSimulationResults(p.id);
   $('#saveBtn').onclick = () => saveProfile(p.id);
   $('#exportBtn').onclick = () => exportProfile(p.id, p.referenceName);
   if ($('#handoverBtn')) $('#handoverBtn').onclick = () => handoverProfile(p.id, p.referenceName, p.handoverPending);
@@ -1398,6 +1417,78 @@ async function renderFeedHealth(id) {
   }).join('');
   host.innerHTML = rows;
   if (meta) meta.textContent = ok + ' OK, ' + bad + ' failing' + (untried ? ', ' + untried + ' not tried yet' : '');
+}
+
+function simulationValue(label, value) {
+  if (!String(value || '').trim()) return '';
+  return '<div class="simulation-label">' + esc(label) + '</div>' +
+    '<div class="simulation-output">' + esc(value) + '</div>';
+}
+
+function renderSimulationResults(p) {
+  const host = $('#simulationResults');
+  const count = $('#simulationCount');
+  if (!host || !count) return;
+  const all = (p.activity || []).filter((a) => a && a.dryRun && ['post', 'comment', 'news'].includes(a.kind));
+  count.textContent = String(all.length);
+  const entries = all.slice().reverse().slice(0, 10);
+  if (!entries.length) {
+    let stateHint = 'No scheduled simulation results yet.';
+    if (!p.hasToken) stateHint += ' Register this bot first.';
+    else if (!p.enabled) stateHint += ' This bot is currently paused: set its Scheduler to ACTIVE and save it.';
+    else if (state.settings && !state.settings.dryRun) stateHint += ' Scheduled simulation is currently OFF.';
+    stateHint += ' When an action becomes due, return here and choose Refresh results.';
+    host.innerHTML = '<div class="simulation-card hint">' + esc(stateHint) + '</div>';
+    return;
+  }
+
+  host.innerHTML = entries.map((entry) => {
+    const sim = entry.simulation && typeof entry.simulation === 'object' ? entry.simulation : null;
+    const when = entry.at ? esc(entry.at) : 'time unavailable';
+    const destination = sim && sim.community ? sim.community : (entry.target || 'destination unavailable');
+    const type = entry.kind === 'comment' ? 'Reply' : (entry.kind === 'news' ? 'News link post' : 'Original post');
+    let body = '';
+    if (!sim) {
+      body = '<div class="hint" style="margin-top:8px">Earlier app versions kept only this shortened summary; complete text was not retained.</div>' +
+        simulationValue('Recorded summary', entry.note || 'No summary available.');
+    } else if (entry.kind === 'comment') {
+      const context = sim.context
+        ? '<details class="simulation-context"><summary>What it was replying to</summary><div class="simulation-output">' + esc(sim.context) + '</div></details>'
+        : '';
+      body = context + simulationValue('Complete reply it would publish', sim.reply);
+    } else if (entry.kind === 'news') {
+      body = simulationValue('Publisher headline', sim.sourceTitle) +
+        simulationValue('Source URL', sim.sourceUrl) +
+        simulationValue('Available article summary', sim.summary) +
+        simulationValue('Feddit title it would publish', sim.title);
+    } else {
+      body = simulationValue('Title it would publish', sim.title) +
+        simulationValue('Body it would publish', sim.body);
+    }
+    return '<article class="simulation-card"><div class="row" style="justify-content:space-between">' +
+      '<h3>' + esc(type) + '</h3><span class="hint mono">' + when + '</span></div>' +
+      '<div class="hint" style="margin-top:3px">Would publish to <span class="mono">' + esc(destination) + '</span></div>' + body + '</article>';
+  }).join('');
+}
+
+async function refreshSimulationResults(id) {
+  const btn = $('#refreshSimulationBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Refreshing...'; }
+  try {
+    const d = await api('/api/profiles/' + encodeURIComponent(id));
+    if (state.editing && state.editing.id === id) {
+      state.editing.activity = d.profile.activity || [];
+      state.editing.enabled = d.profile.enabled;
+      state.editing.hasToken = d.profile.hasToken;
+    }
+    renderSimulationResults(d.profile);
+    renderActivity(d.profile);
+    await loadProfiles();
+  } catch (e) {
+    toast('Could not refresh simulation results: ' + e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Refresh results'; }
+  }
 }
 
 function renderActivity(p) {

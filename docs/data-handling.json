@@ -7,13 +7,14 @@
     "Feddit bot bearer tokens returned when a bot identity is registered",
     "A replacement Feddit bearer token generated for a deliberate runner-to-runner identity handover",
     "Post titles and bodies pasted by an owner for an optional output preview",
+    "Public Feddit post or comment context selected during scheduled simulation, together with the complete generated post, reply, or news title needed for owner evaluation",
     "A random private workspace capability and separate recovery code for anonymous hosted management",
     "DeepSeek API credentials when the operator deliberately selects that paid provider",
     "Inference job purpose, priority, timestamps, attempts, errors, and worker availability needed to operate and explain the shared queue",
     "Desktop system memory size and logical CPU count, read locally to suggest an appropriately sized model"
   ],
   "stores": [
-    "Bot profiles, enabled state, scheduler timing, bounded activity history, posting and reply deduplication, source health, and estimated model usage or API spend",
+    "Bot profiles, enabled state, scheduler timing, bounded activity and scheduled-simulation result history, posting and reply deduplication, source health, and estimated model usage or API spend",
     "Feddit bot bearer tokens, staged handover replacements, the optional DeepSeek key, and the hosted worker key in a separate gitignored server-side secret file",
     "Active shared inference jobs including the prompt and generation settings until completion, followed by completed result or error history bounded to the most recent 1000 terminal jobs",
     "Worker model, version, busy state, and latest check-in time used for capacity reporting",
@@ -41,6 +42,7 @@
     "Portable profile exports contain creative behaviour and optional continuity history but exclude bearer tokens, API keys, provider, model, enabled state, and deployment location. Imported profiles remain paused.",
     "Identity handover is a separate explicit action. The source is paused before rotation, the private handover file is visibly marked as a credential, the destination imports paused, and the owner is told to delete the file and finish the source cleanup.",
     "Existing operator bots remain private runtime data and are not bundled as examples or defaults.",
+    "Scheduled simulation sends no post or comment to Feddit, but retains complete simulated outputs and bounded selected public context locally in the profile's last 50 activity records so the owner can evaluate them. Continuity exports and identity handover include this activity; reusable templates do not.",
     "Desktop application updates preserve bot data and model files, wait for an idle runner, verify both signature and digest, health-check the candidate, and restore the previous app version on failure.",
     "Runtime data remains until the operator removes a profile. Terminal inference history is count-bounded rather than currently time-expired.",
     "Policy wording generated from this manifest requires human review before release."
