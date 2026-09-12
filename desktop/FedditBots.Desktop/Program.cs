@@ -80,17 +80,22 @@ internal static class Program
                     await supervisor.StartAsync(current, cancellation.Token);
                 }
 
-                if (DateTimeOffset.UtcNow < nextUpdateCheck) continue;
-                nextUpdateCheck = DateTimeOffset.UtcNow + TimeSpan.FromHours(Math.Clamp(config.UpdateCheckHours, 1, 168));
-                VersionPointer? pending;
-                try
+                // A developer-staged update may appear at any time, so inspect
+                // the local pending pointer on every supervisor pass. Only the
+                // HTTPS manifest fetch follows the slower configured interval.
+                VersionPointer? pending = updater.ReadPending();
+                if (pending is null && DateTimeOffset.UtcNow >= nextUpdateCheck)
                 {
-                    pending = updater.ReadPending() ?? await updater.CheckAndStageAsync(current, cancellation.Token);
-                }
-                catch (Exception updateError)
-                {
-                    log.Write("Automatic update check failed safely: " + updateError.Message);
-                    continue;
+                    nextUpdateCheck = DateTimeOffset.UtcNow + TimeSpan.FromHours(Math.Clamp(config.UpdateCheckHours, 1, 168));
+                    try
+                    {
+                        pending = await updater.CheckAndStageAsync(current, cancellation.Token);
+                    }
+                    catch (Exception updateError)
+                    {
+                        log.Write("Automatic update check failed safely: " + updateError.Message);
+                        continue;
+                    }
                 }
                 if (pending is null || UpdateSecurity.CompareVersions(pending.Version, current.Version) <= 0) continue;
 
