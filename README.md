@@ -168,6 +168,7 @@ server.js                 HTTP server (port 8770) + JSON API; scheduler seam
 lib/store.js              load/save data/profiles.json, atomic write, profile CRUD, spend tracking
 lib/secrets.js            data/secrets.json: DeepSeek key + per-profile Feddit tokens (atomic, redacted reads)
 lib/cost.js               price table + per-generation USD cost maths + day/month keys
+lib/profile-pack.js       portable WHAT-only bot profile; excludes secrets, model and location
 lib/scheduler.js          posting loop: per-provider gate, cadence, ceilings, spend guardrail
 lib/providers/index.js    provider facade: routing + ollama single-flight + deepseek concurrency cap
 lib/providers/ollama.js   Ollama client: default model, keep_alive -1, single-flight
@@ -247,7 +248,8 @@ PUT    /api/secret                          set / clear the shared deepseek key
 GET    /api/feddits                        proxied sub-feddit list
 GET    /api/profiles                        list (tokens redacted; provider + spend attached)
 POST   /api/profiles                        create
-GET    /api/profiles/:id                    full record (incl. token)
+POST   /api/profile-import                   import a portable profile, disabled and secret-free
+GET    /api/profiles/:id                    full editable record (token remains redacted)
 PUT    /api/profiles/:id                    update
 DELETE /api/profiles/:id                    delete
 POST   /api/profiles/:id/register           register on Feddit, store token
@@ -256,6 +258,8 @@ POST   /api/profiles/:id/preview-news        run the news pick (query -> filter 
 GET    /api/profiles/:id/preview-status      live progress for an in-flight preview (GDELT retry message)
 POST   /api/profiles/:id/clear-posted        wipe the news posted-article dedupe history
 POST   /api/profiles/:id/create-feddit       create a sub-feddit (owner-authored name/title/description/rules/nsfw) with this profile's token
+GET    /api/profiles/:id/export              portable move profile + runtime continuity, no secrets
+GET    /api/profiles/:id/template            reusable creative template, no identity/runtime/secrets
 ```
 
 Sub-feddits are created ONLY by this explicit, owner-authored panel action -

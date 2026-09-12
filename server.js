@@ -25,6 +25,7 @@ const feddit = require('./lib/feddit');
 const gdelt = require('./lib/gdelt');
 const feeds = require('./lib/feeds');
 const scheduler = require('./lib/scheduler');
+const profilePack = require('./lib/profile-pack');
 
 const ollama = providers.ollama; // the ollama provider (status/isBusy/generate)
 
@@ -215,6 +216,25 @@ async function handleApi(req, res, urlPath, query) {
     return sendJson(res, 201, { profile: safeProfile(p) });
   }
 
+  // POST /api/profile-import - import a portable, secret-free bot profile. A
+  // moved identity is always imported disabled and without a bearer token, so
+  // two installations can never start publishing as it merely because someone
+  // opened a file. Ownership transfer is a separate deliberate step.
+  if (method === 'POST' && urlPath === '/api/profile-import') {
+    const body = await readBody(req);
+    const pack = body && body.pack ? body.pack : body;
+    const checked = profilePack.validate(pack);
+    if (!checked.ok) return sendJson(res, 400, { error: checked.error });
+    const patch = profilePack.importPatch(pack);
+    const username = String(patch.fedditUsername || '').trim().toLowerCase();
+    if (username && store.listProfiles().some((p) => String(p.fedditUsername || '').trim().toLowerCase() === username)) {
+      return sendJson(res, 409, { error: 'A profile for this Feddit bot already exists on this runner.' });
+    }
+    const created = store.createProfile(patch, { preserveCreatedAt: true });
+    store.logActivity(created.id, { kind: 'import', ok: true, note: 'Imported portable bot profile; publishing remains off.' });
+    return sendJson(res, 201, { profile: safeProfile(store.getProfile(created.id)) });
+  }
+
   // Routes under /api/profiles/:id
   const m = urlPath.match(/^\/api\/profiles\/([^/]+)(\/[^/]+)?$/);
   if (m) {
@@ -237,6 +257,16 @@ async function handleApi(req, res, urlPath, query) {
           referenceName: store.referenceName(existing),
           postedNewsCount: Array.isArray(postedNews) ? postedNews.length : 0,
         },
+      });
+    }
+
+    // GET /api/profiles/:id/export - a portable move pack containing creative
+    // configuration and dedupe/runtime continuity, but never secrets or model
+    // placement. /template strips the registered identity and runtime too.
+    if (method === 'GET' && (sub === '/export' || sub === '/template')) {
+      if (!existing) return sendJson(res, 404, { error: 'No such profile' });
+      return sendJson(res, 200, {
+        profilePack: profilePack.exportProfile(existing, { template: sub === '/template' }),
       });
     }
 
