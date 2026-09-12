@@ -249,7 +249,7 @@ function toast(msg, kind) {
   setTimeout(() => t.remove(), kind === 'err' ? 6000 : 3500);
 }
 
-let state = { profiles: [], selected: null, defaultModel: '', status: null, settings: null, capacity: null, placement: 'desktop', models: null, modelChoice: '', modelPoll: null };
+let state = { profiles: [], selected: null, defaultModel: '', status: null, settings: null, capacity: null, placement: 'desktop', appVersion: '', reloadingForUpdate: false, models: null, modelChoice: '', modelPoll: null };
 
 function applyPlacementChrome() {
   const hosted = state.placement === 'hosted';
@@ -1489,9 +1489,13 @@ function renderSimulationResults(p) {
     const when = entry.at ? esc(entry.at) : 'time unavailable';
     const destination = sim && sim.community ? sim.community : (entry.target || 'destination unavailable');
     const type = entry.kind === 'comment' ? 'Reply' : (entry.kind === 'news' ? 'News link post' : 'Original post');
+    const failed = !!(sim && sim.error) || entry.ok === false;
     const trigger = sim && sim.trigger === 'manual'
       ? '<span class="badge">pressed now</span>'
       : '<span class="badge notoken">scheduled</span>';
+    const outcome = failed
+      ? '<span class="badge" style="color:var(--bad);border-color:var(--bad)">failed - no output</span>'
+      : '<span class="badge" style="color:var(--good);border-color:var(--good)">generated</span>';
     let body = '';
     if (!sim) {
       body = '<div class="hint" style="margin-top:8px">Earlier app versions kept only this shortened summary; complete text was not retained.</div>' +
@@ -1513,8 +1517,9 @@ function renderSimulationResults(p) {
         simulationValue('Body it would publish', sim.body);
     }
     return '<article class="simulation-card"><div class="row" style="justify-content:space-between">' +
-      '<h3>' + esc(type) + ' ' + trigger + '</h3><span class="hint mono">' + when + '</span></div>' +
-      (destination === 'destination unavailable' ? '' : '<div class="hint" style="margin-top:3px">Would publish to <span class="mono">' + esc(destination) + '</span></div>') + body + '</article>';
+      '<h3>' + esc(type) + ' ' + trigger + ' ' + outcome + '</h3><span class="hint mono">' + when + '</span></div>' +
+      (destination === 'destination unavailable' ? '' : '<div class="hint" style="margin-top:3px">' +
+        (failed ? 'Attempted destination: ' : 'Would publish to ') + '<span class="mono">' + esc(destination) + '</span></div>') + body + '</article>';
   }).join('');
 }
 
@@ -2092,6 +2097,7 @@ async function boot() {
   try {
     const runtime = await api('/api/runtime');
     state.placement = runtime.placement || 'desktop';
+    state.appVersion = runtime.appVersion || '';
   } catch {
     state.placement = 'desktop';
   }
@@ -2116,11 +2122,29 @@ async function boot() {
   await enterWorkspace(false);
 }
 
+async function reloadIfAppUpdated() {
+  if (state.reloadingForUpdate) return true;
+  try {
+    const runtime = await api('/api/runtime');
+    const version = runtime.appVersion || '';
+    if (state.appVersion && version && version !== state.appVersion) {
+      state.reloadingForUpdate = true;
+      location.reload();
+      return true;
+    }
+    if (version) state.appVersion = version;
+  } catch {
+    // The runner is briefly unreachable while an update switches versions.
+  }
+  return false;
+}
+
 boot().catch((e) => {
   $('#main').innerHTML = '<div class="empty">Could not open the bot workspace: ' + esc(e.message) + '</div>';
 });
 // Keep status, controls, and the per-profile "next action" reasonably live.
-setInterval(() => {
+setInterval(async () => {
+  if (await reloadIfAppUpdated()) return;
   if (state.placement !== 'hosted' || ownerAccessToken()) {
     loadStatus();
     loadProfiles().catch(() => {});

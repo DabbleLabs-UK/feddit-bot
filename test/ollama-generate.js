@@ -64,6 +64,21 @@ async function run() {
       (error) => error.code === 'EMPTY_RESPONSE' && /reached its reply limit/i.test(error.message),
     );
     assert.equal(ollama.isBusy(), false, 'single-flight gate is released after an empty response');
+
+    assert.ok(ollama.DEFAULT_GENERATION_TIMEOUT_MS >= 10 * 60 * 1000,
+      'the local generation default allows slow CPU models more than two minutes');
+    global.fetch = async (_url, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => {
+        const error = new Error('aborted');
+        error.name = 'AbortError';
+        reject(error);
+      });
+    });
+    await assert.rejects(
+      ollama.generate({ model: 'slow-model', numPredict: 200, timeoutMs: 5 }),
+      (error) => error.code === 'OLLAMA_TIMEOUT' && /did not finish within 5ms/i.test(error.message),
+    );
+    assert.equal(ollama.isBusy(), false, 'single-flight gate is released after a timeout');
   } finally {
     global.fetch = originalFetch;
   }
