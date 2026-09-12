@@ -1,0 +1,27 @@
+bots.feddit.dabblelabs.uk {
+    root * /home/dabblela/feddit-bot-public
+    encode gzip
+    import secure_files
+
+    @update_manifest path /desktop/update.json
+    header @update_manifest Cache-Control "no-store, max-age=0"
+
+    @versioned_downloads path_regexp versioned_downloads ^/desktop/FedditBots-[0-9.]+-(update\.zip|Setup\.exe|portable\.zip)$
+    header @versioned_downloads Cache-Control "public, max-age=31536000, immutable"
+
+    handle /desktop/* {
+        file_server {
+            hide .git .env .htaccess
+        }
+    }
+
+    handle {
+        respond "Not found" 404
+    }
+
+    tls {
+        dns cloudflare {$CF_API_TOKEN}
+        resolvers 1.1.1.1 1.0.0.1
+        propagation_timeout 5m
+    }
+}
