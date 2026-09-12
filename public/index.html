@@ -106,6 +106,7 @@
   .tokline { font-family: ui-monospace, monospace; font-size: 12px; color: var(--dim); }
   .warnbox { background: #3a2e12; border: 1px solid var(--warn); color: #f0d9a0; padding: 9px 11px; border-radius: 6px; font-size: 12.5px; margin-top: 8px; }
   .out { background: #0e1114; border: 1px solid var(--line); border-radius: 6px; padding: 11px 13px; white-space: pre-wrap; min-height: 40px; font-size: 13.5px; }
+  .out.failure { border-color: var(--bad); color: #f3b9b9; }
   .toast { position: fixed; bottom: 18px; right: 18px; background: var(--panel2); border: 1px solid var(--line); padding: 10px 14px; border-radius: 6px; max-width: 380px; box-shadow: 0 4px 18px rgba(0,0,0,.5); }
   .toast.err { border-color: var(--bad); }
   .toast.ok { border-color: var(--good); }
@@ -1831,7 +1832,7 @@ async function testGenerate(id) {
   if (!title) { toast('Enter a sample post title first.', 'err'); return; }
   // Save current form so the persona/model used matches what is on screen.
   try { await api('/api/profiles/' + encodeURIComponent(id), { method: 'PUT', body: collectForm() }); } catch (e) {}
-  btn.disabled = true; out.textContent = 'Starting a preview...'; meta.textContent = '';
+  btn.disabled = true; out.classList.remove('failure'); out.textContent = 'Starting a preview...'; meta.textContent = '';
   try {
     let r = await api('/api/profiles/' + encodeURIComponent(id) + '/test-generate', {
       method: 'POST', body: { title, body: $('#t_body').value },
@@ -1841,7 +1842,10 @@ async function testGenerate(id) {
       out.textContent = 'Your preview is waiting in the interactive queue.';
       r = await waitForHostedJob(r.jobId, out);
     }
-    out.textContent = r.output || '(empty response)';
+    const visibleOutput = String(r.output || '').trim();
+    if (!visibleOutput) throw new Error('The model finished without returning a visible reply. Nothing was generated.');
+    out.classList.remove('failure');
+    out.textContent = visibleOutput;
     const u = r.usage || {};
     const tok = (u.inputTokens != null || u.outputTokens != null)
       ? ' / ' + (u.inputTokens || 0) + ' in + ' + (u.outputTokens || 0) + ' out tokens' : '';
@@ -1850,7 +1854,9 @@ async function testGenerate(id) {
     meta.textContent = (r.ms ? r.ms + 'ms' : '') + tok + money + placement + ' / ' + (r.model || '');
     if (r.provider === 'deepseek') loadStatus(); // refresh spend after a paid test-gen
   } catch (e) {
-    out.textContent = '';
+    out.classList.add('failure');
+    out.textContent = 'Preview failed\n' + e.message;
+    meta.textContent = 'No reply was generated.';
     toast('Generate failed: ' + e.message, 'err');
   } finally { btn.disabled = false; }
 }
@@ -1878,7 +1884,7 @@ async function previewNews(id) {
   const meta = $('#newsPreviewMeta');
   // Save the current form first so the preview uses what's on screen.
   try { await api('/api/profiles/' + encodeURIComponent(id), { method: 'PUT', body: collectForm() }); } catch (e) {}
-  btn.disabled = true; out.textContent = 'Querying GDELT (shared 20s queue; may retry a throttled response for up to ~90s)...'; meta.textContent = '';
+  btn.disabled = true; out.classList.remove('failure'); out.textContent = 'Querying GDELT (shared 20s queue; may retry a throttled response for up to ~90s)...'; meta.textContent = '';
   // Poll the server for live retry progress so the button never looks frozen.
   const poll = setInterval(async () => {
     try {
@@ -1893,7 +1899,13 @@ async function previewNews(id) {
       out.textContent = 'Finding an article, then your preview gets interactive priority on DELL.';
       r = await waitForHostedNewsPreview(id, out);
     }
-    if (!r.ok) { out.textContent = r.error || 'No article chosen.'; return; }
+    if (!r.ok) {
+      out.classList.add('failure');
+      out.textContent = r.error || 'No article chosen.';
+      meta.textContent = 'No post was generated.';
+      return;
+    }
+    out.classList.remove('failure');
     const a = r.article || {};
     out.innerHTML =
       (r.stale ? '<div class="hint" style="margin-bottom:6px">Served from a slightly old cache (GDELT was rate limiting); the headline may not be the very latest.</div>' : '') +
@@ -1908,7 +1920,9 @@ async function previewNews(id) {
       : (r.provider === 'dell' ? 'Feddit hosted, DELL computed (no API cost)' : 'this computer (no API cost)');
     if (r.provider === 'deepseek') loadStatus();
   } catch (e) {
-    out.textContent = '';
+    out.classList.add('failure');
+    out.textContent = 'Preview failed\n' + e.message;
+    meta.textContent = 'No post was generated.';
     toast('Preview failed: ' + e.message, 'err');
   } finally { clearInterval(poll); btn.disabled = false; }
 }

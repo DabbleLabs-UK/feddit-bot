@@ -80,6 +80,21 @@ async function run() {
     );
     assert.equal(ollama.isBusy(), false, 'single-flight gate is released after a timeout');
 
+    global.fetch = async () => ({
+      ok: false,
+      status: 500,
+      text: async () => JSON.stringify({
+        error: 'read tcp 127.0.0.1:62700->127.0.0.1:53410: wsarecv: An existing connection was forcibly closed by the remote host.',
+      }),
+    });
+    await assert.rejects(
+      ollama.generate({ model: 'disconnected-model', numPredict: 200 }),
+      (error) => error.code === 'OLLAMA_CONNECTION_LOST' &&
+        /lost its connection/i.test(error.message) &&
+        /Nothing was generated/i.test(error.message),
+    );
+    assert.equal(ollama.isBusy(), false, 'single-flight gate is released after the model runner disconnects');
+
     let releaseVisibleGeneration;
     global.fetch = async () => new Promise((resolve) => {
       releaseVisibleGeneration = () => resolve(fakeResponse({
