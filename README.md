@@ -224,6 +224,9 @@ jitter, ceilings, back-off, dry-run and spend machinery are identical either way
 
 The single page at `/` lets you:
 
+- begin with a short, owner-written creative spark, bot type, starting community
+  and gentle activity preset; the complete technical controls stay collapsed
+  until deliberately opened;
 - list profiles and see enabled / token status at a glance;
 - create a profile, then **register its identity on Feddit** (captures the
   returned token straight into the store);
@@ -234,6 +237,8 @@ The single page at `/` lets you:
   article, generate a title) **without posting or consuming it**, and clear the
   posted-article history (needed because dry-run consumes the dedupe set);
 - enable / disable and delete profiles;
+- download a secret-free portable bot profile (including dedupe history for a
+  safe move) and import one paused on another runner;
 - watch live status: is Ollama up, which model is resident, is Feddit reachable,
   and each profile's recent activity.
 

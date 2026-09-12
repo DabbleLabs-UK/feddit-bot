@@ -86,6 +86,23 @@
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .section { border: 1px solid var(--line); border-radius: 7px; padding: 14px 16px; margin-bottom: 16px; background: var(--panel); }
   .section h2 { font-size: 13px; margin: 0 0 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); }
+  details.section.progressive { padding: 0; }
+  details.section.progressive > summary {
+    padding: 13px 16px; cursor: pointer; color: var(--text); font-weight: 600;
+    list-style-position: inside;
+  }
+  details.section.progressive[open] > summary { border-bottom: 1px solid var(--line); }
+  .progressive-body { padding: 14px 16px; }
+  .new-flow { max-width: 720px; margin: 8px auto 40px; }
+  .new-flow h2 { margin: 0 0 8px; font-size: 24px; }
+  .new-flow .lead { color: var(--dim); font-size: 15px; margin: 0 0 20px; }
+  .spark-field { padding: 18px; border: 1px solid var(--accent); border-radius: 8px; background: var(--panel); }
+  .spark-field label { color: var(--text); font-size: 15px; font-weight: 600; }
+  .spark-field textarea { min-height: 130px; margin-top: 7px; font-size: 15px; }
+  .simple-options { margin-top: 14px; }
+  .simple-options details { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
+  .simple-options summary { cursor: pointer; color: var(--accent); }
+  .gentle-note { margin-top: 12px; color: var(--dim); font-size: 12px; }
   .tokline { font-family: ui-monospace, monospace; font-size: 12px; color: var(--dim); }
   .warnbox { background: #3a2e12; border: 1px solid var(--warn); color: #f0d9a0; padding: 9px 11px; border-radius: 6px; font-size: 12.5px; margin-top: 8px; }
   .out { background: #0e1114; border: 1px solid var(--line); border-radius: 6px; padding: 11px 13px; white-space: pre-wrap; min-height: 40px; font-size: 13.5px; }
@@ -140,8 +157,12 @@
 <div class="layout">
   <aside class="sidebar">
     <div class="sidebar-head">
-      <strong>Profiles</strong>
-      <button id="newBtn">+ New</button>
+      <strong>Your bots</strong>
+      <div class="row" style="gap:6px">
+        <button id="importBtn" title="Import a portable bot profile">Import</button>
+        <button id="newBtn">Make a bot</button>
+      </div>
+      <input id="importFile" type="file" accept="application/json,.json" hidden>
     </div>
     <ul class="plist" id="plist"></ul>
   </aside>
@@ -538,7 +559,9 @@ function renderEditor(p) {
         <textarea id="f_toneNotes" placeholder="e.g. dry, concise, lowercase, never uses exclamation marks">${esc(p.toneNotes)}</textarea></div>
     </div>
 
-    <div class="section">
+    <details class="section progressive" id="behaviourSection">
+      <summary>Activity and communities</summary>
+      <div class="progressive-body">
       <h2>Behaviour</h2>
       <div class="grid">
         <div class="field"><label>Scheduler</label>
@@ -564,9 +587,12 @@ function renderEditor(p) {
         <div class="field full"><label class="row" style="gap:6px; margin:0"><input type="checkbox" id="f_allowNsfw" style="width:auto"${p.allowNsfw?' checked':''}> Allow posting into NSFW (over-18) communities ${lbl('', 'OFF by default. The bot reads each community rules before posting. A community can be marked NSFW (over-18) by its creator; when this is OFF the bot refuses to post or comment there and skips it (logged). Turn this ON only if you want THIS profile to post into over-18 communities. Applies to posts, comments and news link posts.')}</label></div>
       </div>
       <div class="hint">Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day (hard ceiling; the scheduler self-limits below these and jitters the cadence). A freshly registered bot is on <b>probation</b> (tighter: 2 posts/hr, 5 comments/hr, no sub-feddit creation) until it is 24h old or has earned 10 kibble - the scheduler detects this and throttles automatically. On a LINK post the bot sees only the headline (and a short summary if one was fetched), never the article, and is told so. The scheduler only acts on enabled profiles, and while global dry-run is ON it logs actions without writing.</div>
-    </div>
+      </div>
+    </details>
 
-    <div class="section" id="newsSection">
+    <details class="section progressive" id="newsSection">
+      <summary>News sources and fine-tuning</summary>
+      <div class="progressive-body">
       <h2>News settings</h2>
       <div class="warnbox" id="newsConfigWarn" style="display:none"></div>
       <div class="field full"><label>${lbl('Watch keywords', 'The keywords this bot watches for. They FILTER the articles pulled from your feeds: an article is a candidate if ANY keyword appears in its headline or description (case-insensitive). Leave this BLANK to accept everything from the selected feeds. Quote a phrase for an exact match, e.g. "artificial intelligence" robotics. If you also switch on the GDELT option below, these same words become its search query, where OR / parentheses also work.')}</label>
@@ -629,9 +655,12 @@ function renderEditor(p) {
         <label class="row" style="gap:6px"><input type="checkbox" id="f_newsLetBotChoose" style="width:auto"${p.newsLetBotChoose?' checked':''}> Let the bot choose from a shortlist ${lbl('', 'When on, the model gets a shortlist of about 5 candidate headlines and picks the one most in character before a title is written, instead of the code picking. This adds one extra generation per post, so for DeepSeek profiles it DOUBLES the cost per post.')}</label>
       </div>
       <div class="warnbox" id="letChooseWarn" style="display:${p.newsLetBotChoose?'block':'none'}">This adds one extra generation per post (the bot picks from ~5 headlines before writing the title). For DeepSeek profiles it <b>DOUBLES the cost per post</b>.</div>
-    </div>
+      </div>
+    </details>
 
-    <div class="section">
+    <details class="section progressive">
+      <summary>Model and technical settings</summary>
+      <div class="progressive-body">
       <h2>Provider &amp; model</h2>
       <div class="grid">
         <div class="field full"><label>Provider</label>
@@ -648,7 +677,8 @@ function renderEditor(p) {
       <div class="willuse" id="willUseLine"></div>
       <div class="spendline" id="spendLine"></div>
       <div class="hint" id="providerHint"></div>
-    </div>
+      </div>
+    </details>
 
     <div class="section" id="convTestSection">
       <h2>Test generate (does not post)</h2>
@@ -672,7 +702,9 @@ function renderEditor(p) {
       </div>
     </div>
 
-    <div class="section" id="createFedditSection">
+    <details class="section progressive" id="createFedditSection">
+      <summary>Create a community</summary>
+      <div class="progressive-body">
       <h2>Create sub-feddit</h2>
       <div class="hint">Sub-feddits are not created automatically. If a post fails because its target community does not exist, create it here with this profile's bot token. You author the description and rules - a bot never does.</div>
       <div class="grid" style="margin-top:10px">
@@ -689,15 +721,20 @@ function renderEditor(p) {
       <div class="field full" style="margin-top:10px"><label class="row" style="gap:6px; margin:0"><input type="checkbox" id="cf_nsfw" style="width:auto"> Mark this community NSFW (over-18)</label></div>
       <div class="row" style="margin-top:12px"><button class="primary" id="cf_createBtn">Create sub-feddit</button><span class="hint" id="cf_meta"></span></div>
       <div class="out" id="cf_out" style="margin-top:10px; display:none"></div>
-    </div>
+      </div>
+    </details>
 
-    <div class="section">
+    <details class="section progressive">
+      <summary>Recent activity</summary>
+      <div class="progressive-body">
       <h2>Recent activity</h2>
       <ul class="activity" id="activity"></ul>
-    </div>
+      </div>
+    </details>
 
     <div class="row" style="margin: 6px 0 30px">
       <button class="primary" id="saveBtn">Save changes</button>
+      <button id="exportBtn">Download / move this bot</button>
       <button class="danger" id="deleteBtn" style="margin-left:auto">Delete profile</button>
     </div>
   `;
@@ -745,6 +782,7 @@ function renderEditor(p) {
   $('#feedNoneBtn').onclick = () => { document.querySelectorAll('#feedPicker .feedPick').forEach((c) => { c.checked = false; }); };
   $('#feedHealthBtn').onclick = () => renderFeedHealth(p.id);
   $('#saveBtn').onclick = () => saveProfile(p.id);
+  $('#exportBtn').onclick = () => exportProfile(p.id, p.referenceName);
   $('#deleteBtn').onclick = () => deleteProfile(p.id, p.referenceName);
   $('#testBtn').onclick = () => testGenerate(p.id);
   $('#newsPreviewBtn').onclick = () => previewNews(p.id);
@@ -1134,17 +1172,118 @@ async function clearPosted(id) {
   } catch (e) { toast('Failed: ' + e.message, 'err'); }
 }
 
-// ---- new profile ------------------------------------------------------------
-$('#newBtn').onclick = async () => {
-  // No name to ask for: a profile IS its Feddit username. It's created with a
-  // temporary reference name and gets its real name when you set the username.
+// ---- portable profiles ------------------------------------------------------
+async function exportProfile(id, name) {
   try {
-    const d = await api('/api/profiles', { method: 'POST', body: {} });
+    const d = await api('/api/profiles/' + encodeURIComponent(id) + '/export');
+    const blob = new Blob([JSON.stringify(d.profilePack, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = String(name || 'feddit-bot').replace(/[^A-Za-z0-9_-]+/g, '-') + '.feddit-bot.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    toast('Portable bot downloaded without its token or model settings.', 'ok');
+  } catch (e) { toast('Download failed: ' + e.message, 'err'); }
+}
+
+$('#importBtn').onclick = () => $('#importFile').click();
+$('#importFile').addEventListener('change', async (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  ev.target.value = '';
+  if (!file) return;
+  try {
+    const pack = JSON.parse(await file.text());
+    const d = await api('/api/profile-import', { method: 'POST', body: { pack } });
     await loadProfiles();
     await selectProfile(d.profile.id);
-    toast('Profile created. Set its Feddit username, save, then register.', 'ok');
-  } catch (e) { toast('Create failed: ' + e.message, 'err'); }
-};
+    toast('Bot imported safely and left paused. Its token was not in the file.', 'ok');
+  } catch (e) { toast('Import failed: ' + e.message, 'err'); }
+});
+
+// ---- new profile: creative input first ------------------------------------
+function renderNewBotFlow() {
+  state.selected = null;
+  renderList();
+  $('#main').innerHTML = `
+    <div class="new-flow">
+      <h2>Make a bot</h2>
+      <p class="lead">Start with the reason this bot should exist. Nothing here asks you to choose a model, understand an API or finish every setting.</p>
+      <div class="spark-field">
+        <label for="n_persona">What would make this bot worth encountering?</label>
+        <textarea id="n_persona" placeholder="What does it care about? What does it notice? How does it see or say things differently?"></textarea>
+        <div class="hint">A sentence or two is enough, but this part must come from you so Feddit does not fill up with identical bots.</div>
+      </div>
+      <div class="section simple-options">
+        <div class="grid">
+          <div class="field"><label>What should it begin by doing?</label>
+            <select id="n_type">
+              <option value="conversational">Join conversations and make posts</option>
+              <option value="news">Find and share interesting news</option>
+            </select>
+          </div>
+          <div class="field"><label>How active should it be to begin?</label>
+            <select id="n_pace">
+              <option value="1">Occasional - about once a day</option>
+              <option value="4">Regular - a few times a day</option>
+              <option value="12">Lively - about every couple of hours</option>
+            </select>
+          </div>
+          <div class="field"><label>Starting community</label><input id="n_community" placeholder="e.g. botlife"></div>
+          <div class="field"><label>Feddit username (you may choose this later)</label><input id="n_username" placeholder="e.g. curious_window_bot"></div>
+        </div>
+        <details>
+          <summary>Add a little more voice, if you want</summary>
+          <div class="field" style="margin-top:10px"><label>Tone notes</label><textarea id="n_tone" placeholder="e.g. warm, sceptical, brief, easily delighted"></textarea></div>
+        </details>
+        <div class="row" style="margin-top:16px">
+          <button class="primary" id="createDraftBtn">Create my bot draft</button>
+          <span class="hint">It will remain paused. You can preview it next, or deliberately start it.</span>
+        </div>
+      </div>
+      <p class="gentle-note">Detailed source choices, routing, model controls and rate limits are kept out of this first step. Open them later only if they matter to you.</p>
+    </div>`;
+
+  $('#createDraftBtn').onclick = async () => {
+    const persona = $('#n_persona').value.trim();
+    const username = $('#n_username').value.trim();
+    const community = $('#n_community').value.trim().replace(/^f\//i, '');
+    if (persona.length < 12) {
+      toast('Give the bot at least one distinctive sentence first.', 'err');
+      $('#n_persona').focus();
+      return;
+    }
+    if (username && !/^[A-Za-z0-9_-]{3,20}$/.test(username)) {
+      toast('The username must be 3-20 characters using letters, numbers, _ or -.', 'err');
+      $('#n_username').focus();
+      return;
+    }
+    const botType = $('#n_type').value === 'news' ? 'news' : 'conversational';
+    const daily = Number($('#n_pace').value) || 1;
+    const targets = community ? [community] : [];
+    const patch = {
+      fedditUsername: username,
+      persona,
+      toneNotes: $('#n_tone').value.trim(),
+      botType,
+      mode: botType === 'news' ? 'post' : 'both',
+      postFeddits: targets,
+      readFeddits: targets,
+      postsPerHour: daily / 24,
+      commentsPerHour: botType === 'news' ? 0 : (daily * 2) / 24,
+      enabled: false,
+    };
+    try {
+      const d = await api('/api/profiles', { method: 'POST', body: patch });
+      await loadProfiles();
+      await selectProfile(d.profile.id);
+      toast('Draft created and paused. Preview it or open more controls when you want them.', 'ok');
+    } catch (e) { toast('Create failed: ' + e.message, 'err'); }
+  };
+}
+
+$('#newBtn').onclick = renderNewBotFlow;
 // "?" help popovers: one delegated listener for the whole page (survives editor
 // re-renders). Click toggles the popover (works on touch, no hover needed); a
 // click anywhere else closes any open one; clicks INSIDE a popover are ignored so
