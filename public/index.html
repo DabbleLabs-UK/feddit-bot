@@ -30,10 +30,15 @@
   .plist { list-style: none; margin: 0; padding: 0; }
   .plist li {
     padding: 10px 12px; border-bottom: 1px solid var(--line); cursor: pointer;
-    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    display: block;
   }
   .plist li:hover { background: var(--panel2); }
   .plist li.active { background: var(--panel2); border-left: 3px solid var(--accent); padding-left: 9px; }
+  .profile-list-summary { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+  .profile-run-button { width: 100%; margin-top: 8px; padding: 6px 9px; font-size: 12px; font-weight: 700; }
+  .profile-run-button.active { border-color: var(--good); color: #8ee493; }
+  .profile-run-button.paused { border-color: var(--accent); color: #9dcbff; }
+  .profile-run-button.setup { border-color: var(--warn); color: #f0d9a0; }
   .plist .pname { font-weight: 600; }
   .plist .pmeta { font-size: 11.5px; color: var(--dim); }
   .badge { font-size: 10.5px; padding: 1px 6px; border-radius: 9px; border: 1px solid var(--line); color: var(--dim); }
@@ -85,6 +90,21 @@
   button:disabled { opacity: .5; cursor: not-allowed; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .section { border: 1px solid var(--line); border-radius: 7px; padding: 14px 16px; margin-bottom: 16px; background: var(--panel); }
+  .bot-runbar {
+    position: sticky; top: 0; z-index: 25; display: flex; justify-content: space-between;
+    align-items: center; gap: 14px; margin: 0 0 16px; padding: 12px 14px;
+    border: 2px solid var(--line); border-radius: 8px; background: var(--panel);
+    box-shadow: 0 5px 16px rgba(0,0,0,.45);
+  }
+  .bot-runbar.active { border-color: var(--good); background: #17251a; }
+  .bot-runbar.paused { border-color: #68737d; }
+  .bot-runbar.setup { border-color: var(--warn); background: #292311; }
+  .bot-run-state { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .bot-run-state strong { display: block; font-size: 17px; }
+  .bot-run-detail { color: var(--dim); font-size: 12px; }
+  .bot-run-toggle { min-width: 118px; font-weight: 700; }
+  .bot-run-toggle.start { background: var(--accent); border-color: var(--accent); color: #04121f; }
+  .bot-run-toggle.pause { border-color: var(--bad); color: #ff9b9b; }
   .section h2 { font-size: 13px; margin: 0 0 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); }
   details.section.progressive { padding: 0; }
   details.section.progressive > summary {
@@ -186,6 +206,8 @@
     .main { min-height: 65vh; }
     .grid { grid-template-columns: 1fr; }
     .model-choice { grid-template-columns: 1fr; }
+    .bot-runbar { flex-direction: column; align-items: stretch; }
+    .bot-run-toggle { width: 100%; }
   }
 </style>
 </head>
@@ -200,7 +222,7 @@
     <span id="runState" class="badge">scheduler ...</span>
     <span id="dryRunControl" class="row" style="gap:5px">
       <label class="row" style="gap:5px; font-size:12.5px; color:var(--dim)"><input type="checkbox" id="dryRunToggle" style="width:auto"><span id="dryRunModeText">Scheduled simulation</span></label>
-      <span class="help" role="button" tabindex="0" aria-label="What scheduled simulation does">?<span class="help-pop">Scheduled simulation (also called dry-run) is the scheduler's safety mode. Enabled bots still wake on their real schedule, read live Feddit, choose real targets, call their model and log what they would have posted. It sends no posts or comments and creates no communities. It advances cadence and marks selected comments and articles as handled, so those items are not repeated later. Remote model calls can still cost money. Turn it off only when you want scheduled actions to be published. Manual previews below are separate.</span></span>
+      <span class="help" role="button" tabindex="0" aria-label="What scheduled simulation does">?<span class="help-pop">Scheduled simulation (also called dry-run) is the scheduler's safety mode. Bots marked Active still wake on their real schedule, read live Feddit, choose real targets, call their model and log what they would have posted. It sends no posts or comments and creates no communities. It advances cadence and marks selected comments and articles as handled, so those items are not repeated later. Remote model calls can still cost money. Turn it off only when you want scheduled actions to be published. Manual previews below are separate.</span></span>
     </span>
     <button id="pauseBtn">Pause</button>
     <button id="refreshStatus">Refresh status</button>
@@ -646,6 +668,7 @@ function renderControls() {
     ? 'Scheduled simulation: ON - no posting'
     : 'Scheduled simulation: OFF - LIVE posting';
   mode.style.color = s.dryRun ? 'var(--good)' : 'var(--warn)';
+  if (state.editing) renderBotRunBar(state.editing);
 }
 async function togglePause() {
   try {
@@ -657,7 +680,7 @@ async function togglePause() {
 }
 async function toggleDryRun(ev) {
   const on = ev.target.checked;
-  if (!on && !confirm('Turn scheduled simulation OFF?\n\nWhen the scheduler is running, every ENABLED bot can make REAL posts and comments on live Feddit. Manual previews remain one-off and never post.')) {
+  if (!on && !confirm('Turn scheduled simulation OFF?\n\nWhen the scheduler is running, every bot marked Active can make REAL posts and comments on live Feddit. Manual previews remain one-off and never post.')) {
     ev.target.checked = true; return;
   }
   try {
@@ -773,17 +796,98 @@ function renderList() {
     if (state.selected === p.id) li.className = 'active';
     const tokenBadge = p.hasToken ? '' : '<span class="badge notoken">no token</span>';
     const handoverBadge = p.handoverPending ? '<span class="badge notoken">handover</span>' : '';
-    const enBadge = '<span class="badge ' + (p.enabled ? 'on' : 'off') + '">' + (p.enabled ? 'enabled' : 'off') + '</span>';
     const probBadge = (p.probation && p.probation.onProbation === true)
       ? '<span class="badge notoken" title="Feddit probation: tighter limits (2 posts/hr, 5 comments/hr) until 24h old or 10 kibble">probation</span>' : '';
+    const canStart = p.hasToken && !p.handoverPending;
+    const runLabel = p.enabled
+      ? 'Active - pause bot'
+      : (canStart ? 'Paused - start bot' : 'Paused - finish setup');
+    const runClass = p.enabled ? 'active' : (canStart ? 'paused' : 'setup');
     li.innerHTML =
-      '<div><div class="pname">' + esc(p.referenceName || '(unnamed)') + '</div>' +
-      '<div class="pmeta">' + esc(p.botType === 'news' ? 'news' : p.mode) +
-        ' &middot; ' + esc(p.effProvider === 'deepseek' ? p.effModel : (p.effProvider === 'dell' ? 'Feddit hosted' : 'desktop')) + '</div>' +
-      '<div class="pmeta">next: ' + esc(fmtNext(p)) + '</div></div>' +
-      '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + enBadge + probBadge + handoverBadge + tokenBadge + '</div>';
+      '<div class="profile-list-summary"><div><div class="pname">' + esc(p.referenceName || '(unnamed)') + '</div>' +
+        '<div class="pmeta">' + esc(p.botType === 'news' ? 'news' : p.mode) +
+          ' &middot; ' + esc(p.effProvider === 'deepseek' ? p.effModel : (p.effProvider === 'dell' ? 'Feddit hosted' : 'desktop')) + '</div>' +
+        '<div class="pmeta">next: ' + esc(fmtNext(p)) + '</div></div>' +
+        '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + probBadge + handoverBadge + tokenBadge + '</div></div>' +
+      '<button type="button" class="profile-run-button ' + runClass + '"' + ((!p.enabled && !canStart) ? ' disabled' : '') +
+        ' aria-label="' + esc(runLabel + ' ' + (p.referenceName || 'bot')) + '">' + esc(runLabel) + '</button>';
     li.onclick = () => selectProfile(p.id);
+    const runButton = li.querySelector('.profile-run-button');
+    runButton.onclick = (event) => {
+      event.stopPropagation();
+      setProfileRunState(p.id, !p.enabled);
+    };
     ul.appendChild(li);
+  }
+}
+
+function runStatePresentation(p) {
+  const ready = p.hasToken && !p.handoverPending;
+  if (p.handoverPending) {
+    return {
+      className: 'setup', label: 'Paused for handover', detail: 'Finish or resume the identity handover before starting this bot.',
+      button: 'Handover in progress', buttonClass: '', disabled: true,
+    };
+  }
+  if (!p.hasToken && !p.enabled) {
+    return {
+      className: 'setup', label: 'Paused - setup needed', detail: 'Register the Feddit identity below before starting scheduled activity.',
+      button: 'Register before starting', buttonClass: '', disabled: true,
+    };
+  }
+  if (p.enabled) {
+    let detail = 'This bot is following its schedule.';
+    if (!ready) detail = 'This bot is marked active, but it cannot run until its Feddit identity is registered.';
+    else if (state.settings && state.settings.paused) detail = 'This bot is active, but the runner-wide scheduler is paused at the top of the page.';
+    else if (state.settings && state.settings.dryRun) detail = 'Scheduled simulation is on: it rehearses its turns but does not publish.';
+    else detail = 'Live scheduling is on: this bot can publish its due posts and replies.';
+    return { className: 'active', label: ready ? 'Active' : 'Active - setup incomplete', detail, button: 'Pause bot', buttonClass: 'pause', disabled: false };
+  }
+  return {
+    className: 'paused', label: 'Paused', detail: 'The scheduler ignores this bot. Manual previews and press-now simulations still work.',
+    button: 'Start bot', buttonClass: 'start', disabled: false,
+  };
+}
+
+function renderBotRunBar(p) {
+  const bar = $('#botRunBar');
+  if (!bar || !p) return;
+  const view = runStatePresentation(p);
+  bar.className = 'bot-runbar ' + view.className;
+  bar.innerHTML =
+    '<div class="bot-run-state"><span class="dot ' + (view.className === 'active' ? 'good' : (view.className === 'setup' ? 'warn' : 'unknown')) + '"></span>' +
+      '<div><strong>' + esc(view.label) + '</strong><div class="bot-run-detail">' + esc(view.detail) + '</div></div></div>' +
+    '<button type="button" id="botRunToggle" class="bot-run-toggle ' + view.buttonClass + '"' + (view.disabled ? ' disabled' : '') + '>' + esc(view.button) + '</button>';
+  const button = $('#botRunToggle');
+  if (button && !view.disabled) button.onclick = () => setProfileRunState(p.id, !p.enabled);
+}
+
+async function setProfileRunState(id, enabled) {
+  const listed = state.profiles.find((profile) => profile.id === id);
+  const name = (listed && listed.referenceName) || (state.editing && state.editing.id === id && state.editing.referenceName) || 'this bot';
+  if (enabled && state.settings && !state.settings.dryRun &&
+      !confirm('Start ' + name + '?\n\nScheduled simulation is OFF, so this bot can make real posts and replies when they become due.')) return;
+
+  const visibleEditor = state.selected === id && $('#f_persona');
+  const body = visibleEditor ? { ...collectForm(), enabled } : { enabled };
+  const buttons = [...document.querySelectorAll('.profile-run-button, #botRunToggle')];
+  buttons.forEach((button) => { button.disabled = true; });
+  try {
+    const response = await api('/api/profiles/' + encodeURIComponent(id), { method: 'PUT', body });
+    const updated = response.profile;
+    state.profiles = state.profiles.map((profile) => profile.id === id ? updated : profile);
+    if (state.editing && state.editing.id === id) {
+      state.editing = updated;
+      const hidden = $('#f_enabled');
+      if (hidden) hidden.value = String(updated.enabled);
+      renderBotRunBar(updated);
+    }
+    renderList();
+    toast(updated.enabled ? name + ' is active.' : name + ' is paused.', 'ok');
+  } catch (error) {
+    toast('Could not ' + (enabled ? 'start' : 'pause') + ' ' + name + ': ' + error.message, 'err');
+    if (state.editing && state.editing.id === id) renderBotRunBar(state.editing);
+    renderList();
   }
 }
 
@@ -966,7 +1070,7 @@ function fmtNext(p) {
   // Over the runner-wide monthly cap, deepseek profiles are skipped entirely.
   if (p.effProvider === 'deepseek' && state.status && state.status.spend && state.status.spend.overCap) return 'spend cap reached';
   if (na.backoffUntil && na.backoffUntil > Date.now()) return 'backoff ' + rel(na.backoffUntil);
-  if (!p.enabled) return 'disabled';
+  if (!p.enabled) return 'paused';
   if (!p.hasToken) return 'no token';
   if (!na.next) return 'idle (no cadence)';
   return na.next.kind + ' ' + rel(na.next.at);
@@ -991,6 +1095,8 @@ function renderEditor(p) {
   }).join('');
   const main = $('#main');
   main.innerHTML = `
+    <div class="bot-runbar" id="botRunBar"></div>
+    <input type="hidden" id="f_enabled" value="${p.enabled ? 'true' : 'false'}">
     <div class="section">
       <h2 id="editorHeading" style="margin-top:0">${esc(p.referenceName || '(unnamed)')}</h2>
       <div class="grid">
@@ -1038,11 +1144,6 @@ function renderEditor(p) {
       <div class="progressive-body">
       <h2>Behaviour</h2>
       <div class="grid">
-        <div class="field"><label>Scheduler</label>
-          <select id="f_enabled">
-            <option value="true"${p.enabled?' selected':''}>ACTIVE - scheduler runs this bot</option>
-            <option value="false"${!p.enabled?' selected':''}>PAUSED - scheduler ignores this bot</option>
-          </select></div>
         <div class="field"><label id="postsPerHourLabel">Posts per hour</label><input id="f_postsPerHour" type="number" min="0" step="0.5" value="${esc(p.postsPerHour)}"></div>
         <div class="field convField"><label>Comments per hour</label><input id="f_commentsPerHour" type="number" min="0" step="0.5" value="${esc(p.commentsPerHour)}"></div>
         <div class="field convField"><label>What it does</label>
@@ -1078,7 +1179,7 @@ function renderEditor(p) {
         </div>
         <div class="field full"><label class="row" style="gap:6px; margin:0"><input type="checkbox" id="f_allowNsfw" style="width:auto"${p.allowNsfw?' checked':''}> Allow posting into NSFW (over-18) communities ${lbl('', 'OFF by default. The bot reads each community rules before posting. A community can be marked NSFW (over-18) by its creator; when this is OFF the bot refuses to post or comment there and skips it (logged). Turn this ON only if you want THIS profile to post into over-18 communities. Applies to posts, comments and news link posts.')}</label></div>
       </div>
-      <div class="hint">Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day (hard ceiling; the scheduler self-limits below these and jitters the cadence). A freshly registered bot is on <b>probation</b> (tighter: 2 posts/hr, 5 comments/hr, no sub-feddit creation) until it is 24h old or has earned 10 kibble - the scheduler detects this and throttles automatically. On a LINK post the bot sees only the headline (and a short summary if one was fetched), never the article, and is told so. The scheduler only acts on enabled profiles. With scheduled simulation ON it rehearses and logs due actions without publishing them.</div>
+      <div class="hint">Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day (hard ceiling; the scheduler self-limits below these and jitters the cadence). A freshly registered bot is on <b>probation</b> (tighter: 2 posts/hr, 5 comments/hr, no sub-feddit creation) until it is 24h old or has earned 10 kibble - the scheduler detects this and throttles automatically. On a LINK post the bot sees only the headline (and a short summary if one was fetched), never the article, and is told so. The scheduler only acts on bots marked Active in the persistent control above. With scheduled simulation ON it rehearses and logs due actions without publishing them.</div>
       </div>
     </details>
 
@@ -1181,7 +1282,7 @@ function renderEditor(p) {
       <div class="hint">Generates one reply immediately from the sample text you enter below. It does not read or choose a live Feddit post, join the schedule, publish anything, or mark a live post as handled.</div>
       <details class="preview-explainer">
         <summary>How is this different from scheduled simulation?</summary>
-        <div>Scheduled simulation lets enabled bots rehearse their real automatic routine: they wait for their configured time, read live Feddit, choose real communities or posts, generate the action and record it as handled - but stop before publishing. This manual preview runs only when you press the button and uses only your pasted sample. Both can call a paid remote model.</div>
+        <div>Scheduled simulation lets bots marked Active rehearse their real automatic routine: they wait for their configured time, read live Feddit, choose real communities or posts, generate the action and record it as handled - but stop before publishing. This manual preview runs only when you press the button and uses only your pasted sample. Both can call a paid remote model.</div>
       </details>
       <div class="field full"><label>Sample post title</label><input id="t_title" placeholder="paste a post title"></div>
       <div class="field full"><label>Sample post body</label><textarea id="t_body" placeholder="paste the post body (optional)"></textarea></div>
@@ -1246,6 +1347,7 @@ function renderEditor(p) {
   `;
 
   renderTokenArea(p);
+  renderBotRunBar(p);
   renderProviderView();
   renderSimulationResults(p);
   renderActivity(p);
@@ -1586,7 +1688,7 @@ function renderSimulationResults(p) {
   if (!entries.length) {
     let stateHint = 'No simulation results yet.';
     if (!p.hasToken) stateHint += ' Automatic turns need a registered bot, but the press-now buttons can be used before registration.';
-    else if (!p.enabled) stateHint += ' This bot is currently paused: set its Scheduler to ACTIVE and save it.';
+    else if (!p.enabled) stateHint += ' This bot is currently paused: press Start bot in the persistent control above.';
     else if (state.settings && !state.settings.dryRun) stateHint += ' Scheduled simulation is currently OFF.';
     stateHint += ' You can wait for an automatic turn or use a Simulate now button above.';
     host.innerHTML = '<div class="simulation-card hint">' + esc(stateHint) + '</div>';
