@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Feddit Bot Control Panel</title>
+<title>Feddit bots</title>
 <style>
   :root {
     --bg: #14171a; --panel: #1c2126; --panel2: #232a31; --line: #333c44;
@@ -124,6 +124,11 @@
     padding: 11px 16px; background: #3a1414; border-bottom: 1px solid var(--bad);
     color: #f3b9b9; font-weight: 600; font-size: 13.5px;
   }
+  .capacitybar {
+    padding: 10px 16px; background: #172a3b; border-bottom: 1px solid #315475;
+    color: #c9e4ff; font-size: 12.5px;
+  }
+  .capacitybar b { color: #fff; }
   .willuse { font-size: 12.5px; color: var(--text); margin-top: 6px; }
   .willuse b { color: var(--accent); }
   .spendline { font-size: 12px; color: var(--dim); margin-top: 6px; }
@@ -131,7 +136,7 @@
 </head>
 <body>
 <header>
-  <h1>Feddit Bot Control Panel</h1>
+  <h1>Feddit bots</h1>
   <div class="status" id="status">
     <span><span class="dot unknown"></span>ollama</span>
     <span><span class="dot unknown"></span>feddit</span>
@@ -141,10 +146,12 @@
     <label class="row" style="gap:5px; font-size:12.5px; color:var(--dim)"><input type="checkbox" id="dryRunToggle" style="width:auto"> dry-run</label>
     <button id="pauseBtn">Pause</button>
     <button id="refreshStatus">Refresh status</button>
+    <button id="manageLinkBtn" style="display:none">Private management link</button>
   </div>
 </header>
 
 <div class="capbanner" id="capBanner" style="display:none"></div>
+<div class="capacitybar" id="capacityBar" style="display:none"></div>
 <div class="runnerbar" id="runnerBar">
   <span>DeepSeek key: <b id="dsKeyState">unknown</b></span>
   <button id="setKeyBtn">Set / change key</button>
@@ -174,10 +181,25 @@
 <script>
 'use strict';
 const $ = (s, r = document) => r.querySelector(s);
+const OWNER_STORAGE_KEY = 'fedditBotOwnerAccess';
+let volatileOwnerAccess = '';
+function ownerAccessToken() {
+  try { return localStorage.getItem(OWNER_STORAGE_KEY) || volatileOwnerAccess; } catch { return volatileOwnerAccess; }
+}
+function storeOwnerAccessToken(value) {
+  volatileOwnerAccess = String(value || '');
+  try {
+    if (value) localStorage.setItem(OWNER_STORAGE_KEY, value);
+    else localStorage.removeItem(OWNER_STORAGE_KEY);
+  } catch { /* private storage may be unavailable */ }
+}
 const api = async (path, opts = {}) => {
+  const headers = opts.body ? { 'Content-Type': 'application/json' } : {};
+  const ownerToken = ownerAccessToken();
+  if (ownerToken) headers['X-Feddit-Bot-Owner'] = ownerToken;
   const res = await fetch(path, {
     method: opts.method || 'GET',
-    headers: opts.body ? { 'Content-Type': 'application/json' } : undefined,
+    headers,
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   let data = null;
@@ -193,17 +215,120 @@ function toast(msg, kind) {
   setTimeout(() => t.remove(), kind === 'err' ? 6000 : 3500);
 }
 
-let state = { profiles: [], selected: null, defaultModel: '', status: null, settings: null };
+let state = { profiles: [], selected: null, defaultModel: '', status: null, settings: null, capacity: null, placement: 'desktop' };
+
+function applyPlacementChrome() {
+  const hosted = state.placement === 'hosted';
+  $('#runnerBar').style.display = hosted ? 'none' : '';
+  $('#runState').style.display = hosted ? 'none' : '';
+  $('#dryRunToggle').parentElement.style.display = hosted ? 'none' : '';
+  $('#pauseBtn').style.display = hosted ? 'none' : '';
+  $('#manageLinkBtn').style.display = hosted && ownerAccessToken() ? '' : 'none';
+  $('#newBtn').disabled = hosted && !ownerAccessToken();
+  $('#importBtn').disabled = hosted && !ownerAccessToken();
+}
+
+function takeManagementTokenFromUrl() {
+  const match = String(location.hash || '').match(/^#manage=(.+)$/);
+  if (!match) return;
+  try {
+    storeOwnerAccessToken(decodeURIComponent(match[1]));
+    history.replaceState(null, '', location.pathname + location.search);
+  } catch { /* malformed fragment is ignored */ }
+}
+
+async function copyText(value) {
+  try {
+    await navigator.clipboard.writeText(value);
+    toast('Copied.', 'ok');
+  } catch {
+    prompt('Copy this:', value);
+  }
+}
+
+function managementLink(token) {
+  return location.origin + location.pathname + '#manage=' + encodeURIComponent(token);
+}
+
+function showHostedEntrance() {
+  state.selected = null;
+  $('#plist').innerHTML = '';
+  $('#main').innerHTML = `
+    <div class="new-flow">
+      <h2>Make a Feddit bot</h2>
+      <p class="lead">No account, model or technical setup. Start a private bot workspace, then give the bot one idea of your own.</p>
+      <div class="section">
+        <div class="row">
+          <button class="primary" id="startHostedBtn">Start a private bot workspace</button>
+          <button id="recoverHostedBtn">I have a recovery code</button>
+        </div>
+        <p class="gentle-note">Your private management link identifies you on this browser. Feddit-hosted bots share DELL's queue; desktop bots skip that queue and normally get their turn all but instantly.</p>
+      </div>
+    </div>`;
+  $('#startHostedBtn').onclick = async () => {
+    try {
+      const issued = await api('/api/session', { method: 'POST', body: {} });
+      storeOwnerAccessToken(issued.accessToken);
+      showHostedCredentials(issued);
+    } catch (e) { toast('Could not start: ' + e.message, 'err'); }
+  };
+  $('#recoverHostedBtn').onclick = recoverHostedWorkspace;
+}
+
+function showHostedCredentials(issued) {
+  const link = managementLink(issued.accessToken);
+  $('#main').innerHTML = `
+    <div class="new-flow">
+      <h2>Your private bot workspace is ready</h2>
+      <p class="lead">No account was created. Keep either of these somewhere you can find again.</p>
+      <div class="section">
+        <div class="field">
+          <label>Private management link</label>
+          <div class="out" id="issuedLink">${esc(link)}</div>
+          <button id="copyIssuedLink">Copy management link</button>
+        </div>
+        <div class="field" style="margin-top:14px">
+          <label>Recovery code</label>
+          <div class="out" id="issuedRecovery">${esc(issued.recoveryCode)}</div>
+          <button id="copyIssuedRecovery">Copy recovery code</button>
+        </div>
+        <div class="warnbox">The recovery code is shown only now. Using it later rotates both the private link and the recovery code.</div>
+        <button class="primary" id="continueHostedBtn" style="margin-top:14px">Now make my bot</button>
+      </div>
+    </div>`;
+  $('#copyIssuedLink').onclick = () => copyText(link);
+  $('#copyIssuedRecovery').onclick = () => copyText(issued.recoveryCode);
+  $('#continueHostedBtn').onclick = () => enterWorkspace(true);
+  applyPlacementChrome();
+}
+
+async function recoverHostedWorkspace() {
+  const code = prompt('Enter your recovery code. This rotates the old private link and gives you a replacement code.');
+  if (!code) return;
+  try {
+    const issued = await api('/api/session/recover', { method: 'POST', body: { recoveryCode: code } });
+    storeOwnerAccessToken(issued.accessToken);
+    showHostedCredentials(issued);
+  } catch (e) { toast('Recovery failed: ' + e.message, 'err'); }
+}
+
+async function enterWorkspace(openNewBot) {
+  applyPlacementChrome();
+  await Promise.all([loadStatus(), loadCapacity(), loadProfiles()]);
+  if (openNewBot || !state.profiles.length) renderNewBotFlow();
+}
 
 // ---- status -----------------------------------------------------------------
 async function loadStatus() {
   try {
     const s = await api('/api/status');
     state.status = s;
+    state.placement = s.placement || 'desktop';
     state.defaultModel = s.defaultModel;
     if (s.settings) { state.settings = s.settings; renderControls(); }
     renderStatus(s);
     renderRunnerBar(s);
+    renderCapacity();
   } catch (e) {
     $('#status').innerHTML = '<span style="color:var(--bad)">status error: ' + e.message + '</span>';
   }
@@ -244,6 +369,15 @@ function renderStatus(s) {
   const oll = s.ollama || {};
   const ds = s.deepseek || {};
   const fed = s.feddit || {};
+  if (state.placement === 'hosted') {
+    const cap = state.capacity || {};
+    $('#status').innerHTML =
+      '<span><span class="dot ' + (fed.up ? 'good' : 'bad') + '"></span>feddit ' +
+      (fed.up ? 'reachable' : 'unreachable') + '</span>' +
+      '<span><span class="dot ' + (cap.online ? 'good' : 'warn') + '"></span>hosted generation ' +
+      (cap.online ? 'checking in' : 'not currently checking in') + '</span>';
+    return;
+  }
   const resident = (oll.resident || []).map(r => r.name);
   const residentTxt = resident.length ? resident.join(', ') : '(none resident)';
   const ollDot = oll.up ? 'good' : 'bad';
@@ -341,7 +475,7 @@ function renderList() {
     li.innerHTML =
       '<div><div class="pname">' + esc(p.referenceName || '(unnamed)') + '</div>' +
       '<div class="pmeta">' + esc(p.botType === 'news' ? 'news' : p.mode) +
-        ' &middot; ' + esc(p.effProvider === 'deepseek' ? p.effModel : 'ollama') + '</div>' +
+        ' &middot; ' + esc(p.effProvider === 'deepseek' ? p.effModel : (p.effProvider === 'dell' ? 'Feddit hosted' : 'desktop')) + '</div>' +
       '<div class="pmeta">next: ' + esc(fmtNext(p)) + '</div></div>' +
       '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + enBadge + probBadge + tokenBadge + '</div>';
     li.onclick = () => selectProfile(p.id);
@@ -529,7 +663,9 @@ function fmtNext(p) {
 
 function renderEditor(p) {
   state.editing = p;
-  const providerChoice = p.provider === 'deepseek' ? (p.deepseekModel || 'deepseek-v4-flash') : 'ollama';
+  const providerChoice = p.provider === 'deepseek'
+    ? (p.deepseekModel || 'deepseek-v4-flash')
+    : (p.provider === 'dell' ? 'dell' : 'ollama');
   const main = $('#main');
   main.innerHTML = `
     <div class="section">
@@ -665,7 +801,8 @@ function renderEditor(p) {
       <div class="grid">
         <div class="field full"><label>Provider</label>
           <select id="f_provider">
-            <option value="ollama"${providerChoice==='ollama'?' selected':''}>ollama (local, free, shares Cy model)</option>
+            <option value="dell"${providerChoice==='dell'?' selected':''}>Feddit hosted (easy, shared DELL queue)</option>
+            <option value="ollama"${providerChoice==='ollama'?' selected':''}>This computer (local Ollama)</option>
             <option value="deepseek-v4-flash"${providerChoice==='deepseek-v4-flash'?' selected':''}>DeepSeek V4-Flash (cheap)</option>
             <option value="deepseek-v4-pro"${providerChoice==='deepseek-v4-pro'?' selected':''}>DeepSeek V4-Pro (premium)</option>
           </select></div>
@@ -850,8 +987,9 @@ function renderEditor(p) {
   // line states which provider+model will actually be used.
   function renderProviderView() {
     const choice = $('#f_provider').value;
-    const isDeep = choice !== 'ollama';
-    $('#ollamaModelField').style.display = isDeep ? 'none' : '';
+    const isDeep = choice.startsWith('deepseek-');
+    const isHosted = choice === 'dell';
+    $('#ollamaModelField').style.display = (isDeep || isHosted) ? 'none' : '';
     // The token field means something DIFFERENT per provider. For ollama it is a
     // plain output cap. For a DeepSeek reasoning model it is a TOTAL budget the
     // model spends on hidden reasoning FIRST and the visible answer second, so a
@@ -869,11 +1007,13 @@ function renderEditor(p) {
       if (cur < DEEPSEEK_SAFE_MAX_TOKENS) $('#f_numPredict').value = DEEPSEEK_SAFE_MAX_TOKENS;
     } else {
       numLbl.innerHTML = lbl('num_predict (max tokens)',
-        'Maximum tokens generated. Kept small on purpose so a generation does not hog Cy\'s single ollama slot.');
+        isHosted
+          ? 'Maximum tokens generated by the shared DELL worker. Short outputs make more turns available to everyone.'
+          : 'Maximum tokens generated. Kept small on purpose so a generation does not hog the local Ollama slot.');
     }
 
     const warn = $('#modelWarn');
-    if (!isDeep) {
+    if (!isDeep && !isHosted) {
       const val = $('#f_model').value.trim();
       warn.innerHTML = (val && val !== state.defaultModel)
         ? '<div class="warnbox"><b>Warning:</b> this is not Cy\'s resident model (' + esc(state.defaultModel) +
@@ -884,14 +1024,20 @@ function renderEditor(p) {
       warn.innerHTML = ''; // keep_alive / Cy eviction is irrelevant to a remote call
     }
 
-    const willModel = isDeep ? choice : ($('#f_model').value.trim() || state.defaultModel);
-    const provName = isDeep ? 'DeepSeek' : 'ollama (local)';
+    const willModel = isDeep ? choice : (isHosted ? state.defaultModel : ($('#f_model').value.trim() || state.defaultModel));
+    const provName = isDeep ? 'DeepSeek' : (isHosted ? 'Feddit hosted (DELL computed)' : 'this computer');
     $('#willUseLine').innerHTML = 'Will generate via: <b>' + esc(provName) + '</b> &middot; model <b>' + esc(willModel) + '</b>' +
       (isDeep ? ' &middot; billed per token (shared DeepSeek key)' : ' &middot; free of API cost');
     const hint = $('#providerHint');
-    hint.textContent = isDeep
-      ? 'DeepSeek is a remote call: it does not touch Cy\'s VRAM and is not blocked by the ollama single-flight gate. It costs real money (even in dry-run, since dry-run only skips the Feddit write, not the generation). Set the shared key in the top bar.'
-      : 'Default reuses Cy\'s resident model. Leave it as the default unless you know what you are doing.';
+    if (isHosted) {
+      const cap = state.capacity || {};
+      hint.textContent = ((cap.today && cap.today.text) || 'Feddit-hosted work uses a shared queue.') + ' ' +
+        (cap.desktopAlternative || 'A desktop bot skips the shared queue and normally gets its turn all but instantly.');
+    } else if (isDeep) {
+      hint.textContent = 'DeepSeek is a remote paid call. It costs money even in dry-run because dry-run skips the Feddit write, not the generation. Set the shared key in the top bar.';
+    } else {
+      hint.textContent = 'Runs on this computer with no shared queue. Leave the model on the suggested choice unless you know you want another.';
+    }
   }
 }
 
@@ -899,8 +1045,8 @@ function renderSpendLine(p) {
   const el = $('#spendLine');
   if (!el) return;
   const s = p.spend || {};
-  if ((p.effProvider || 'ollama') === 'ollama') {
-    el.innerHTML = 'Spend: <b>$0.0000</b> (local, no API cost) &middot; ' +
+  if ((p.effProvider || 'ollama') !== 'deepseek') {
+    el.innerHTML = 'Spend: <b>$0.0000</b> (no API cost) &middot; ' +
       (s.monthGens || 0) + ' generations this month';
   } else {
     el.innerHTML = 'Spend: today <b>$' + Number(s.todayUsd || 0).toFixed(4) + '</b> &middot; this month <b>$' +
@@ -1029,7 +1175,7 @@ function renderActivity(p) {
 
 function collectForm() {
   const choice = $('#f_provider').value;
-  const isDeep = choice !== 'ollama';
+  const isDeep = choice.startsWith('deepseek-');
   return {
     fedditUsername: $('#f_fedditUsername').value.trim(),
     botType: $('#f_botType').value === 'news' ? 'news' : 'conversational',
@@ -1043,7 +1189,7 @@ function collectForm() {
     enabled: $('#f_enabled').value === 'true',
     postsPerHour: Number($('#f_postsPerHour').value) || 0,
     commentsPerHour: Number($('#f_commentsPerHour').value) || 0,
-    provider: isDeep ? 'deepseek' : 'ollama',
+    provider: isDeep ? 'deepseek' : (choice === 'dell' ? 'dell' : 'ollama'),
     deepseekModel: isDeep ? choice : ((state.editing && state.editing.deepseekModel) || 'deepseek-v4-flash'),
     model: $('#f_model').value.trim() || state.defaultModel,
     temperature: Number($('#f_temperature').value),
@@ -1102,6 +1248,34 @@ async function deleteProfile(id, name) {
   } catch (e) { toast('Delete failed: ' + e.message, 'err'); }
 }
 
+async function waitForHostedJob(jobId, outputElement) {
+  while (true) {
+    const response = await api('/api/jobs/' + encodeURIComponent(jobId));
+    if (response.capacity) {
+      state.capacity = response.capacity;
+      renderCapacity();
+    }
+    const job = response.job || {};
+    if (job.status === 'completed') {
+      const result = job.result || {};
+      return {
+        output: result.text || '',
+        provider: 'dell',
+        model: result.model || '',
+        ms: result.ms || 0,
+        usage: result.usage || {},
+        costUsd: 0,
+      };
+    }
+    if (job.status === 'failed') throw new Error(job.error || 'Hosted generation failed.');
+    const cap = response.capacity || {};
+    const today = cap.today && cap.today.text ? cap.today.text + ' ' : '';
+    outputElement.textContent = today + 'Your preview is ' +
+      (job.status === 'claimed' ? 'being generated now.' : 'waiting in the interactive queue.');
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+}
+
 async function testGenerate(id) {
   const btn = $('#testBtn');
   const out = $('#testOut');
@@ -1110,17 +1284,23 @@ async function testGenerate(id) {
   if (!title) { toast('Enter a sample post title first.', 'err'); return; }
   // Save current form so the persona/model used matches what is on screen.
   try { await api('/api/profiles/' + encodeURIComponent(id), { method: 'PUT', body: collectForm() }); } catch (e) {}
-  btn.disabled = true; out.textContent = 'Generating (single-flight; waits if ollama is busy)...'; meta.textContent = '';
+  btn.disabled = true; out.textContent = 'Starting a preview...'; meta.textContent = '';
   try {
-    const r = await api('/api/profiles/' + encodeURIComponent(id) + '/test-generate', {
+    let r = await api('/api/profiles/' + encodeURIComponent(id) + '/test-generate', {
       method: 'POST', body: { title, body: $('#t_body').value },
     });
+    if (r.queued) {
+      if (r.capacity) { state.capacity = r.capacity; renderCapacity(); }
+      out.textContent = 'Your preview is waiting in the interactive queue.';
+      r = await waitForHostedJob(r.jobId, out);
+    }
     out.textContent = r.output || '(empty response)';
     const u = r.usage || {};
     const tok = (u.inputTokens != null || u.outputTokens != null)
       ? ' / ' + (u.inputTokens || 0) + ' in + ' + (u.outputTokens || 0) + ' out tokens' : '';
     const money = r.provider === 'deepseek' ? ' / $' + Number(r.costUsd || 0).toFixed(4) : ' / no API cost';
-    meta.textContent = (r.ms ? r.ms + 'ms' : '') + tok + money + ' / ' + (r.model || '');
+    const placement = r.provider === 'dell' ? ' / Feddit hosted, DELL computed' : '';
+    meta.textContent = (r.ms ? r.ms + 'ms' : '') + tok + money + placement + ' / ' + (r.model || '');
     if (r.provider === 'deepseek') loadStatus(); // refresh spend after a paid test-gen
   } catch (e) {
     out.textContent = '';
@@ -1129,6 +1309,22 @@ async function testGenerate(id) {
 }
 
 // ---- news preview / clear posted history ------------------------------------
+async function waitForHostedNewsPreview(id, outputElement) {
+  while (true) {
+    const status = await api('/api/profiles/' + encodeURIComponent(id) + '/preview-status');
+    if (status.capacity) {
+      state.capacity = status.capacity;
+      renderCapacity();
+    }
+    if (status.done) {
+      if (status.error) throw new Error(status.error);
+      return status.result || { ok: false, error: 'The hosted preview returned no result.' };
+    }
+    if (status.message) outputElement.textContent = status.message;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+}
+
 async function previewNews(id) {
   const btn = $('#newsPreviewBtn');
   const out = $('#newsPreviewOut');
@@ -1144,7 +1340,12 @@ async function previewNews(id) {
     } catch (e) { /* transient - keep the last message */ }
   }, 1500);
   try {
-    const r = await api('/api/profiles/' + encodeURIComponent(id) + '/preview-news', { method: 'POST' });
+    let r = await api('/api/profiles/' + encodeURIComponent(id) + '/preview-news', { method: 'POST' });
+    if (r.queued) {
+      if (r.capacity) { state.capacity = r.capacity; renderCapacity(); }
+      out.textContent = 'Finding an article, then your preview gets interactive priority on DELL.';
+      r = await waitForHostedNewsPreview(id, out);
+    }
     if (!r.ok) { out.textContent = r.error || 'No article chosen.'; return; }
     const a = r.article || {};
     out.innerHTML =
@@ -1155,7 +1356,9 @@ async function previewNews(id) {
       '<div style="margin-top:4px"><b>Generated title:</b> ' + esc(r.title || '') + '</div>' +
       '<div style="margin-top:4px"><b>URL:</b> <small class="mono">' + esc(a.url || '') + '</small></div>' +
       (a.socialimage ? '<div style="margin-top:4px"><b>Image:</b> yes</div>' : '<div style="margin-top:4px" class="hint">No GDELT image (Feddit will fetch its own).</div>');
-    meta.textContent = r.provider === 'deepseek' ? ('$' + Number(r.costUsd || 0).toFixed(4) + ' / ' + (r.model || '')) : 'ollama (no API cost)';
+    meta.textContent = r.provider === 'deepseek'
+      ? ('$' + Number(r.costUsd || 0).toFixed(4) + ' / ' + (r.model || ''))
+      : (r.provider === 'dell' ? 'Feddit hosted, DELL computed (no API cost)' : 'this computer (no API cost)');
     if (r.provider === 'deepseek') loadStatus();
   } catch (e) {
     out.textContent = '';
@@ -1188,6 +1391,49 @@ async function exportProfile(id, name) {
   } catch (e) { toast('Download failed: ' + e.message, 'err'); }
 }
 
+async function loadCapacity() {
+  try {
+    const d = await api('/api/capacity');
+    state.capacity = d.capacity || null;
+    renderCapacity();
+    if (state.status) renderStatus(state.status);
+  } catch {
+    state.capacity = null;
+    renderCapacity();
+  }
+}
+
+function renderCapacity() {
+  const bar = $('#capacityBar');
+  if (state.placement !== 'hosted') {
+    bar.style.display = 'none';
+    return;
+  }
+  const cap = state.capacity;
+  bar.style.display = '';
+  if (!cap) {
+    bar.textContent = 'Hosted capacity is not available right now. A desktop bot skips the shared queue.';
+    return;
+  }
+  const today = cap.today || {};
+  const queue = Number(cap.queued || 0);
+  const running = Number(cap.running || 0);
+  const wait = cap.estimatedWaitMs == null
+    ? 'not enough evidence for a wait estimate'
+    : 'rough wait ' + humanDuration(cap.estimatedWaitMs);
+  bar.innerHTML = '<b>Feddit-hosted:</b> ' + esc(today.text || 'Capacity is still being measured.') +
+    ' ' + queue + ' waiting, ' + running + ' running; ' + esc(wait) + '. ' +
+    '<b>' + esc(cap.desktopAlternative || 'A desktop bot skips the shared queue.') + '</b>';
+}
+
+function humanDuration(ms) {
+  const minutes = Math.max(1, Math.round(Number(ms || 0) / 60000));
+  if (minutes < 60) return minutes + ' min';
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return hours + ' hr';
+  return Math.round(hours / 24) + ' days';
+}
+
 $('#importBtn').onclick = () => $('#importFile').click();
 $('#importFile').addEventListener('change', async (ev) => {
   const file = ev.target.files && ev.target.files[0];
@@ -1206,10 +1452,15 @@ $('#importFile').addEventListener('change', async (ev) => {
 function renderNewBotFlow() {
   state.selected = null;
   renderList();
+  const hosted = state.placement === 'hosted';
+  const runNote = hosted
+    ? 'This draft will use Feddit-hosted generation on the shared DELL queue. You can move the same bot to the desktop version later.'
+    : 'This draft will run on this computer with no shared queue. You can move the same bot to Feddit hosting later.';
   $('#main').innerHTML = `
     <div class="new-flow">
       <h2>Make a bot</h2>
       <p class="lead">Start with the reason this bot should exist. Nothing here asks you to choose a model, understand an API or finish every setting.</p>
+      <p class="gentle-note">${esc(runNote)}</p>
       <div class="spark-field">
         <label for="n_persona">What would make this bot worth encountering?</label>
         <textarea id="n_persona" placeholder="What does it care about? What does it notice? How does it see or say things differently?"></textarea>
@@ -1272,6 +1523,7 @@ function renderNewBotFlow() {
       readFeddits: targets,
       postsPerHour: daily / 24,
       commentsPerHour: botType === 'news' ? 0 : (daily * 2) / 24,
+      provider: hosted ? 'dell' : 'ollama',
       enabled: false,
     };
     try {
@@ -1303,6 +1555,10 @@ document.addEventListener('keydown', (ev) => {
 });
 
 $('#refreshStatus').onclick = loadStatus;
+$('#manageLinkBtn').onclick = () => {
+  const token = ownerAccessToken();
+  if (token) copyText(managementLink(token));
+};
 $('#pauseBtn').onclick = togglePause;
 $('#dryRunToggle').onchange = toggleDryRun;
 $('#setKeyBtn').onclick = setDeepseekKey;
@@ -1310,10 +1566,46 @@ $('#clearKeyBtn').onclick = clearDeepseekKey;
 $('#saveCapBtn').onclick = saveCap;
 
 // ---- boot -------------------------------------------------------------------
-loadStatus();
-loadProfiles();
+async function boot() {
+  takeManagementTokenFromUrl();
+  try {
+    const runtime = await api('/api/runtime');
+    state.placement = runtime.placement || 'desktop';
+  } catch {
+    state.placement = 'desktop';
+  }
+  applyPlacementChrome();
+  await loadCapacity();
+
+  if (state.placement === 'hosted') {
+    const token = ownerAccessToken();
+    if (!token) {
+      showHostedEntrance();
+      return;
+    }
+    try {
+      await api('/api/session');
+    } catch {
+      storeOwnerAccessToken('');
+      applyPlacementChrome();
+      showHostedEntrance();
+      return;
+    }
+  }
+  await enterWorkspace(false);
+}
+
+boot().catch((e) => {
+  $('#main').innerHTML = '<div class="empty">Could not open the bot workspace: ' + esc(e.message) + '</div>';
+});
 // Keep status, controls, and the per-profile "next action" reasonably live.
-setInterval(() => { loadStatus(); loadProfiles().catch(() => {}); }, 20000);
+setInterval(() => {
+  if (state.placement !== 'hosted' || ownerAccessToken()) {
+    loadStatus();
+    loadProfiles().catch(() => {});
+  }
+  loadCapacity();
+}, 20000);
 </script>
 </body>
 </html>

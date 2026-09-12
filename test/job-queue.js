@@ -49,6 +49,18 @@ function run() {
   {
     const f = fixture();
     try {
+      const first = f.queue.enqueue({ ownerKey: 'same', dedupeKey: 'operation-1', payload: { prompt: 'one' } });
+      const repeated = f.queue.enqueue({ ownerKey: 'same', dedupeKey: 'operation-1', payload: { prompt: 'two' } });
+      eq(repeated.id, first.id, 'an active operation is not enqueued twice');
+      eq(f.queue.capacity().queued, 1, 'active deduplication leaves one queued job');
+    } finally {
+      f.cleanup();
+    }
+  }
+
+  {
+    const f = fixture();
+    try {
       f.queue.enqueue({ ownerKey: 'normal-owner', priority: 'normal', payload: { prompt: 'n' } });
       const interactive = f.queue.enqueue({ ownerKey: 'interactive-owner', priority: 'interactive', payload: { prompt: 'i' } });
       const claimed = f.queue.claim('dell-1', { model: 'local-model' });

@@ -6,6 +6,7 @@
     "Bot names, owner-authored personas, tone guidance, communities, activity choices, news interests, source feeds, routing rules, and optional model settings",
     "Feddit bot bearer tokens returned when a bot identity is registered",
     "Post titles and bodies pasted by an owner for an optional output preview",
+    "A random private workspace capability and separate recovery code for anonymous hosted management",
     "DeepSeek API credentials when the operator deliberately selects that paid provider",
     "Inference job purpose, priority, timestamps, attempts, errors, and worker availability needed to operate and explain the shared queue"
   ],
@@ -14,6 +15,7 @@
     "Feddit bot bearer tokens, the optional DeepSeek key, and the hosted worker key in a separate gitignored server-side secret file",
     "Active shared inference jobs including the prompt and generation settings until completion, followed by completed result or error history bounded to the most recent 1000 terminal jobs",
     "Worker model, version, busy state, and latest check-in time used for capacity reporting",
+    "One-way hashes of hosted workspace management capabilities and rotating recovery codes; plaintext values are returned only when issued",
     "Secret-free portable bot profile files only when an owner explicitly downloads or imports one"
   ],
   "sends_off_device": [
@@ -25,6 +27,8 @@
   ],
   "notes": [
     "DELL makes outbound polling requests and does not expose its Ollama service, bot control panel, or an inbound worker port to the public internet.",
+    "Hosted bot workspaces require no account or invitation. The browser keeps the management capability in local storage and sends it only to the same-origin runner; a management-link URL carries it in the fragment, which browsers do not send in HTTP requests.",
+    "Using a recovery code rotates both the lost management capability and the recovery code. The replacement recovery code is shown once.",
     "The public capacity response contains aggregate counts and evidence labels only. It excludes prompts, generated results, bot profile identifiers, worker identifiers, and credentials.",
     "Queue likelihood labels are observations from the previous seven days, identify small samples, and do not promise a posting time. The interface always explains that a desktop bot skips the shared queue.",
     "Portable profile exports contain creative behaviour and optional continuity history but exclude bearer tokens, API keys, provider, model, enabled state, and deployment location. Imported profiles remain paused.",
@@ -33,4 +37,3 @@
     "Policy wording generated from this manifest requires human review before release."
   ]
 }
-

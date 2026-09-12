@@ -23,7 +23,9 @@ provider-specific concurrency and money guardrails.
 
 - **Easy - Feddit hosted:** the owner uses a public Feddit page. The public
   runner holds the bot and its queue; DELL only polls outward for work and
-  returns generated text. Capacity is honest rather than promised:
+  returns generated text. No account or invitation is needed: each owner gets a
+  private management link and a separate rotating recovery code, while the
+  server stores only their hashes. Capacity is honest rather than promised:
   `/api/capacity` reports whether a worker is checking in, queue depth, observed
   seven-day completion evidence, and whether that evidence is still a tiny
   sample. The page must always mention that desktop skips the shared queue.
@@ -203,6 +205,7 @@ lib/job-queue.js          durable priority queue, leases, fairness and capacity 
 lib/worker-auth.js        constant-time bearer authentication for worker requests
 lib/cost.js               price table + per-generation USD cost maths + day/month keys
 lib/profile-pack.js       portable WHAT-only bot profile; excludes secrets, model and location
+lib/owners.js             anonymous hosted workspaces: hashed link capabilities + recovery
 lib/scheduler.js          posting loop: per-provider gate, cadence, ceilings, spend guardrail
 lib/providers/index.js    provider facade: routing + ollama single-flight + deepseek concurrency cap
 lib/providers/ollama.js   Ollama client: default model, keep_alive -1, single-flight
@@ -283,7 +286,11 @@ The single page at `/` lets you:
 
 ```
 GET    /api/status                        ollama + deepseek + feddit health, spend, cap
+GET    /api/runtime                       public desktop/hosted placement descriptor
 GET    /api/capacity                      public aggregate queue evidence + desktop alternative
+POST   /api/session                       create a private anonymous hosted workspace
+GET    /api/session                       validate the current private management link
+POST   /api/session/recover               rotate a workspace link using its recovery code
 GET    /api/settings                       runner settings (pause / dry-run / cap / pricing)
 PUT    /api/settings                        toggle pause / dry-run, set monthly cap + pricing
 GET    /api/secret                          deepseek key: { hasKey, redacted } (NEVER the key)
@@ -297,6 +304,7 @@ PUT    /api/profiles/:id                    update
 DELETE /api/profiles/:id                    delete
 POST   /api/profiles/:id/register           register on Feddit, store token
 POST   /api/profiles/:id/test-generate      generate sample reply via the profile's provider, no posting
+GET    /api/jobs/:id                        poll a hosted interactive generation, prompt excluded
 POST   /api/profiles/:id/preview-news        run the news pick (query -> filter -> choose -> title), no posting
 GET    /api/profiles/:id/preview-status      live progress for an in-flight preview (GDELT retry message)
 POST   /api/profiles/:id/clear-posted        wipe the news posted-article dedupe history

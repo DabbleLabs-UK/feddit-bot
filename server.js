@@ -23,6 +23,7 @@ const scheduler = require('./lib/scheduler');
 const profilePack = require('./lib/profile-pack');
 const { createQueue } = require('./lib/job-queue');
 const workerAuth = require('./lib/worker-auth');
+const { createOwnerStore } = require('./lib/owners');
 
 const ollama = providers.ollama; // the ollama provider (status/isBusy/generate)
 
@@ -31,8 +32,15 @@ const PORT = Number.isInteger(requestedPort) && requestedPort > 0 && requestedPo
   ? requestedPort
   : 8770;
 const HOST = String(process.env.FEDDIT_BOT_HOST || '127.0.0.1');
+const requestedPlacement = String(process.env.FEDDIT_BOT_PLACEMENT || 'desktop');
+const PLACEMENT = ['desktop', 'hosted', 'advanced'].includes(requestedPlacement)
+  ? requestedPlacement
+  : 'desktop';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const jobQueue = createQueue({ file: path.join(store.DATA_DIR, 'jobs.json') });
+providers.configureDellQueue(jobQueue);
+const hostedPreviewTasks = new Map();
+const ownerStore = createOwnerStore({ file: path.join(store.DATA_DIR, 'owners.json') });
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -108,7 +116,7 @@ function serveStatic(req, res, urlPath) {
 function safeProfile(p) {
   // Strip the token and the potentially-large dedupe/tracking arrays; surface a
   // count of the news dedupe set so the UI can show it on the clear button.
-  const { token, repliedTo, postedNews, newsDomainDaily, newsDomainDays, ...rest } = p;
+  const { token, ownerId, repliedTo, postedNews, newsDomainDaily, newsDomainDays, ...rest } = p;
   const now = Date.now();
   const spend = store.profileSpend(p, cost.dayKey(now), cost.monthKey(now));
   return {
@@ -123,10 +131,34 @@ function safeProfile(p) {
   };
 }
 
+function safeHostedJob(job) {
+  const result = job && job.result && typeof job.result === 'object' ? job.result : {};
+  return {
+    id: job.id,
+    status: job.status,
+    priority: job.priority,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+    attempts: job.attempts,
+    error: job.status === 'failed' ? job.lastError : null,
+    result: job.status === 'completed' ? {
+      text: String(result.text || ''),
+      model: String(result.model || ''),
+      ms: Number(result.ms) || 0,
+      usage: result.usage && typeof result.usage === 'object' ? result.usage : {},
+    } : null,
+  };
+}
+
 // ---- API routing ------------------------------------------------------------
 
 async function handleApi(req, res, urlPath, query) {
   const method = req.method;
+
+  if (method === 'GET' && urlPath === '/api/runtime') {
+    return sendJson(res, 200, { placement: PLACEMENT, ownerSessionRequired: PLACEMENT === 'hosted' });
+  }
 
   // Public, read-only capacity evidence. This deliberately exposes no prompts,
   // results, profile ids, worker ids, or credentials.
@@ -186,8 +218,65 @@ async function handleApi(req, res, urlPath, query) {
     return sendJson(res, 404, { error: 'Unknown worker route' });
   }
 
+  // Anonymous hosted ownership: a high-entropy management capability plus a
+  // separate rotating recovery code. Only hashes are retained on the server.
+  if (PLACEMENT === 'hosted' && method === 'POST' && urlPath === '/api/session') {
+    const issued = ownerStore.create();
+    return sendJson(res, 201, {
+      accessToken: issued.accessToken,
+      recoveryCode: issued.recoveryCode,
+      managementFragment: '#manage=' + encodeURIComponent(issued.accessToken),
+    });
+  }
+  if (PLACEMENT === 'hosted' && method === 'POST' && urlPath === '/api/session/recover') {
+    const body = await readBody(req);
+    const issued = ownerStore.recover(body.recoveryCode);
+    if (!issued) return sendJson(res, 404, { error: 'That recovery code was not recognised.' });
+    return sendJson(res, 200, {
+      accessToken: issued.accessToken,
+      recoveryCode: issued.recoveryCode,
+      managementFragment: '#manage=' + encodeURIComponent(issued.accessToken),
+    });
+  }
+
+  let requestOwner = null;
+  if (PLACEMENT === 'hosted') {
+    requestOwner = ownerStore.authorise(req.headers['x-feddit-bot-owner']);
+    if (!requestOwner) {
+      return sendJson(res, 401, { error: 'Open your private bot management link, or recover it with your recovery code.' });
+    }
+    if (method === 'GET' && urlPath === '/api/session') {
+      return sendJson(res, 200, { ok: true });
+    }
+  }
+
+  // Poll one capability-addressed preview job after checking that its profile
+  // belongs to the current hosted workspace.
+  const hostedJobRoute = urlPath.match(/^\/api\/jobs\/([^/]+)$/);
+  if (method === 'GET' && hostedJobRoute) {
+    const job = jobQueue.get(decodeURIComponent(hostedJobRoute[1]));
+    if (!job) return sendJson(res, 404, { error: 'No such hosted generation.' });
+    if (requestOwner) {
+      const profile = job.profileId ? store.getProfile(job.profileId) : null;
+      if (!profile || profile.ownerId !== requestOwner.id) {
+        return sendJson(res, 404, { error: 'No such hosted generation.' });
+      }
+    }
+    return sendJson(res, 200, { job: safeHostedJob(job), capacity: jobQueue.capacity() });
+  }
+
   // GET /api/status - health of ollama + deepseek + feddit for the status panel.
   if (method === 'GET' && urlPath === '/api/status') {
+    if (PLACEMENT === 'hosted') {
+      const fed = await feddit.reachable();
+      const settings = store.getSettings();
+      return sendJson(res, 200, {
+        placement: PLACEMENT,
+        feddit: fed,
+        defaultModel: store.DEFAULT_MODEL,
+        settings: { paused: settings.paused, dryRun: settings.dryRun },
+      });
+    }
     const apiKey = secrets.getDeepseekKey();
     const [oll, ds, fed] = await Promise.all([
       ollama.status(),
@@ -213,6 +302,7 @@ async function handleApi(req, res, urlPath, query) {
         overCap: capActive && runner.monthUsd >= cap,
       },
       settings,
+      placement: PLACEMENT,
     });
   }
 
@@ -224,6 +314,9 @@ async function handleApi(req, res, urlPath, query) {
   // PUT /api/settings - toggle global pause / dry-run, set the monthly spend
   // cap and per-model pricing. All honoured live by the scheduler.
   if (method === 'PUT' && urlPath === '/api/settings') {
+    if (PLACEMENT === 'hosted') {
+      return sendJson(res, 403, { error: 'Hosted owners cannot change runner-wide settings.' });
+    }
     const body = await readBody(req);
     const patch = {};
     if (typeof body.paused === 'boolean') patch.paused = body.paused;
@@ -237,11 +330,13 @@ async function handleApi(req, res, urlPath, query) {
 
   // GET /api/secret - deepseek key presence + redacted preview (NEVER the key).
   if (method === 'GET' && urlPath === '/api/secret') {
+    if (PLACEMENT === 'hosted') return sendJson(res, 403, { error: 'Hosted bots do not expose server keys.' });
     return sendJson(res, 200, secrets.publicView());
   }
 
   // PUT /api/secret - set or clear the ONE shared deepseek key. Never echoed back.
   if (method === 'PUT' && urlPath === '/api/secret') {
+    if (PLACEMENT === 'hosted') return sendJson(res, 403, { error: 'Hosted owners cannot change server keys.' });
     const body = await readBody(req);
     if (typeof body.deepseekApiKey !== 'string') {
       return sendJson(res, 400, { error: 'Provide deepseekApiKey (string; empty string clears it).' });
@@ -265,12 +360,21 @@ async function handleApi(req, res, urlPath, query) {
 
   // GET /api/profiles - list (tokens redacted).
   if (method === 'GET' && urlPath === '/api/profiles') {
-    return sendJson(res, 200, { profiles: store.listProfiles().map(safeProfile) });
+    const profiles = store.listProfiles()
+      .filter((profile) => !requestOwner || profile.ownerId === requestOwner.id)
+      .map(safeProfile);
+    return sendJson(res, 200, { profiles });
   }
 
   // POST /api/profiles - create.
   if (method === 'POST' && urlPath === '/api/profiles') {
     const body = await readBody(req);
+    delete body.ownerId;
+    if (requestOwner) {
+      body.ownerId = requestOwner.id;
+      body.provider = 'dell';
+      body.model = store.DEFAULT_MODEL;
+    }
     const p = store.createProfile(body);
     return sendJson(res, 201, { profile: safeProfile(p) });
   }
@@ -285,6 +389,11 @@ async function handleApi(req, res, urlPath, query) {
     const checked = profilePack.validate(pack);
     if (!checked.ok) return sendJson(res, 400, { error: checked.error });
     const patch = profilePack.importPatch(pack);
+    if (requestOwner) {
+      patch.ownerId = requestOwner.id;
+      patch.provider = 'dell';
+      patch.model = store.DEFAULT_MODEL;
+    }
     const username = String(patch.fedditUsername || '').trim().toLowerCase();
     if (username && store.listProfiles().some((p) => String(p.fedditUsername || '').trim().toLowerCase() === username)) {
       return sendJson(res, 409, { error: 'A profile for this Feddit bot already exists on this runner.' });
@@ -299,7 +408,8 @@ async function handleApi(req, res, urlPath, query) {
   if (m) {
     const id = decodeURIComponent(m[1]);
     const sub = m[2]; // e.g. "/register", "/test-generate", or undefined
-    const existing = store.getProfile(id);
+    const found = store.getProfile(id);
+    const existing = requestOwner && found && found.ownerId !== requestOwner.id ? null : found;
 
     // GET /api/profiles/:id - full record for the edit view, but WITHOUT the raw
     // token (the client never reads it - it keys off hasToken) and with the large
@@ -308,7 +418,7 @@ async function handleApi(req, res, urlPath, query) {
     // stale client state.
     if (method === 'GET' && !sub) {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
-      const { token, postedNews, newsDomainDaily, newsDomainDays, ...rest } = existing;
+      const { token, ownerId, postedNews, newsDomainDaily, newsDomainDays, ...rest } = existing;
       return sendJson(res, 200, {
         profile: {
           ...rest,
@@ -333,6 +443,12 @@ async function handleApi(req, res, urlPath, query) {
     if (method === 'PUT' && !sub) {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
       const body = await readBody(req);
+      delete body.ownerId;
+      if (requestOwner) {
+        delete body.token;
+        body.provider = 'dell';
+        body.model = store.DEFAULT_MODEL;
+      }
       // Never let the client blank an existing token by omission; only overwrite
       // token when a non-empty token is explicitly provided.
       if (body.token === '' || body.token == null) delete body.token;
@@ -344,6 +460,7 @@ async function handleApi(req, res, urlPath, query) {
     if (method === 'DELETE' && !sub) {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
       store.deleteProfile(id);
+      hostedPreviewTasks.delete(id);
       return sendJson(res, 200, { ok: true });
     }
 
@@ -392,7 +509,7 @@ async function handleApi(req, res, urlPath, query) {
 
       const model = scheduler.modelOf(existing, store.DEFAULT_MODEL);
       try {
-        const out = await providers.generate({
+        const generation = {
           provider: prov,
           model,
           system: scheduler.buildSystem(existing.persona, existing.toneNotes),
@@ -400,7 +517,21 @@ async function handleApi(req, res, urlPath, query) {
           temperature: Number(existing.temperature) || 0.8,
           numPredict: Number(existing.numPredict) || 200,
           apiKey: prov === 'deepseek' ? secrets.getDeepseekKey() : undefined,
-        });
+          profileId: existing.id,
+          ownerKey: existing.id,
+          priority: 'interactive',
+          kind: 'preview',
+        };
+        if (prov === 'dell') {
+          const job = providers.enqueueDell(generation);
+          return sendJson(res, 202, {
+            queued: true,
+            jobId: job.id,
+            job: safeHostedJob(job),
+            capacity: jobQueue.capacity(),
+          });
+        }
+        const out = await providers.generate(generation);
         // Record spend for deepseek test-gens too (ollama => $0).
         const usd = cost.estimateCost(out.model, out.usage, store.getSettings().pricing);
         store.recordSpend(id, { dayKey: cost.dayKey(Date.now()), usage: out.usage, costUsd: usd });
@@ -428,6 +559,24 @@ async function handleApi(req, res, urlPath, query) {
       if (prov === 'ollama' && ollama.isBusy()) {
         return sendJson(res, 409, { error: 'Ollama is busy with another generation. Try again in a moment.' });
       }
+      if (prov === 'dell') {
+        const prior = hostedPreviewTasks.get(id);
+        if (prior && prior.status === 'running') {
+          return sendJson(res, 202, { queued: true, capacity: jobQueue.capacity() });
+        }
+        const task = { status: 'running', result: null, error: null, startedAt: Date.now() };
+        hostedPreviewTasks.set(id, task);
+        schedulerHandle.previewNews(id).then((result) => {
+          task.status = 'completed';
+          task.result = result;
+          task.finishedAt = Date.now();
+        }).catch((err) => {
+          task.status = 'failed';
+          task.error = err.message;
+          task.finishedAt = Date.now();
+        });
+        return sendJson(res, 202, { queued: true, capacity: jobQueue.capacity() });
+      }
       const out = await schedulerHandle.previewNews(id);
       if (!out || !out.ok) return sendJson(res, 200, { ok: false, error: (out && out.error) || 'No article chosen' });
       return sendJson(res, 200, out);
@@ -438,6 +587,24 @@ async function handleApi(req, res, urlPath, query) {
     // { message } (message null when nothing is running).
     if (method === 'GET' && sub === '/preview-status') {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
+      const hosted = hostedPreviewTasks.get(id);
+      if (hosted) {
+        if (hosted.status === 'completed') {
+          return sendJson(res, 200, { done: true, result: hosted.result, capacity: jobQueue.capacity() });
+        }
+        if (hosted.status === 'failed') {
+          return sendJson(res, 200, { done: true, error: hosted.error, capacity: jobQueue.capacity() });
+        }
+        const activeProgress = schedulerHandle.getPreviewProgress(id);
+        const cap = jobQueue.capacity();
+        return sendJson(res, 200, {
+          done: false,
+          message: activeProgress
+            ? activeProgress.message
+            : ((cap.today && cap.today.text) || 'Waiting for the hosted DELL worker.'),
+          capacity: cap,
+        });
+      }
       const prog = schedulerHandle.getPreviewProgress(id);
       return sendJson(res, 200, { message: prog ? prog.message : null });
     }

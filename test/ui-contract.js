@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 
@@ -14,6 +15,16 @@ assert.match(html, /summary>Model and technical settings</);
 assert.match(html, /Download \/ move this bot/);
 assert.match(html, /\/api\/profiles\/' \+ encodeURIComponent\(id\) \+ '\/export'/);
 assert.match(html, /\/api\/profile-import/);
+assert.match(html, /Start a private bot workspace/);
+assert.match(html, /Private management link/);
+assert.match(html, /recovery code/i);
+assert.match(html, /Feddit hosted \(easy, shared DELL queue\)/);
+assert.match(html, /all but instant/);
+assert.match(html, /\/api\/capacity/);
+assert.match(html, /X-Feddit-Bot-Owner/);
 assert.doesNotMatch(html, /feddit_NEVER_EXPORT_THIS/);
+const script = html.match(/<script>([\s\S]*?)<\/script>/);
+assert.ok(script, 'embedded control-panel script exists');
+assert.doesNotThrow(() => new vm.Script(script[1]), 'embedded control-panel script parses');
 
 console.log('ui-contract: all checks passed');
