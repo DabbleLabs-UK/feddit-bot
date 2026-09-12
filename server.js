@@ -2,15 +2,10 @@
 
 // Feddit bot runner - control-panel server.
 //
-// Runs on the DELL machine, which mounts this share at /v/feddit-bot. Start with:
-//   cd /v/feddit-bot && node server.js
-//
-// Binds 0.0.0.0:8770 so the config UI is reachable from anywhere on the LAN.
-// Serves the static control panel (public/) plus a small JSON API it talks to.
-//
-// The scheduler/posting loop is NOT built yet. The seam for it is marked below
-// (see "SCHEDULER SEAM"): a future ./lib/scheduler module can require store +
-// ollama + feddit and be started here without touching the request handling.
+// The same runner is used in two placements:
+//   - desktop: loopback UI and local Ollama;
+//   - hosted: behind the public Feddit HTTPS proxy, with DELL polling outbound
+//     for queued inference jobs. DELL never exposes a port to the internet.
 
 const http = require('node:http');
 const fs = require('node:fs');
@@ -26,12 +21,18 @@ const gdelt = require('./lib/gdelt');
 const feeds = require('./lib/feeds');
 const scheduler = require('./lib/scheduler');
 const profilePack = require('./lib/profile-pack');
+const { createQueue } = require('./lib/job-queue');
+const workerAuth = require('./lib/worker-auth');
 
 const ollama = providers.ollama; // the ollama provider (status/isBusy/generate)
 
-const PORT = 8770;
-const HOST = '0.0.0.0';
+const requestedPort = Number(process.env.FEDDIT_BOT_PORT || 8770);
+const PORT = Number.isInteger(requestedPort) && requestedPort > 0 && requestedPort <= 65535
+  ? requestedPort
+  : 8770;
+const HOST = String(process.env.FEDDIT_BOT_HOST || '127.0.0.1');
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const jobQueue = createQueue({ file: path.join(store.DATA_DIR, 'jobs.json') });
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -126,6 +127,64 @@ function safeProfile(p) {
 
 async function handleApi(req, res, urlPath, query) {
   const method = req.method;
+
+  // Public, read-only capacity evidence. This deliberately exposes no prompts,
+  // results, profile ids, worker ids, or credentials.
+  if (method === 'GET' && urlPath === '/api/capacity') {
+    return sendJson(res, 200, { capacity: jobQueue.capacity() });
+  }
+
+  // Authenticated outbound worker protocol. These are the only routes DELL
+  // needs. The shared worker key is server-only and is never accepted in a URL.
+  if (urlPath.startsWith('/api/worker/')) {
+    const configuredKey = secrets.getWorkerKey();
+    if (!configuredKey) {
+      return sendJson(res, 503, { error: 'The hosted inference worker is not configured.' });
+    }
+    if (!workerAuth.authorised(req.headers.authorization, configuredKey)) {
+      return sendJson(res, 401, { error: 'Worker authentication failed.' });
+    }
+    if (method !== 'POST') return sendJson(res, 405, { error: 'Method not allowed' });
+
+    const body = await readBody(req);
+    const workerId = String(body.workerId || '').trim();
+    if (!workerId) return sendJson(res, 400, { error: 'workerId is required.' });
+    const details = {
+      model: body.model,
+      busy: body.busy === true,
+      version: body.version,
+    };
+
+    try {
+      if (urlPath === '/api/worker/heartbeat') {
+        jobQueue.heartbeat(workerId, details);
+        return sendJson(res, 200, { ok: true });
+      }
+      if (urlPath === '/api/worker/claim') {
+        const job = jobQueue.claim(workerId, details);
+        return sendJson(res, 200, { job });
+      }
+
+      const jobRoute = urlPath.match(/^\/api\/worker\/jobs\/([^/]+)\/(renew|complete|fail)$/);
+      if (jobRoute) {
+        const jobId = decodeURIComponent(jobRoute[1]);
+        const action = jobRoute[2];
+        if (action === 'renew') {
+          const job = jobQueue.renew(jobId, workerId);
+          return sendJson(res, 200, { ok: true, job });
+        }
+        if (action === 'complete') {
+          const job = jobQueue.complete(jobId, workerId, body.result);
+          return sendJson(res, 200, { ok: true, job });
+        }
+        const job = jobQueue.fail(jobId, workerId, body.error, body.retryable !== false);
+        return sendJson(res, 200, { ok: true, job });
+      }
+    } catch (err) {
+      return sendJson(res, 409, { error: err.message });
+    }
+    return sendJson(res, 404, { error: 'Unknown worker route' });
+  }
 
   // GET /api/status - health of ollama + deepseek + feddit for the status panel.
   if (method === 'GET' && urlPath === '/api/status') {
@@ -519,8 +578,13 @@ server.listen(PORT, HOST, () => {
   console.log('');
   console.log('  Feddit bot control panel is up.');
   console.log('  Local:   http://127.0.0.1:' + PORT + '/');
-  console.log('  LAN:     http://' + lan + ':' + PORT + '/');
+  if (HOST === '0.0.0.0' || HOST === '::') {
+    console.log('  LAN:     http://' + lan + ':' + PORT + '/');
+  } else {
+    console.log('  Bound:   ' + HOST + ' (loopback by default; use an HTTPS reverse proxy for hosted mode)');
+  }
   console.log('  Data:    ' + store.DATA_FILE);
+  console.log('  Queue:   ' + jobQueue.file + ' (worker key ' + (secrets.getWorkerKey() ? 'set' : 'NOT set') + ')');
   console.log('  Ollama:  ' + ollama.OLLAMA_BASE + ' (default model ' + store.DEFAULT_MODEL + ', keep_alive -1)');
   console.log('  DeepSeek:' + providers.deepseek.DEEPSEEK_BASE + ' (key ' + (secrets.getDeepseekKey() ? 'set' : 'NOT set') + ', concurrency cap ' + providers.DEEPSEEK_MAX_CONCURRENT + ')');
   console.log('  Feddit:  ' + feddit.BASE);

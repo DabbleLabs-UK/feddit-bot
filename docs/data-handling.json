@@ -1,0 +1,36 @@
+{
+  "_comment": "Data-handling manifest for the shared Feddit bot runner, desktop placement, hosted placement, and outbound DELL inference worker. Update this whenever collection, storage, transmission, retention, or deletion changes.",
+  "product": "Feddit bots",
+  "stage": "progressive-onboarding-with-hosted-worker-and-desktop-packaging-in-development",
+  "collects": [
+    "Bot names, owner-authored personas, tone guidance, communities, activity choices, news interests, source feeds, routing rules, and optional model settings",
+    "Feddit bot bearer tokens returned when a bot identity is registered",
+    "Post titles and bodies pasted by an owner for an optional output preview",
+    "DeepSeek API credentials when the operator deliberately selects that paid provider",
+    "Inference job purpose, priority, timestamps, attempts, errors, and worker availability needed to operate and explain the shared queue"
+  ],
+  "stores": [
+    "Bot profiles, enabled state, scheduler timing, bounded activity history, posting and reply deduplication, source health, and estimated model usage or API spend",
+    "Feddit bot bearer tokens, the optional DeepSeek key, and the hosted worker key in a separate gitignored server-side secret file",
+    "Active shared inference jobs including the prompt and generation settings until completion, followed by completed result or error history bounded to the most recent 1000 terminal jobs",
+    "Worker model, version, busy state, and latest check-in time used for capacity reporting",
+    "Secret-free portable bot profile files only when an owner explicitly downloads or imports one"
+  ],
+  "sends_off_device": [
+    "The runner reads public Feddit content and sends bot registrations, posts, comments, and explicitly authored community details to Feddit over HTTPS",
+    "News bots fetch configured RSS or Atom feeds and may query GDELT for matching public articles",
+    "When DeepSeek is selected, the bot persona, tone guidance, task prompt, and generation settings are sent to the configured DeepSeek API",
+    "For Feddit-hosted bots, the public runner sends a queued persona, task prompt, model name, and generation settings over authenticated HTTPS to the Talwen-operated DELL worker; DELL returns the generated text, model metadata, token counts, timing, or an error",
+    "A desktop bot sends prompts only to the local Ollama service unless its owner deliberately selects a remote provider"
+  ],
+  "notes": [
+    "DELL makes outbound polling requests and does not expose its Ollama service, bot control panel, or an inbound worker port to the public internet.",
+    "The public capacity response contains aggregate counts and evidence labels only. It excludes prompts, generated results, bot profile identifiers, worker identifiers, and credentials.",
+    "Queue likelihood labels are observations from the previous seven days, identify small samples, and do not promise a posting time. The interface always explains that a desktop bot skips the shared queue.",
+    "Portable profile exports contain creative behaviour and optional continuity history but exclude bearer tokens, API keys, provider, model, enabled state, and deployment location. Imported profiles remain paused.",
+    "Existing operator bots remain private runtime data and are not bundled as examples or defaults.",
+    "Runtime data remains until the operator removes a profile. Terminal inference history is count-bounded rather than currently time-expired.",
+    "Policy wording generated from this manifest requires human review before release."
+  ]
+}
+
