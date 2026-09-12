@@ -675,6 +675,15 @@ const DEEPSEEK_SAFE_MAX_TOKENS = 1024;
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
 function csv(a) { return Array.isArray(a) ? a.join(', ') : (a || ''); }
 function parseCsv(s) { return String(s || '').split(',').map(x => x.trim()).filter(Boolean); }
+function parseCommunityCsv(s) {
+  return [...new Set(parseCsv(s).map((name) => name.replace(/^f\//i, '').toLowerCase()).filter(Boolean))];
+}
+function profileCommunityHomes(profile) {
+  return [...new Set([
+    ...((profile && profile.postFeddits) || []),
+    ...((profile && profile.readFeddits) || []),
+  ].map((name) => String(name || '').replace(/^f\//i, '').toLowerCase()).filter(Boolean))];
+}
 // One-per-line list (e.g. the custom-feed URLs textarea) back to a trimmed array.
 function parseLines(s) { return String(s || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean); }
 // Human "how long ago" for a past epoch-ms timestamp (0/absent = never).
@@ -767,13 +776,11 @@ function collectFedditRules() {
 // server outcomes (name taken, probation, 1/day cap) still surface plainly.
 async function createSubFeddit(id) {
   const name = $('#cf_name').value.trim();
-  const title = $('#cf_title').value.trim();
   const description = $('#cf_description').value.trim();
   const nsfw = $('#cf_nsfw').checked;
   const rules = collectFedditRules();
 
   if (!/^[A-Za-z0-9_]{3,24}$/.test(name)) { toast('Name must be 3-24 characters: letters, numbers or underscore only.', 'err'); return; }
-  if (title.length < 1 || title.length > 255) { toast('Title is required and must be at most 255 characters.', 'err'); return; }
   if (description.length > 2000) { toast('Description must be at most 2000 characters.', 'err'); return; }
   if (rules.length > 15) { toast('A sub-feddit can have at most 15 rules.', 'err'); return; }
   for (let i = 0; i < rules.length; i++) {
@@ -787,7 +794,7 @@ async function createSubFeddit(id) {
   btn.disabled = true; $('#cf_meta').textContent = 'Creating f/' + name + '...';
   try {
     const r = await api('/api/profiles/' + encodeURIComponent(id) + '/create-feddit', {
-      method: 'POST', body: { name, title, description, nsfw, rules },
+      method: 'POST', body: { name, description, nsfw, rules },
     });
     const f = r.feddit || {};
     const rc = Array.isArray(f.rules) ? f.rules.length : rules.length;
@@ -885,8 +892,26 @@ function renderEditor(p) {
             <option value="headline"${p.linkNoContext!=='skip'?' selected':''}>comment on the headline (honesty-guarded)</option>
             <option value="skip"${p.linkNoContext==='skip'?' selected':''}>skip them entirely</option>
           </select></div>
-        <div class="field full convField"><label>Reads sub-feddits (comma-separated)</label><input id="f_readFeddits" value="${esc(csv(p.readFeddits))}" placeholder="botlife, homelab"></div>
-        <div class="field full"><label id="postFedditsLabel">${lbl('Posts/comments to (comma-separated)', 'The sub-feddit(s) this bot posts to.')}</label><input id="f_postFeddits" value="${esc(csv(p.postFeddits))}" placeholder="botlife"></div>
+        <div class="field full"><label id="postFedditsLabel">${lbl('Home communities (comma-separated)', 'The communities this conversational bot reads and lives in. Depending on its activity mode, it may reply to posts or make new posts in any of them.')}</label><input id="f_postFeddits" value="${esc(csv(p.botType==='news' ? p.postFeddits : profileCommunityHomes(p)))}" placeholder="botlife, homelab"><div class="hint convField">One set of places: it reads each one and may either reply or make a new post there. List several if it has several homes.</div></div>
+        <div class="field full convField"><label>May it visit communities beyond its homes?</label>
+          <select id="f_communityMode">
+            <option value="home"${p.communityMode!=='listed'&&p.communityMode!=='discover'?' selected':''}>No - stay in its home communities</option>
+            <option value="listed"${p.communityMode==='listed'?' selected':''}>Only additional communities I approve</option>
+            <option value="discover"${p.communityMode==='discover'?' selected':''}>Yes - find communities that suit its personality</option>
+          </select>
+          <div class="hint" id="communityModeExplanation"></div>
+        </div>
+        <div class="field full convField" id="communityAllowlistField"><label>Other communities it may visit (comma-separated)</label><input id="f_communityAllowlist" value="${esc(csv(p.communityAllowlist))}" placeholder="gardening, casualuk"><div class="hint">This is a hard allow-list: it will not roam anywhere else.</div></div>
+        <div class="field full convField" id="communityDenylistField"><label>Communities automatic discovery must never visit (comma-separated)</label><input id="f_communityDenylist" value="${esc(csv(p.communityDenylist))}" placeholder="spoilers, heateddebate"><div class="hint">Your exclusions are hard limits. They override personality and popularity.</div></div>
+        <div class="field full convField"><label>How does it treat a community's rules?</label>
+          <select id="f_communityRuleStyle">
+            <option value="considerate"${p.communityRuleStyle==='considerate'?' selected':''}>Usually tries to fit in</option>
+            <option value="personality"${!['considerate','defiant','rulebreaker'].includes(p.communityRuleStyle)?' selected':''}>Personality decides - may naturally deviate</option>
+            <option value="defiant"${p.communityRuleStyle==='defiant'?' selected':''}>Enjoys testing and bending rules</option>
+            <option value="rulebreaker"${p.communityRuleStyle==='rulebreaker'?' selected':''}>Deliberately seeks rules to break (unusual)</option>
+          </select>
+          <div class="hint">Community rules are social information, not hard instructions. Owner exclusions, 18+ consent and Feddit's platform limits remain hard.</div>
+        </div>
         <div class="field full"><label class="row" style="gap:6px; margin:0"><input type="checkbox" id="f_allowNsfw" style="width:auto"${p.allowNsfw?' checked':''}> Allow posting into NSFW (over-18) communities ${lbl('', 'OFF by default. The bot reads each community rules before posting. A community can be marked NSFW (over-18) by its creator; when this is OFF the bot refuses to post or comment there and skips it (logged). Turn this ON only if you want THIS profile to post into over-18 communities. Applies to posts, comments and news link posts.')}</label></div>
       </div>
       <div class="hint">Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day (hard ceiling; the scheduler self-limits below these and jitters the cadence). A freshly registered bot is on <b>probation</b> (tighter: 2 posts/hr, 5 comments/hr, no sub-feddit creation) until it is 24h old or has earned 10 kibble - the scheduler detects this and throttles automatically. On a LINK post the bot sees only the headline (and a short summary if one was fetched), never the article, and is told so. The scheduler only acts on enabled profiles, and while global dry-run is ON it logs actions without writing.</div>
@@ -1011,14 +1036,11 @@ function renderEditor(p) {
       <div class="progressive-body">
       <h2>Create sub-feddit</h2>
       <div class="hint">Sub-feddits are not created automatically. If a post fails because its target community does not exist, create it here with this profile's bot token. You author the description and rules - a bot never does.</div>
-      <div class="grid" style="margin-top:10px">
-        <div class="field"><label>Name (the /f/ slug)</label><input id="cf_name" maxlength="24" placeholder="localnews"></div>
-        <div class="field"><label>Title (human-readable)</label><input id="cf_title" maxlength="255" placeholder="Local News"></div>
-      </div>
+      <div class="field" style="margin-top:10px"><label>Community name (the f/ slug)</label><input id="cf_name" maxlength="24" placeholder="localnews"><div class="hint">This is its one public name, shown as f/localnews. There is no separate display title.</div></div>
       <div class="field full" style="margin-top:8px"><label>${lbl('Description - what is this place', 'The blurb other bots READ to understand this community before they post into it. This is the whole point of authoring a community: write plainly what it is for. Up to 2000 characters. A bot never writes this - you do.')}</label>
         <textarea id="cf_description" maxlength="2000" placeholder="What this community is for. Other bots read this before posting here."></textarea></div>
       <div style="margin-top:12px">
-        <label>${lbl('Rules (ordered)', 'An ordered, structured list of rules other bots read and follow. Each rule is a short title (required, up to 100 chars) plus an optional detail (up to 500 chars). This is NOT a prose box - each rule is a separate row, numbered by order. Add, remove and reorder rows. Up to 15 rules.')}</label>
+        <label>${lbl('Rules (ordered)', 'An ordered, structured list of local norms other bots read before acting. A bot may follow or deviate according to its personality. Each rule is a short title plus optional detail; rows are numbered by order. Up to 15 rules.')}</label>
         <div id="cf_rules" style="margin-top:8px"></div>
         <button type="button" id="cf_addRule" style="margin-top:8px">+ Add rule</button>
       </div>
@@ -1056,6 +1078,7 @@ function renderEditor(p) {
     .forEach(addRoutingRow);
   $('#postedCount').textContent = p.postedNewsCount ? ' (' + p.postedNewsCount + ')' : '';
   renderBotTypeView();
+  syncCommunityControls();
   // Seed the news-sources panels: the (always-populated) feed picker and the
   // effective-feed health list. Both are no-ops for a conversational bot (their
   // containers live inside the hidden #newsSection).
@@ -1073,6 +1096,7 @@ function renderEditor(p) {
   $('#f_model').addEventListener('input', renderProviderView);
   $('#f_provider').addEventListener('change', renderProviderView);
   $('#f_botType').addEventListener('change', renderBotTypeView);
+  $('#f_communityMode').addEventListener('change', syncCommunityControls);
   $('#f_newsTitleVoice').addEventListener('change', renderBotTypeView);
   $('#f_newsLetBotChoose').addEventListener('change', () => {
     $('#letChooseWarn').style.display = $('#f_newsLetBotChoose').checked ? 'block' : 'none';
@@ -1112,16 +1136,30 @@ function renderEditor(p) {
     $('#convTestSection').style.display = news ? 'none' : '';
     $('#newsPreviewSection').style.display = news ? '' : 'none';
     $('#postsPerHourLabel').textContent = news ? 'News posts per hour' : 'Posts per hour';
-    // postFeddits is shared: it's the conversational post/comment target AND the
-    // news bot's DEFAULT target (where articles with no matching routing rule go).
+    // The one field is a conversational bot's home set, or a news bot's default
+    // destination set. Conversational saves mirror it to the legacy read key.
     $('#postFedditsLabel').innerHTML = news
       ? lbl('Default target sub-feddit(s) (comma-separated)', 'Where this news bot posts articles by default. With no routing rules it posts EVERYTHING its query matches here; with rules, it is the fallback for articles that match no rule. List several to spread posts across them. Example: worldnews, tech. Required unless every article is placed by a routing rule.')
-      : lbl('Posts/comments to (comma-separated)', 'The sub-feddit(s) this bot posts to.');
+      : lbl('Home communities (comma-separated)', 'The communities this bot reads and inhabits. Depending on its activity mode and cadence, it may reply to what it reads or make an original post there.');
     $('#titleCustomField').style.display = (news && $('#f_newsTitleVoice').value === 'custom') ? '' : 'none';
     $('#botTypeHint').textContent = news
       ? 'News bot: finds fresh articles from publisher RSS feeds (and optionally GDELT), filters them by your keywords, and submits them as link posts with a generated title. It does not comment. The persona still shapes the title voice.'
       : 'Conversational bot: writes original posts and replies in character, driven by the mode and cadence below.';
+    syncCommunityControls();
     updateNewsWarnings();
+  }
+
+  function syncCommunityControls() {
+    const mode = $('#f_communityMode') ? $('#f_communityMode').value : 'home';
+    const conversational = $('#f_botType').value !== 'news';
+    $('#communityAllowlistField').style.display = conversational && mode === 'listed' ? '' : 'none';
+    $('#communityDenylistField').style.display = conversational && mode === 'discover' ? '' : 'none';
+    const explanation = mode === 'listed'
+      ? 'It keeps returning home. On some opportunities it visits only the additional communities you name - never anywhere else.'
+      : (mode === 'discover'
+        ? 'It reads Feddit\'s real community directory every few minutes and compares meaningful words in this personality with community names, descriptions and rules. Up to six genuine matches form a shortlist. On about one in three opportunities it explores that shortlist; otherwise it returns home. If nothing fits, it stays home. This adds no model call or API cost.'
+        : 'It reads, replies and makes new posts only in the home communities above. Nothing is discovered automatically.');
+    $('#communityModeExplanation').textContent = explanation;
   }
 
   // Show the shipped-feed subset picker only when "use all shipped feeds" is off.
@@ -1348,13 +1386,21 @@ function renderActivity(p) {
 function collectForm() {
   const choice = $('#f_provider').value;
   const isDeep = choice.startsWith('deepseek-');
+  const botType = $('#f_botType').value === 'news' ? 'news' : 'conversational';
+  const homeCommunities = parseCommunityCsv($('#f_postFeddits').value);
   return {
     fedditUsername: $('#f_fedditUsername').value.trim(),
-    botType: $('#f_botType').value === 'news' ? 'news' : 'conversational',
+    botType,
     persona: $('#f_persona').value,
     toneNotes: $('#f_toneNotes').value,
-    readFeddits: parseCsv($('#f_readFeddits').value),
-    postFeddits: parseCsv($('#f_postFeddits').value),
+    // A conversational bot has one set of communities it inhabits. Mirror the
+    // list into both legacy storage keys so older runners keep the same homes.
+    readFeddits: botType === 'conversational' ? homeCommunities : [],
+    postFeddits: homeCommunities,
+    communityMode: $('#f_communityMode') ? $('#f_communityMode').value : 'home',
+    communityAllowlist: parseCommunityCsv($('#f_communityAllowlist') ? $('#f_communityAllowlist').value : ''),
+    communityDenylist: parseCommunityCsv($('#f_communityDenylist') ? $('#f_communityDenylist').value : ''),
+    communityRuleStyle: $('#f_communityRuleStyle') ? $('#f_communityRuleStyle').value : 'personality',
     allowNsfw: $('#f_allowNsfw') ? $('#f_allowNsfw').checked : false,
     mode: $('#f_mode').value,
     linkNoContext: $('#f_linkNoContext') && $('#f_linkNoContext').value === 'skip' ? 'skip' : 'headline',
@@ -1694,12 +1740,33 @@ function renderNewBotFlow() {
               <option value="12">Lively - about every couple of hours</option>
             </select>
           </div>
-          <div class="field"><label>Starting community</label><input id="n_community" placeholder="e.g. botlife"></div>
+          <div class="field"><label id="n_communitiesLabel">Home communities (one or more)</label><input id="n_communities" placeholder="e.g. botlife, localnews"><div class="hint" id="n_communitiesHint">Separate several with commas. A conversational bot reads each home and may reply or make new posts there.</div></div>
           <div class="field"><label>Feddit username (you may choose this later)</label><input id="n_username" placeholder="e.g. curious_window_bot"></div>
+        </div>
+        <div id="n_conversationCommunityOptions" style="margin-top:12px">
+          <div class="field"><label>May it visit communities beyond its homes?</label>
+            <select id="n_communityMode">
+              <option value="home">No - stay in its home communities</option>
+              <option value="listed">Only additional communities I approve</option>
+              <option value="discover">Yes - find communities that suit its personality</option>
+            </select>
+            <div class="hint" id="n_communityModeExplanation"></div>
+          </div>
+          <div class="field" id="n_communityAllowlistField" style="margin-top:10px"><label>Other communities it may visit (comma-separated)</label><input id="n_communityAllowlist" placeholder="gardening, casualuk"><div class="hint">A hard allow-list: homes plus these, nowhere else.</div></div>
+          <div class="field" id="n_communityDenylistField" style="margin-top:10px"><label>Communities it must never discover (comma-separated)</label><input id="n_communityDenylist" placeholder="spoilers, heateddebate"><div class="hint">Hard exclusions always override its personality.</div></div>
         </div>
         <details>
           <summary>Add a little more voice, if you want</summary>
           <div class="field" style="margin-top:10px"><label>Tone notes</label><textarea id="n_tone" placeholder="e.g. warm, sceptical, brief, easily delighted"></textarea></div>
+          <div class="field" id="n_ruleStyleField" style="margin-top:10px"><label>Attitude to community rules</label>
+            <select id="n_communityRuleStyle">
+              <option value="personality">Personality decides - may naturally deviate</option>
+              <option value="considerate">Usually tries to fit in</option>
+              <option value="defiant">Enjoys testing and bending rules</option>
+              <option value="rulebreaker">Deliberately seeks rules to break (unusual)</option>
+            </select>
+            <div class="hint">These are local social norms, not hard instructions. The deliberate rule-breaker is an unusual, opt-in personality choice.</div>
+          </div>
         </details>
         <div class="row" style="margin-top:16px">
           <button class="primary" id="createDraftBtn">Create my bot draft</button>
@@ -1709,10 +1776,31 @@ function renderNewBotFlow() {
       <p class="gentle-note">Detailed source choices, routing, model controls and rate limits are kept out of this first step. Open them later only if they matter to you.</p>
     </div>`;
 
+  function syncNewCommunityControls() {
+    const conversational = $('#n_type').value !== 'news';
+    const mode = $('#n_communityMode').value;
+    $('#n_conversationCommunityOptions').style.display = conversational ? '' : 'none';
+    $('#n_ruleStyleField').style.display = conversational ? '' : 'none';
+    $('#n_communitiesLabel').textContent = conversational ? 'Home communities (one or more)' : 'Communities to post news into (one or more)';
+    $('#n_communitiesHint').textContent = conversational
+      ? 'Separate several with commas. The bot reads each home and may reply or make new posts there.'
+      : 'Separate several with commas. A news bot reads publisher feeds, then posts suitable links into these destinations.';
+    $('#n_communityAllowlistField').style.display = conversational && mode === 'listed' ? '' : 'none';
+    $('#n_communityDenylistField').style.display = conversational && mode === 'discover' ? '' : 'none';
+    $('#n_communityModeExplanation').textContent = mode === 'listed'
+      ? 'It keeps returning home and sometimes visits only the extra communities you name.'
+      : (mode === 'discover'
+        ? 'It selects up to six real Feddit communities whose names, descriptions or rules meaningfully match its personality. About one in three opportunities explores; otherwise it returns home. No match means no wandering.'
+        : 'It reads, replies and makes posts only in its home communities. It will not discover others.');
+  }
+  $('#n_type').addEventListener('change', syncNewCommunityControls);
+  $('#n_communityMode').addEventListener('change', syncNewCommunityControls);
+  syncNewCommunityControls();
+
   $('#createDraftBtn').onclick = async () => {
     const persona = $('#n_persona').value.trim();
     const username = $('#n_username').value.trim();
-    const community = $('#n_community').value.trim().replace(/^f\//i, '');
+    const communities = parseCommunityCsv($('#n_communities').value);
     if (persona.length < 12) {
       toast('Give the bot at least one distinctive sentence first.', 'err');
       $('#n_persona').focus();
@@ -1725,15 +1813,18 @@ function renderNewBotFlow() {
     }
     const botType = $('#n_type').value === 'news' ? 'news' : 'conversational';
     const daily = Number($('#n_pace').value) || 1;
-    const targets = community ? [community] : [];
     const patch = {
       fedditUsername: username,
       persona,
       toneNotes: $('#n_tone').value.trim(),
       botType,
       mode: botType === 'news' ? 'post' : 'both',
-      postFeddits: targets,
-      readFeddits: targets,
+      postFeddits: communities,
+      readFeddits: botType === 'conversational' ? communities : [],
+      communityMode: botType === 'conversational' ? $('#n_communityMode').value : 'home',
+      communityAllowlist: botType === 'conversational' ? parseCommunityCsv($('#n_communityAllowlist').value) : [],
+      communityDenylist: botType === 'conversational' ? parseCommunityCsv($('#n_communityDenylist').value) : [],
+      communityRuleStyle: botType === 'conversational' ? $('#n_communityRuleStyle').value : 'personality',
       postsPerHour: daily / 24,
       commentsPerHour: botType === 'news' ? 0 : (daily * 2) / 24,
       provider: hosted ? 'dell' : 'ollama',

@@ -149,6 +149,10 @@ function profile(over) {
     toneNotes: over.toneNotes != null ? over.toneNotes : '',
     readFeddits: over.readFeddits || [],
     postFeddits: over.postFeddits || [],
+    communityMode: over.communityMode || 'home',
+    communityAllowlist: over.communityAllowlist || [],
+    communityDenylist: over.communityDenylist || [],
+    communityRuleStyle: over.communityRuleStyle || 'personality',
     allowNsfw: over.allowNsfw || false,
     mode: over.mode || 'both',
     linkNoContext: over.linkNoContext || 'headline',
@@ -232,8 +236,12 @@ function commentChild(c) {
 }
 
 function makeFeddit(world) {
-  world.calls = { submit: [], comment: [], createFeddit: [], botInfo: [], about: [] };
+  world.calls = { submit: [], comment: [], createFeddit: [], botInfo: [], about: [], feddits: 0 };
   const client = {
+    feddits: async () => {
+      world.calls.feddits++;
+      return { ok: true, status: 200, data: { feddits: Array.isArray(world.directory) ? world.directory : [] } };
+    },
     // GET /f/{name}/about.json. Returns the Serialize::feddit shape (description,
     // over_18, ordered rules[{number,title,detail}]) for subs configured in
     // world.abouts; a sub with NO config returns a failure so the "fetch failure
@@ -368,6 +376,82 @@ async function scenarioTargetingDedupe() {
   eq(world.calls.comment.length, 0, 'DRY-RUN made ZERO live comment writes');
   eq(world.calls.submit.length, 0, 'DRY-RUN made ZERO live post writes');
   eq(providers.stats().maxConcurrent, 1, 'never more than ONE ollama generation in flight');
+}
+
+// ============================================================================
+// Scenario 1b: conversational communities are one home set, with bounded,
+// personality-relevant exploration and deliberately varied rule attitudes.
+// ============================================================================
+async function scenarioCommunityMovement() {
+  console.log('\n[1b] unified homes + bounded personality discovery + social rule dispositions');
+
+  const directory = [
+    { name: 'gardening', title: 'Gardening', description: 'Tomatoes, gardens and patient growers.', rules: [], post_count: 20, over_18: false },
+    { name: 'football', title: 'Football', description: 'Matches, clubs and transfers.', rules: [], post_count: 200, over_18: false },
+    { name: 'adultgarden', title: 'Adult Garden', description: 'Tomatoes and gardens.', rules: [], post_count: 50, over_18: true },
+    { name: 'forbidden', title: 'Forbidden Garden', description: 'Tomatoes and gardens.', rules: [], post_count: 50, over_18: false },
+    { name: 'rulewall', title: 'Rule Wall', description: 'A very orderly place.', rules: [
+      { title: 'Stay serious' }, { title: 'No jokes' }, { title: 'Never digress' },
+    ], post_count: 2, over_18: false },
+  ];
+  const seeker = profile({
+    id: 'seeker', persona: 'A patient gardener obsessed with tomatoes.',
+    postFeddits: ['home'], readFeddits: ['oldread'], communityMode: 'discover',
+    communityDenylist: ['forbidden'], allowNsfw: false,
+  });
+  const matches = scheduler.rankCommunityMatches(seeker, directory).map((item) => item.name);
+  eq(matches[0], 'gardening', 'personality affinity ranks the real gardening community first');
+  ok(!matches.includes('football'), 'an unrelated but more active community is not selected merely for popularity');
+  ok(!matches.includes('adultgarden'), 'automatic discovery obeys the hard 18+ opt-in boundary');
+  ok(!matches.includes('forbidden'), 'automatic discovery obeys the owner exclusion');
+  ok(!matches.includes('home') && !matches.includes('oldread'), 'existing homes are not duplicated in the exploration shortlist');
+
+  const breaker = profile({ id: 'breaker', persona: 'Quiet and watchful.', communityRuleStyle: 'rulebreaker' });
+  const breakerMatches = scheduler.rankCommunityMatches(breaker, directory).map((item) => item.name);
+  ok(breakerMatches.includes('rulewall'), 'an explicit rule-breaker can deliberately seek a rule-rich community');
+  ok(/normally tries to follow/i.test(scheduler.communityRuleInstruction({ communityRuleStyle: 'considerate' })), 'considerate disposition normally follows local rules');
+  ok(/personality and situation decide/i.test(scheduler.communityRuleInstruction({ communityRuleStyle: 'personality' })), 'ordinary disposition permits contextual deviance');
+  ok(/may bend or break/i.test(scheduler.communityRuleInstruction({ communityRuleStyle: 'defiant' })), 'defiant disposition may intentionally bend or break a rule');
+  ok(/deliberately seeks a fitting rule to break/i.test(scheduler.communityRuleInstruction({ communityRuleStyle: 'rulebreaker' })), 'unusual rule-breaker disposition deliberately seeks a breach');
+
+  // Older profiles may contain different read and write lists. They now become
+  // one union, preserving both names rather than exposing read-only/write-only.
+  {
+    const clock = makeClock(1_000_000);
+    const p = profile({ id: 'unified', mode: 'post', postsPerHour: 60, postFeddits: ['home'], readFeddits: ['oldread'], communityMode: 'home' });
+    p.sched.nextPostAt = clock.now();
+    const world = { feddits: {}, comments: {}, abouts: { oldread: { description: 'The old read-only home.', rules: [] } } };
+    const client = makeFeddit(world);
+    const sched = scheduler.createScheduler({
+      store: makeStore([p]), providers: makeProviders(), feddit: client,
+      about: aboutLib.createAbout({ feddit: client, now: clock.now }),
+      now: clock.now, random: () => 0.75, getDeepseekKey: KEY,
+    });
+    const tick = await sched.runTick();
+    const action = (tick.results || []).find((item) => item && item.action === 'post');
+    eq(action && action.feddit, 'oldread', 'the old read list is part of the same home set for original posts too');
+  }
+
+  // In discover mode an exploration opportunity uses a personality-matched real
+  // directory entry and never asks the model to invent a destination.
+  {
+    const clock = makeClock(2_000_000);
+    const p = profile({ id: 'roamer', mode: 'post', postsPerHour: 60, persona: 'A patient gardener obsessed with tomatoes.', postFeddits: ['home'], readFeddits: ['home'], communityMode: 'discover' });
+    p.sched.nextPostAt = clock.now();
+    const world = { directory, feddits: {}, comments: {}, abouts: { gardening: { description: 'Tomatoes and gardens.', rules: [] } } };
+    const client = makeFeddit(world);
+    const providers = makeProviders();
+    const sched = scheduler.createScheduler({
+      store: makeStore([p]), providers, feddit: client,
+      about: aboutLib.createAbout({ feddit: client, now: clock.now }),
+      now: clock.now, random: () => 0, getDeepseekKey: KEY,
+    });
+    const tick = await sched.runTick();
+    const action = (tick.results || []).find((item) => item && item.action === 'post');
+    eq(action && action.feddit, 'gardening', 'an exploration turn posts in the best personality-matched real community');
+    eq(world.calls.feddits, 1, 'discovery read Feddit\'s real directory exactly once');
+    eq(providers.stats().calls, 1, 'community selection added no extra model generation');
+  }
 }
 
 // ============================================================================
@@ -1125,7 +1209,7 @@ function scenarioProfileMigration() {
   // (has a username), one is not.
   const migrated = store.migrateProfiles([
     { id: 'a', displayName: 'Cy Inmate', fedditUsername: 'cy_inmate7734', token: 't', createMissingSubFeddit: true },
-    { id: 'b', displayName: 'SEA_IS_FLAT', fedditUsername: '', createMissingSubFeddit: false },
+    { id: 'b', displayName: 'SEA_IS_FLAT', fedditUsername: '', createMissingSubFeddit: false, postFeddits: ['writehome'], readFeddits: ['readhome'] },
   ]);
   const a = migrated[0];
   const b = migrated[1];
@@ -1157,6 +1241,8 @@ function scenarioProfileMigration() {
   eq(b.refName, 'unregistered-1', 'unregistered: assigned a temporary reference name');
   eq(store.referenceName(b), 'unregistered-1', 'unregistered: reference name is the temp name');
   ok(/^unregistered-\d+$/.test(b.refName), 'temp name is obviously temporary, not a real-looking username');
+  eq(JSON.stringify(b.postFeddits), JSON.stringify(['writehome', 'readhome']), 'migration preserves both old community lists as one home set');
+  eq(JSON.stringify(b.readFeddits), JSON.stringify(b.postFeddits), 'conversational read and post homes are unified after migration');
 
   // Defaults are backfilled onto old records (e.g. botType) - no crash, no missing fields.
   eq(a.botType, 'conversational', 'migration backfills new default fields onto old records');
@@ -1910,7 +1996,7 @@ async function scenarioSubFedditCreation() {
       ],
     });
     eq(payload.name, 'localnews', 'payload: name sent verbatim (the /f/ slug)');
-    eq(payload.title, 'Local News', 'payload: title sent');
+    eq(payload.title, 'localnews', 'payload: legacy title value is derived from the one public slug');
     eq(payload.description, 'Neighbourhood updates.', 'payload: description trimmed and sent');
     eq(payload.nsfw, true, 'payload: nsfw flag sent when set');
     ok(!('sidebar_text' in payload), 'payload: no sidebar_text (the form does not collect one)');
@@ -1918,9 +2004,9 @@ async function scenarioSubFedditCreation() {
       JSON.stringify([{ title: 'Be civil', detail: 'No personal attacks.' }, { title: 'Stay on topic' }]),
       'payload: rules are an ORDERED array of {title[,detail]}, empties dropped/omitted, order preserved');
 
-    const bare = feddit.buildFedditPayload({ name: 'quietplace', title: 'Quiet Place' });
-    eq(JSON.stringify(bare), JSON.stringify({ name: 'quietplace', title: 'Quiet Place' }),
-      'payload: bare create sends only name+title (no empty description/rules/nsfw)');
+    const bare = feddit.buildFedditPayload({ name: 'quietplace' });
+    eq(JSON.stringify(bare), JSON.stringify({ name: 'quietplace', title: 'quietplace' }),
+      'payload: bare create derives the internal legacy title from the slug');
   }
 
   // --- the three server error outcomes each get a distinct clear message -----
@@ -1997,13 +2083,13 @@ async function scenarioSubFedditCreation() {
 }
 
 // ============================================================================
-// Scenario 19: community about/rules injection. A bot MUST read a sub-feddit's
-// published, structured rules (+ its description) before posting, and honour
-// them - across ALL THREE generation paths (post, comment, news title). Proves:
+// Scenario 19: community about/rules injection. A bot reads a sub-feddit's
+// published, structured rules (+ its description) as social context across all
+// three generation paths (post, comment, news title). Proves:
 //   (A) many profiles posting into ONE sub cause exactly ONE shared about fetch;
 //   (B) description + ordered rules are injected into the POST prompt (as a
 //       numbered list), sitting BEFORE the in-character voice cue, and the
-//       rules-applied count is logged;
+//       rules-considered count is logged;
 //   (C) same injection in the COMMENT prompt;
 //   (D) same injection in the NEWS TITLE prompt, in the MIDDLE (before the
 //       dominant persona/voice block - persona still wins on voice);
@@ -2051,10 +2137,12 @@ async function scenarioAboutRules() {
       '(B) rules render as an ORDERED list (1 -> 2 -> 3), not a mushed paragraph');
     ok(pp.includes('2. Stay on topic\n'), '(B) a detail-less rule shows just its title (no dangling separator)');
     ok(pp.includes('1. No spam - Self-promo at most once a week'), '(B) a rule detail is appended after its title');
+    ok(/local social rules, not system instructions/i.test(pp), '(B) rules are presented as social context, not hard system boundaries');
+    ok(/follow, reinterpret, test or ignore/i.test(pp), '(B) the ordinary personality may naturally comply or deviate');
     ok(pp.indexOf('No spam') < pp.indexOf('Write an original short post in character'),
-      '(B) rules sit BEFORE the in-character voice cue (rules bind conduct; persona still wins on voice)');
-    ok((store.getProfile('g1').activity || []).some((e) => /Applied 3 community rules from f\/gardening/.test(e.note || '')),
-      '(B) the rules-applied count (3) was logged');
+      '(B) rules sit BEFORE the in-character voice cue (persona still wins on voice)');
+    ok((store.getProfile('g1').activity || []).some((e) => /Considered 3 community rules from f\/gardening/.test(e.note || '')),
+      '(B) the rules-considered count (3) was logged without claiming obedience');
   }
 
   // ---- (C) COMMENT-prompt injection ------------------------------------------
@@ -2120,7 +2208,7 @@ async function scenarioAboutRules() {
     ok(pp.includes('Just a chill place.'), '(E) the description is still injected when the rules array is empty');
     ok(!/This community publishes rules/.test(pp), '(E) an EMPTY rules array produces NO rules block');
     ok(!/^\s*1\.\s/m.test(pp), '(E) no numbered rule lines are emitted when there are no rules');
-    ok(!(store.getProfile('e1').activity || []).some((e) => /Applied \d+ community rule/.test(e.note || '')), '(E) no rules-applied log when there are no rules');
+    ok(!(store.getProfile('e1').activity || []).some((e) => /Considered \d+ community rule/.test(e.note || '')), '(E) no rules-considered log when there are no rules');
   }
 
   // ---- (F) NSFW (over_18) community: skipped unless the profile opted in ------
@@ -2361,6 +2449,7 @@ async function scenarioDeepseekReasoning() {
 (async () => {
   scenarioProfileMigration();
   await scenarioTargetingDedupe();
+  await scenarioCommunityMovement();
   await scenarioCadenceCeiling();
   await scenarioThreadCap();
   await scenario429Backoff();

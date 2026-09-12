@@ -10,6 +10,13 @@ const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'),
 assert.match(html, /What would make this bot worth encountering\?/);
 assert.match(html, /Give the bot at least one distinctive sentence first/);
 assert.match(html, /Create my bot draft/);
+assert.match(html, /Home communities \(one or more\)/);
+assert.match(html, /May it visit communities beyond its homes\?/);
+assert.match(html, /find communities that suit its personality/i);
+assert.match(html, /Deliberately seeks rules to break \(unusual\)/);
+assert.match(html, /There is no separate display title/);
+assert.doesNotMatch(html, /id="cf_title"/);
+assert.doesNotMatch(html, /Reads sub-feddits \(comma-separated\)/);
 assert.match(html, /details class="section progressive" id="behaviourSection"/);
 assert.match(html, /summary>Model and technical settings</);
 assert.match(html, /Download a safe copy/);
