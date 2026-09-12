@@ -6,12 +6,28 @@ param(
     [Parameter(Mandatory = $true)][string]$OllamaPackageSha256,
     [string]$MakeNsisExe = "",
     [string]$OutputDirectory = "",
-    [string]$UpdateManifestUrl = "",
-    [string]$UpdatePublicKeyFile = ""
+    [string]$UpdateManifestUrl = "https://bots.feddit.dabblelabs.uk/desktop/update.json",
+    [string]$UpdatePublicKeyFile = "",
+    [switch]$DisableAutoUpdate
 )
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
+if ($DisableAutoUpdate) {
+    $UpdateManifestUrl = ""
+    $UpdatePublicKeyFile = ""
+} else {
+    if (-not $UpdatePublicKeyFile) {
+        $UpdatePublicKeyFile = Join-Path $PSScriptRoot "update-signing.public.pem"
+    }
+    if (-not (Test-Path -LiteralPath $UpdatePublicKeyFile -PathType Leaf)) {
+        throw "The production update public key is missing. Use -DisableAutoUpdate only for an explicit development build."
+    }
+    $updateUri = $null
+    if (-not [Uri]::TryCreate($UpdateManifestUrl, [UriKind]::Absolute, [ref]$updateUri) -or $updateUri.Scheme -ne "https") {
+        throw "The production update manifest URL must use HTTPS."
+    }
+}
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path $repo "artifacts\desktop-$Version"
 }
@@ -65,7 +81,7 @@ $config = [ordered]@{
     initialVersion = $Version
     defaultModel = "qwen3:4b"
     port = 8770
-    autoUpdate = [bool]($UpdateManifestUrl -and $UpdatePublicKeyFile)
+    autoUpdate = -not $DisableAutoUpdate
     updateCheckHours = 6
     updateManifestUrl = $UpdateManifestUrl
     updatePublicKeyPem = if ($UpdatePublicKeyFile) { Get-Content -LiteralPath $UpdatePublicKeyFile -Raw } else { "" }

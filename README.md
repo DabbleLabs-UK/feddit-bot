@@ -127,9 +127,9 @@ package SHA-256, rejects path traversal and symbolic links, and stages a whole
 new app directory. It asks the local runner to stop only at a verified idle
 point, switches an atomic version pointer, and health-checks the exact expected
 version. If that fails it restores the old pointer and runner. There are no
-update prompts. The checked-in example has updating disabled because a real
-public URL and public signing key must be supplied during an authorised build;
-the private signing key must never be committed.
+update prompts. Public installers must be built with the production manifest
+URL and the checked-in public verification key. The private signing key stays
+in the gitignored project secret file and must never be committed.
 
 Build a per-user portable package (and an NSIS installer when `makensis.exe` is
 available) from PowerShell:
@@ -141,10 +141,40 @@ available) from PowerShell:
   -OllamaPackageSha256 <pinned-official-sha256>
 ```
 
+Production builds default to the signed
+`https://bots.feddit.dabblelabs.uk/desktop/update.json` channel and fail if the
+public verification key is unavailable. `-DisableAutoUpdate` exists only for a
+deliberate development build, so an installer cannot silently lose automatic
+updates because a release command omitted optional arguments.
+
 `desktop/sign-update.ps1` signs an already-built app update zip. Publishing its
 zip and manifest is a release action and is intentionally separate from the
 build. The launcher itself and the large shared runtimes are updated by a later
 installer build; ordinary signed app updates are small and keep those stable.
+
+Create the production signing key once with
+`pwsh -File desktop/new-update-signing-key.ps1`. It refuses to overwrite an
+existing key. For an ordinary release,
+`pwsh -File desktop/build-app-update.ps1 -Version X.Y.Z` builds
+only the small app payload and its signed `update.json`; it does not rebuild or
+redistribute Node, Ollama, downloaded models, or user data. After an explicitly
+authorised publication to the configured HTTPS update location, installed apps
+receive and install it silently at their next check.
+
+During local development, routine runner and browser-interface changes do not
+need another installer. Stage the current `server.js`, `lib`, and `public` as a
+small pending version:
+
+```powershell
+.\desktop\stage-local-update.ps1 -Version 0.2.3
+```
+
+This copies no launcher, Node/Ollama runtime, downloaded model, profile, or
+credential data. The existing launcher activates the pending app at a safe
+restart/update point, health-checks it, and rolls back if startup fails. Only a
+change to the Windows launcher or bundled runtime itself needs a replacement
+installer. Public releases still use the signed HTTPS update channel rather
+than this local developer command.
 
 ## Persistence
 

@@ -21,5 +21,8 @@ check(!program.includes('Application.DoEvents();'), 'startup does not rely on ma
 check(form.includes('if (InvokeRequired)'), 'worker progress is marshalled to the UI thread');
 check(form.includes('BeginInvoke(new Action(Complete))'), 'the worker can close the preparation form safely');
 check(build.includes('-p:Version=$Version'), 'packaged launcher version follows the release version');
+check(build.includes('https://bots.feddit.dabblelabs.uk/desktop/update.json'), 'production builds default to the public HTTPS update channel');
+check(build.includes('update-signing.public.pem'), 'production builds embed the update verification key');
+check(build.includes('[switch]$DisableAutoUpdate'), 'disabling automatic updates must be an explicit development choice');
 
 console.log('desktop first-run contract: ' + checks + ' checks passed');

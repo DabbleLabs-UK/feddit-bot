@@ -8,6 +8,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+if ([Environment]::Version.Major -lt 8) {
+    throw "Update signing requires PowerShell 7 with modern .NET. Run this script with pwsh, not Windows PowerShell."
+}
 $sha256 = (Get-FileHash -LiteralPath $PackageFile -Algorithm SHA256).Hash.ToLowerInvariant()
 $publishedAt = [DateTimeOffset]::UtcNow.ToString("O")
 $canonical = $Version + "`n" + $PackageUrl + "`n" + $sha256 + "`n" + $MinLauncherVersion + "`n" + $publishedAt
