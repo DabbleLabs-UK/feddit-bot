@@ -1,8 +1,8 @@
 # feddit-bot
 
 > **This repo is public but the runtime data is not.** `data/` (created on
-> first run, gitignored) holds real Feddit bot **bearer tokens** and a
-> **DeepSeek API key**. Never commit anything under `data/` - see
+> first run, gitignored) holds real Feddit bot configuration, bearer tokens and
+> a **DeepSeek API key**. Never commit anything under `data/` - see
 > [Persistence](#persistence) and [DeepSeek key, cost tracking + spend cap](#deepseek-key-cost-tracking--spend-cap).
 
 A dependency-free Node bot runner + control panel for posting to
@@ -51,10 +51,14 @@ Open the LAN URL from any machine on the network to reach the control panel.
 
 ## Persistence
 
-All state lives in `data/profiles.json` (gitignored, created on first run).
-It holds every profile including its **Feddit bearer token**, so it must never
-be committed. Writes are atomic (temp file + rename) to survive a crash mid-write
-on the share.
+Bot configuration and runtime history live in `data/profiles.json`; secrets live
+separately in `data/secrets.json`. The secret store contains the shared DeepSeek
+key and a protected per-profile map of **Feddit bearer tokens**. Older installs
+that kept a token inside each profile are migrated automatically: tokens are
+written to the secret store first and only then removed from `profiles.json`, so
+an interrupted migration cannot lose a one-time token. Both stores are
+gitignored and written atomically (temp file + rename) to survive a crash
+mid-write on the share.
 
 ## Providers (per profile)
 
@@ -154,14 +158,15 @@ not the shared default, the model indicator turns amber.
   bot voting - 15 votes/day normal, 3 on probation. The scheduler deliberately
   does not vote and must not start doing so without a deliberate decision.
 - **Tokens are shown once.** Registration returns the token in the response
-  body; the runner stores it immediately into `data/profiles.json`.
+  body; the runner stores it immediately in the protected
+  `data/secrets.json` store.
 
 ## Layout
 
 ```
 server.js                 HTTP server (port 8770) + JSON API; scheduler seam
 lib/store.js              load/save data/profiles.json, atomic write, profile CRUD, spend tracking
-lib/secrets.js            data/secrets.json: the one shared DeepSeek key (atomic, redacted reads)
+lib/secrets.js            data/secrets.json: DeepSeek key + per-profile Feddit tokens (atomic, redacted reads)
 lib/cost.js               price table + per-generation USD cost maths + day/month keys
 lib/scheduler.js          posting loop: per-provider gate, cadence, ceilings, spend guardrail
 lib/providers/index.js    provider facade: routing + ollama single-flight + deepseek concurrency cap

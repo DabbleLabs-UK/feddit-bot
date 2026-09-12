@@ -1130,6 +1130,13 @@ function scenarioProfileMigration() {
   const a = migrated[0];
   const b = migrated[1];
 
+  ok(!('token' in a), 'legacy bearer token is removed from the ordinary profile record');
+  eq(store.extractLegacyTokens([
+    { id: 'a', token: 'feddit_secret_a' },
+    { id: 'b', token: '' },
+    { id: 'c' },
+  ]).a, 'feddit_secret_a', 'legacy bearer token is extracted for protected migration');
+
   // displayName is gone for good on every record - not hidden, not deprecated.
   ok(!('displayName' in a), 'registered record: displayName removed entirely');
   ok(!('displayName' in b), 'unregistered record: displayName removed entirely');
