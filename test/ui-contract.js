@@ -45,6 +45,8 @@ assert.match(html, /Continue with/);
 assert.doesNotMatch(html, /model-choice\.recommended/);
 assert.match(html, /\/api\/models\/pull/);
 assert.match(html, /Models are stored separately from the app/);
+assert.match(html, /A better bot model is available/);
+assert.match(html, /direct-answer replacement/);
 assert.match(html, /X-Feddit-Bot-Owner/);
 assert.doesNotMatch(html, /feddit_NEVER_EXPORT_THIS/);
 const script = html.match(/<script>([\s\S]*?)<\/script>/);

@@ -17,14 +17,14 @@ async function run() {
       ]),
     };
   };
-  const result = await ollama.pullModel('qwen3:4b', (progress) => seen.push(progress), {
+  const result = await ollama.pullModel('qwen3:4b-instruct', (progress) => seen.push(progress), {
     fetchImpl,
     base: 'http://ollama.test/',
     timeoutMs: 1000,
   });
   assert.equal(result.ok, true);
   assert.equal(request.url, 'http://ollama.test/api/pull');
-  assert.deepEqual(JSON.parse(request.options.body), { model: 'qwen3:4b', stream: true });
+  assert.deepEqual(JSON.parse(request.options.body), { model: 'qwen3:4b-instruct', stream: true });
   assert.deepEqual(seen.map((item) => item.status), ['pulling manifest', 'downloading', 'success']);
   console.log('ollama-pull: all checks passed');
 }

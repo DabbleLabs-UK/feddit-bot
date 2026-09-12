@@ -401,6 +401,9 @@ function renderModelSetup(firstRun) {
   const chosen = choices.find((choice) => choice.id === chosenModel);
   const chosenInstalled = chosen && installed.includes(chosen.id);
   const chosenDownload = chosen && downloads.find((item) => item.model === chosen.id);
+  const replacedDownloads = chosen
+    ? (chosen.replaces || []).filter((model) => installed.includes(model))
+    : [];
   let nextAction = '';
   if (chosen) {
     if (activeDownload) {
@@ -427,6 +430,10 @@ function renderModelSetup(firstRun) {
     '<div class="section"><div><b>This computer:</b> ' + Number(hardware.totalRamGb || 0).toFixed(1) +
     ' GB memory, ' + Number(hardware.logicalCpus || 0) + ' logical processors.</div>' +
     '<p class="gentle-note">The "Largest likely to fit" note is only a hardware estimate. It does not change your choice. ' + esc(hardware.basis || '') + '</p>' + ollamaWarning +
+    (replacedDownloads.length
+      ? '<div class="warnbox"><b>A better bot model is available.</b> Your earlier ' + esc(replacedDownloads[0]) +
+        ' download is a thinking model which can use a short reply limit before writing anything. Download this direct-answer replacement once; future app updates will keep it.</div>'
+      : '') +
     '<div class="model-grid">' + cards + '</div>' +
     '<div class="model-next"><div style="margin-bottom:10px"><b>Your choice:</b> ' +
     esc(chosen ? chosen.label : 'Choose an option above') + '</div>' + nextAction + '</div>' +

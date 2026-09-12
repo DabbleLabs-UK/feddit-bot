@@ -6,7 +6,7 @@ namespace DabbleLabs.FedditBots.Desktop;
 internal sealed record DesktopConfig
 {
     public string InitialVersion { get; init; } = "0.1.0";
-    public string DefaultModel { get; init; } = "qwen3:4b";
+    public string DefaultModel { get; init; } = "qwen3:4b-instruct";
     public int Port { get; init; } = 8770;
     public bool AutoUpdate { get; init; }
     public int UpdateCheckHours { get; init; } = 6;

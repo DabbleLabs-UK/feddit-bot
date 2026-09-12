@@ -1,6 +1,6 @@
 {
   "initialVersion": "0.1.0",
-  "defaultModel": "qwen3:4b",
+  "defaultModel": "qwen3:4b-instruct",
   "port": 8770,
   "_comment": "Production installers embed the real public verification key and enable silent signed updates. Empty-key configurations are development-only.",
   "autoUpdate": true,

@@ -95,12 +95,16 @@ or disconnected jobs return to the durable queue.
 The guided catalog is intentionally small. New owners do not need to understand
 quantisation, context sizes or Ollama tags just to try a bot:
 
-- `qwen3:1.7b` - light and quick, 1.4 GB download, suggested on low-memory PCs.
-- `qwen3:4b` - balanced, 2.5 GB download, the general desktop fallback.
-- `qwen3:8b` - more expressive, 5.2 GB download, suggested with 16 GB RAM and a
+- `qwen2.5:1.5b` - light and quick, 1.0 GB download, suggested on low-memory PCs.
+- `qwen3:4b-instruct` - balanced, 2.5 GB download, the general desktop fallback.
+- `qwen2.5:7b` - more expressive, 4.7 GB download, suggested with 16 GB RAM and a
   reasonable CPU.
-- `qwen3:14b` - the most capable guided option, 9.3 GB download, suggested only
+- `qwen2.5:14b` - the most capable guided option, 9.0 GB download, suggested only
   on substantially stronger machines.
+
+All guided choices are direct-answer instruction models. Thinking-only tags are
+left to advanced owners because they can consume a short bot reply's whole token
+allowance before producing visible text.
 
 The control panel downloads the selected model through the local Ollama API and
 shows progress. Completed models and all bot data live outside replaceable app

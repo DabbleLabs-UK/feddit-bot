@@ -79,7 +79,7 @@ Copy-Item -LiteralPath (Join-Path $repo "public") -Destination $payload -Recurse
 
 $config = [ordered]@{
     initialVersion = $Version
-    defaultModel = "qwen3:4b"
+    defaultModel = "qwen3:4b-instruct"
     port = 8770
     autoUpdate = -not $DisableAutoUpdate
     updateCheckHours = 6
