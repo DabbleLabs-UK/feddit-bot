@@ -10,6 +10,11 @@ void Check(bool condition, string message)
     checks++;
 }
 
+Check(LaunchIntent.ShouldOpenInterface(["--open-ui"]), "an explicit shortcut launch opens the interface");
+Check(LaunchIntent.ShouldOpenInterface(["--OPEN-UI"]), "the open-interface argument is case insensitive");
+Check(!LaunchIntent.ShouldOpenInterface([]), "a background restart does not open a browser");
+Check(!LaunchIntent.ShouldOpenInterface(["--background"]), "Windows login startup does not open a browser");
+
 using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
 var unsigned = new UpdateManifest
 {

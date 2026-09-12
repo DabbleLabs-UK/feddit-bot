@@ -7,14 +7,15 @@ namespace DabbleLabs.FedditBots.Desktop;
 internal static class Program
 {
     [STAThread]
-    private static async Task Main()
+    private static async Task Main(string[] args)
     {
+        var shouldOpenInterface = LaunchIntent.ShouldOpenInterface(args);
         var paths = new AppPaths();
         var config = DesktopConfig.Load(paths.ConfigFile);
         using var instance = new Mutex(true, "Local\\DabbleLabs.FedditBots.Desktop", out var firstInstance);
         if (!firstInstance)
         {
-            OpenExisting(config.Port);
+            if (shouldOpenInterface) OpenExisting(config.Port);
             return;
         }
 
@@ -54,7 +55,14 @@ internal static class Program
             {
                 await supervisor.StartAsync(current, cancellation.Token);
             }
-            supervisor.OpenBrowser();
+            if (shouldOpenInterface)
+            {
+                supervisor.OpenBrowser();
+            }
+            else
+            {
+                log.Write("Feddit Bots started in the background; the browser was not opened.");
+            }
         }
         catch (Exception error)
         {
