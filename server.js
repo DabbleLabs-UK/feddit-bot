@@ -42,6 +42,7 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const jobQueue = createQueue({ file: path.join(store.DATA_DIR, 'jobs.json') });
 providers.configureDellQueue(jobQueue);
 const hostedPreviewTasks = new Map();
+const hostedSimulationTasks = new Map();
 const ownerStore = createOwnerStore({ file: path.join(store.DATA_DIR, 'owners.json') });
 const modelInstaller = createModelInstaller({
   pullModel: ollama.pullModel,
@@ -576,6 +577,7 @@ async function handleApi(req, res, urlPath, query) {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
       store.deleteProfile(id);
       hostedPreviewTasks.delete(id);
+      hostedSimulationTasks.delete(id);
       return sendJson(res, 200, { ok: true });
     }
 
@@ -675,6 +677,61 @@ async function handleApi(req, res, urlPath, query) {
       secrets.completeFedditHandover(id);
       store.logActivity(id, { kind: 'handover-complete', ok: true, note: 'Removed this runner\'s transfer credential copy.' });
       return sendJson(res, 200, { ok: true, profile: safeProfile(store.getProfile(id)) });
+    }
+
+    // POST /api/profiles/:id/simulate-now - immediately run either the real
+    // post or comment selection path, but force the final write boundary to a
+    // dry-run. It ignores the timetable and enabled switch, while retaining the
+    // same live targeting, model, cadence and dedupe effects as scheduled
+    // simulation. Hosted DELL work returns immediately and is polled below.
+    if (method === 'POST' && sub === '/simulate-now') {
+      if (!existing) return sendJson(res, 404, { error: 'No such profile' });
+      const body = await readBody(req);
+      const action = body.action === 'comment' ? 'comment' : (body.action === 'post' ? 'post' : '');
+      if (!action) return sendJson(res, 400, { error: 'Choose either post or comment.' });
+
+      if (scheduler.providerOf(existing) === 'dell') {
+        const prior = hostedSimulationTasks.get(id);
+        if (prior && prior.status === 'running') {
+          return sendJson(res, 202, { queued: true, action: prior.action, capacity: jobQueue.capacity() });
+        }
+        const task = { status: 'running', action, result: null, error: null, startedAt: Date.now() };
+        hostedSimulationTasks.set(id, task);
+        schedulerHandle.simulateNow(id, action).then((result) => {
+          task.status = 'completed';
+          task.result = result;
+          task.finishedAt = Date.now();
+        }).catch((err) => {
+          task.status = 'failed';
+          task.error = err.message;
+          task.finishedAt = Date.now();
+        });
+        return sendJson(res, 202, { queued: true, action, capacity: jobQueue.capacity() });
+      }
+
+      const result = await schedulerHandle.simulateNow(id, action);
+      return sendJson(res, 200, result);
+    }
+
+    // GET /api/profiles/:id/simulate-now-status - status for an immediate
+    // hosted simulation. No result is exposed across owners because the normal
+    // profile ownership check above has already succeeded.
+    if (method === 'GET' && sub === '/simulate-now-status') {
+      if (!existing) return sendJson(res, 404, { error: 'No such profile' });
+      const task = hostedSimulationTasks.get(id);
+      if (!task) return sendJson(res, 200, { done: true, error: 'No immediate simulation is running.' });
+      if (task.status === 'completed') {
+        return sendJson(res, 200, { done: true, result: task.result, capacity: jobQueue.capacity() });
+      }
+      if (task.status === 'failed') {
+        return sendJson(res, 200, { done: true, error: task.error, capacity: jobQueue.capacity() });
+      }
+      return sendJson(res, 200, {
+        done: false,
+        action: task.action,
+        message: (jobQueue.capacity().today && jobQueue.capacity().today.text) || 'Waiting for the hosted DELL worker.',
+        capacity: jobQueue.capacity(),
+      });
     }
 
     // POST /api/profiles/:id/test-generate - generate a sample reply against a

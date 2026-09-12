@@ -903,10 +903,16 @@ function renderEditor(p) {
 
     <div class="section" id="simulationResultsSection">
       <div class="row" style="justify-content:space-between; margin-bottom:8px">
-        <h2 style="margin:0">Scheduled simulation results <span class="badge" id="simulationCount"></span></h2>
+        <h2 style="margin:0">Simulation results <span class="badge" id="simulationCount"></span></h2>
         <button type="button" id="refreshSimulationBtn">Refresh results</button>
       </div>
-      <div class="hint"><b>Nothing is posted to a separate sandbox site.</b> When scheduled simulation is ON, this panel keeps the complete post, reply or news title the scheduler would have published, together with enough source context to evaluate it. Feddit itself remains unchanged.</div>
+      <div class="hint"><b>Nothing is posted to a separate sandbox site.</b> Scheduled simulation results appear here automatically, including the complete post, reply or news title and enough source context to evaluate it. To avoid waiting, the buttons below run the same live targeting and generation path immediately, but always stop before publishing.</div>
+      <div class="row" style="margin-top:10px">
+        <button type="button" id="simulatePostBtn">Simulate a post now</button>
+        <button type="button" id="simulateCommentBtn">Simulate a comment now</button>
+        <span class="hint" id="simulateNowMeta"></span>
+      </div>
+      <div class="hint" style="margin-top:7px">A press-now simulation ignores the timetable and works while the bot is paused. Like an automatic scheduled simulation, it reads live Feddit, chooses a real destination or reply target, advances the next scheduled time and marks a chosen comment or article as handled. It never publishes. A remote model call can still cost money.</div>
       <div class="simulation-list" id="simulationResults"></div>
     </div>
 
@@ -1159,6 +1165,7 @@ function renderEditor(p) {
   $('#f_model').addEventListener('change', renderProviderView);
   $('#f_provider').addEventListener('change', renderProviderView);
   $('#f_botType').addEventListener('change', renderBotTypeView);
+  $('#f_mode').addEventListener('change', () => syncSimulationButtons(false));
   $('#f_communityMode').addEventListener('change', syncCommunityControls);
   $('#f_newsTitleVoice').addEventListener('change', renderBotTypeView);
   $('#f_newsLetBotChoose').addEventListener('change', () => {
@@ -1176,6 +1183,8 @@ function renderEditor(p) {
   $('#feedNoneBtn').onclick = () => { document.querySelectorAll('#feedPicker .feedPick').forEach((c) => { c.checked = false; }); };
   $('#feedHealthBtn').onclick = () => renderFeedHealth(p.id);
   $('#refreshSimulationBtn').onclick = () => refreshSimulationResults(p.id);
+  $('#simulatePostBtn').onclick = () => runSimulationNow(p.id, 'post');
+  $('#simulateCommentBtn').onclick = () => runSimulationNow(p.id, 'comment');
   $('#saveBtn').onclick = () => saveProfile(p.id);
   $('#exportBtn').onclick = () => exportProfile(p.id, p.referenceName);
   if ($('#handoverBtn')) $('#handoverBtn').onclick = () => handoverProfile(p.id, p.referenceName, p.handoverPending);
@@ -1209,6 +1218,7 @@ function renderEditor(p) {
     $('#botTypeHint').textContent = news
       ? 'News bot: finds fresh articles from publisher RSS feeds (and optionally GDELT), filters them by your keywords, and submits them as link posts with a generated title. It does not comment. The persona still shapes the title voice.'
       : 'Conversational bot: writes original posts and replies in character, driven by the mode and cadence below.';
+    syncSimulationButtons();
     syncCommunityControls();
     updateNewsWarnings();
   }
@@ -1434,6 +1444,23 @@ async function renderFeedHealth(id) {
   if (meta) meta.textContent = ok + ' OK, ' + bad + ' failing' + (untried ? ', ' + untried + ' not tried yet' : '');
 }
 
+function syncSimulationButtons(busy) {
+  const post = $('#simulatePostBtn');
+  const comment = $('#simulateCommentBtn');
+  const type = $('#f_botType');
+  const modeField = $('#f_mode');
+  if (!post || !comment || !type || !modeField) return;
+  const news = type.value === 'news';
+  const mode = modeField.value;
+  const canPost = news || mode === 'both' || mode === 'post';
+  const canComment = !news && (mode === 'both' || mode === 'comment');
+  post.textContent = news ? 'Simulate a news post now' : 'Simulate a post now';
+  post.disabled = !!busy || !canPost;
+  comment.disabled = !!busy || !canComment;
+  post.title = canPost ? '' : 'This bot is configured not to make posts.';
+  comment.title = canComment ? '' : (news ? 'News bots make link posts and do not comment.' : 'This bot is configured not to comment.');
+}
+
 function simulationValue(label, value) {
   if (!String(value || '').trim()) return '';
   return '<div class="simulation-label">' + esc(label) + '</div>' +
@@ -1448,11 +1475,11 @@ function renderSimulationResults(p) {
   count.textContent = String(all.length);
   const entries = all.slice().reverse().slice(0, 10);
   if (!entries.length) {
-    let stateHint = 'No scheduled simulation results yet.';
-    if (!p.hasToken) stateHint += ' Register this bot first.';
+    let stateHint = 'No simulation results yet.';
+    if (!p.hasToken) stateHint += ' Automatic turns need a registered bot, but the press-now buttons can be used before registration.';
     else if (!p.enabled) stateHint += ' This bot is currently paused: set its Scheduler to ACTIVE and save it.';
     else if (state.settings && !state.settings.dryRun) stateHint += ' Scheduled simulation is currently OFF.';
-    stateHint += ' When an action becomes due, return here and choose Refresh results.';
+    stateHint += ' You can wait for an automatic turn or use a Simulate now button above.';
     host.innerHTML = '<div class="simulation-card hint">' + esc(stateHint) + '</div>';
     return;
   }
@@ -1462,10 +1489,15 @@ function renderSimulationResults(p) {
     const when = entry.at ? esc(entry.at) : 'time unavailable';
     const destination = sim && sim.community ? sim.community : (entry.target || 'destination unavailable');
     const type = entry.kind === 'comment' ? 'Reply' : (entry.kind === 'news' ? 'News link post' : 'Original post');
+    const trigger = sim && sim.trigger === 'manual'
+      ? '<span class="badge">pressed now</span>'
+      : '<span class="badge notoken">scheduled</span>';
     let body = '';
     if (!sim) {
       body = '<div class="hint" style="margin-top:8px">Earlier app versions kept only this shortened summary; complete text was not retained.</div>' +
         simulationValue('Recorded summary', entry.note || 'No summary available.');
+    } else if (sim.error) {
+      body = simulationValue('Why no output was generated', sim.error);
     } else if (entry.kind === 'comment') {
       const context = sim.context
         ? '<details class="simulation-context"><summary>What it was replying to</summary><div class="simulation-output">' + esc(sim.context) + '</div></details>'
@@ -1481,9 +1513,57 @@ function renderSimulationResults(p) {
         simulationValue('Body it would publish', sim.body);
     }
     return '<article class="simulation-card"><div class="row" style="justify-content:space-between">' +
-      '<h3>' + esc(type) + '</h3><span class="hint mono">' + when + '</span></div>' +
-      '<div class="hint" style="margin-top:3px">Would publish to <span class="mono">' + esc(destination) + '</span></div>' + body + '</article>';
+      '<h3>' + esc(type) + ' ' + trigger + '</h3><span class="hint mono">' + when + '</span></div>' +
+      (destination === 'destination unavailable' ? '' : '<div class="hint" style="margin-top:3px">Would publish to <span class="mono">' + esc(destination) + '</span></div>') + body + '</article>';
   }).join('');
+}
+
+async function waitForHostedSimulation(id, outputElement) {
+  while (true) {
+    const status = await api('/api/profiles/' + encodeURIComponent(id) + '/simulate-now-status');
+    if (status.capacity) {
+      state.capacity = status.capacity;
+      renderCapacity();
+    }
+    if (status.done) {
+      if (status.error) throw new Error(status.error);
+      return status.result || { ok: false, error: 'The hosted simulation returned no result.' };
+    }
+    if (status.message) outputElement.textContent = status.message;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+}
+
+async function runSimulationNow(id, action) {
+  const meta = $('#simulateNowMeta');
+  syncSimulationButtons(true);
+  meta.textContent = action === 'comment'
+    ? 'Reading live Feddit and choosing something to reply to...'
+    : 'Choosing a community and generating a post...';
+  try {
+    // Use every unsaved field currently on screen, just as the user sees it.
+    await api('/api/profiles/' + encodeURIComponent(id), { method: 'PUT', body: collectForm() });
+    let result = await api('/api/profiles/' + encodeURIComponent(id) + '/simulate-now', {
+      method: 'POST', body: { action },
+    });
+    if (result.queued) {
+      if (result.capacity) { state.capacity = result.capacity; renderCapacity(); }
+      meta.textContent = 'Waiting in the interactive DELL queue...';
+      result = await waitForHostedSimulation(id, meta);
+    }
+    await refreshSimulationResults(id);
+    if (result.ok) {
+      meta.textContent = 'Generated now. The newest result is shown below.';
+      if (state.editing && $('#f_provider').value.startsWith('deepseek-')) loadStatus();
+    } else {
+      meta.textContent = result.error || 'No output was generated. The reason is shown below.';
+    }
+  } catch (e) {
+    meta.textContent = '';
+    toast('Simulation failed: ' + e.message, 'err');
+  } finally {
+    syncSimulationButtons(false);
+  }
 }
 
 async function refreshSimulationResults(id) {

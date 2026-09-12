@@ -376,11 +376,65 @@ async function scenarioTargetingDedupe() {
   eq(world.calls.comment.length, 0, 'DRY-RUN made ZERO live comment writes');
   eq(world.calls.submit.length, 0, 'DRY-RUN made ZERO live post writes');
   eq(providers.stats().maxConcurrent, 1, 'never more than ONE ollama generation in flight');
-  const simulations = p.activity.filter((entry) => entry.dryRun && entry.kind === 'comment');
+  const simulations = p.activity.filter((entry) => entry.dryRun && entry.kind === 'comment' && entry.ok !== false);
   eq(simulations.length, 3, 'each simulated reply retained a result for owner evaluation');
   eq(simulations[0].simulation.community, 'f/botlife', 'simulated reply records its community');
   ok(simulations[0].simulation.context.includes('newest by other1'), 'simulated reply retains the live post context it answered');
   ok(simulations[0].simulation.reply.includes('\n\nGenerated body text'), 'simulated reply retains the COMPLETE generated text, including newlines');
+}
+
+// ============================================================================
+// Scenario 1a: press-now simulation bypasses the timetable but still uses the
+// real action paths and can never publish, even if global simulation is OFF.
+// ============================================================================
+async function scenarioImmediateSimulation() {
+  console.log('\n[1a] immediate post/comment simulation + visible no-target reason');
+  const clock = makeClock(1_500_000);
+  const postBot = profile({
+    id: 'now-post', enabled: false, mode: 'both', postsPerHour: 0,
+    postFeddits: ['botlife'], readFeddits: ['botlife'],
+  });
+  const commentBot = profile({
+    id: 'now-comment', enabled: false, mode: 'both', commentsPerHour: 0,
+    postFeddits: ['botlife'], readFeddits: ['botlife'],
+  });
+  const emptyBot = profile({
+    id: 'now-empty', enabled: false, mode: 'comment', commentsPerHour: 0,
+    postFeddits: ['empty'], readFeddits: ['empty'],
+  });
+  const world = {
+    feddits: {
+      botlife: [{ id: 71, feddit: 'botlife', title: 'a live target', author: 'someone_else' }],
+      empty: [],
+    },
+    comments: {},
+  };
+  const store = makeStore([postBot, commentBot, emptyBot]);
+  store.updateSettings({ dryRun: false });
+  const providers = makeProviders();
+  const sched = scheduler.createScheduler({
+    store, providers, feddit: makeFeddit(world), now: clock.now,
+    random: () => 0, getDeepseekKey: KEY,
+  });
+
+  const postResult = await sched.simulateNow('now-post', 'post');
+  ok(postResult.ok, 'press-now post works while the bot is paused and its scheduled rate is zero');
+  eq(world.calls.submit.length, 0, 'press-now post made ZERO live writes while global simulation was OFF');
+  const postLog = postBot.activity.find((entry) => entry.dryRun && entry.kind === 'post');
+  ok(postLog && postLog.simulation.trigger === 'manual', 'press-now post is labelled as manually triggered');
+  ok(postLog && postLog.simulation.title, 'press-now post retains the complete generated result');
+
+  const commentResult = await sched.simulateNow('now-comment', 'comment');
+  ok(commentResult.ok, 'press-now comment chooses a live Feddit target immediately');
+  eq(world.calls.comment.length, 0, 'press-now comment made ZERO live writes while global simulation was OFF');
+  const commentLog = commentBot.activity.find((entry) => entry.dryRun && entry.kind === 'comment');
+  ok(commentLog && commentLog.simulation.trigger === 'manual', 'press-now comment is labelled as manually triggered');
+  ok(commentLog && /live target/.test(commentLog.simulation.context), 'press-now comment retains the real target context');
+
+  const emptyResult = await sched.simulateNow('now-empty', 'comment');
+  ok(!emptyResult.ok && /no eligible unread/i.test(emptyResult.error), 'press-now comment explains when no eligible target exists');
+  const emptyLog = emptyBot.activity.find((entry) => entry.dryRun && entry.ok === false);
+  ok(emptyLog && /no eligible unread/i.test(emptyLog.simulation.error), 'the no-target reason is retained in simulation results');
 }
 
 // ============================================================================
@@ -2464,6 +2518,7 @@ async function scenarioDeepseekReasoning() {
 (async () => {
   scenarioProfileMigration();
   await scenarioTargetingDedupe();
+  await scenarioImmediateSimulation();
   await scenarioCommunityMovement();
   await scenarioCadenceCeiling();
   await scenarioThreadCap();

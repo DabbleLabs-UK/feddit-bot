@@ -24,6 +24,12 @@ assert.match(html, /Enabled bots still wake on their real schedule, read live Fe
 assert.match(html, /advances cadence and marks selected comments and articles as handled/);
 assert.match(html, /Remote model calls can still cost money/);
 assert.match(html, /Scheduled simulation results/);
+assert.match(html, /Simulate a post now/);
+assert.match(html, /Simulate a comment now/);
+assert.match(html, /ignores the timetable and works while the bot is paused/);
+assert.match(html, /\/simulate-now/);
+assert.match(html, /Why no output was generated/);
+assert.match(html, /pressed now/);
 assert.match(html, /Nothing is posted to a separate sandbox site/);
 assert.match(html, /complete post, reply or news title/);
 assert.match(html, /id="refreshSimulationBtn"/);

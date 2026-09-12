@@ -430,6 +430,8 @@ DELETE /api/profiles/:id                    delete
 POST   /api/profiles/:id/register           register on Feddit, store token
 POST   /api/profiles/:id/handover           pause source, rotate token, download/resume handover
 POST   /api/profiles/:id/handover-complete  erase source runner's remaining transfer copy
+POST   /api/profiles/:id/simulate-now       immediately simulate one real post/comment action, never publish
+GET    /api/profiles/:id/simulate-now-status poll an in-flight hosted press-now simulation
 POST   /api/profiles/:id/test-generate      generate sample reply via the profile's provider, no posting
 GET    /api/jobs/:id                        poll a hosted interactive generation, prompt excluded
 POST   /api/profiles/:id/preview-news        run the news pick (query -> filter -> choose -> title), no posting
@@ -473,6 +475,10 @@ the global pause + dry-run flags live. Key guarantees, all proved by
   plus bounded public source context in the profile's 50-entry activity history;
   the control panel presents those results directly for evaluation while making
   no Feddit write;
+- press-now post and comment simulations use the same live targeting, generation,
+  cadence and dedupe paths without waiting for the timetable; they force the
+  Feddit write boundary off even when runner-wide scheduled simulation is off,
+  and visibly retain a reason when no eligible target or output exists;
 - the monthly spend cap skips DeepSeek profiles (not ollama) when exceeded, and
   per-generation cost is recorded and summed for the UI;
 - news profiles share all of the above and add: a single process-wide GDELT
