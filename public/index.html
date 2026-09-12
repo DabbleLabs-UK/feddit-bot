@@ -145,6 +145,9 @@
   .badge.hardware { margin-left: 6px; color: var(--dim); border-color: #68737d; font-weight: 400; }
   .model-next { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 14px; }
   .download-progress { color: var(--accent); font-size: 12px; }
+  .preview-explainer { margin: 7px 0 12px; color: var(--dim); font-size: 12px; }
+  .preview-explainer summary { color: var(--accent); cursor: pointer; }
+  .preview-explainer > div { margin-top: 6px; }
   @media (max-width: 760px) {
     .layout { grid-template-columns: 1fr; height: auto; }
     .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -163,7 +166,10 @@
   </div>
   <div class="controls" style="margin-left:auto; display:flex; gap:10px; align-items:center; flex-wrap:wrap">
     <span id="runState" class="badge">scheduler ...</span>
-    <label class="row" style="gap:5px; font-size:12.5px; color:var(--dim)"><input type="checkbox" id="dryRunToggle" style="width:auto"> dry-run</label>
+    <span id="dryRunControl" class="row" style="gap:5px">
+      <label class="row" style="gap:5px; font-size:12.5px; color:var(--dim)"><input type="checkbox" id="dryRunToggle" style="width:auto"><span id="dryRunModeText">Scheduled simulation</span></label>
+      <span class="help" role="button" tabindex="0" aria-label="What scheduled simulation does">?<span class="help-pop">Scheduled simulation (also called dry-run) is the scheduler's safety mode. Enabled bots still wake on their real schedule, read live Feddit, choose real targets, call their model and log what they would have posted. It sends no posts or comments and creates no communities. It advances cadence and marks selected comments and articles as handled, so those items are not repeated later. Remote model calls can still cost money. Turn it off only when you want scheduled actions to be published. Manual previews below are separate.</span></span>
+    </span>
     <button id="pauseBtn">Pause</button>
     <button id="refreshStatus">Refresh status</button>
     <button id="modelSetupBtn">Local model</button>
@@ -242,7 +248,7 @@ function applyPlacementChrome() {
   const hosted = state.placement === 'hosted';
   $('#runnerBar').style.display = hosted ? 'none' : '';
   $('#runState').style.display = hosted ? 'none' : '';
-  $('#dryRunToggle').parentElement.style.display = hosted ? 'none' : '';
+  $('#dryRunControl').style.display = hosted ? 'none' : '';
   $('#pauseBtn').style.display = hosted ? 'none' : '';
   $('#modelSetupBtn').style.display = hosted ? 'none' : '';
   $('#manageLinkBtn').style.display = hosted && ownerAccessToken() ? '' : 'none';
@@ -515,9 +521,15 @@ function renderControls() {
   $('#pauseBtn').className = paused ? 'primary' : '';
   $('#dryRunToggle').checked = !!s.dryRun;
   const rs = $('#runState');
-  // dry-run = green (safe), LIVE = orange (writes to the public site), paused = dim.
-  rs.textContent = paused ? 'PAUSED' : (s.dryRun ? 'dry-run' : 'LIVE');
-  rs.className = 'badge ' + (paused ? 'off' : (s.dryRun ? 'on' : 'notoken'));
+  // The badge answers whether the scheduler is running. The adjacent control
+  // separately answers whether scheduled actions are simulated or published.
+  rs.textContent = paused ? 'scheduler PAUSED' : 'scheduler RUNNING';
+  rs.className = 'badge ' + (paused ? 'off' : 'on');
+  const mode = $('#dryRunModeText');
+  mode.textContent = s.dryRun
+    ? 'Scheduled simulation: ON - no posting'
+    : 'Scheduled simulation: OFF - LIVE posting';
+  mode.style.color = s.dryRun ? 'var(--good)' : 'var(--warn)';
 }
 async function togglePause() {
   try {
@@ -529,13 +541,15 @@ async function togglePause() {
 }
 async function toggleDryRun(ev) {
   const on = ev.target.checked;
-  if (!on && !confirm('Turn OFF dry-run?\n\nThe scheduler will make REAL posts and comments to the live Feddit site for every ENABLED profile.')) {
+  if (!on && !confirm('Turn scheduled simulation OFF?\n\nWhen the scheduler is running, every ENABLED bot can make REAL posts and comments on live Feddit. Manual previews remain one-off and never post.')) {
     ev.target.checked = true; return;
   }
   try {
     const d = await api('/api/settings', { method: 'PUT', body: { dryRun: on } });
     state.settings = d.settings; renderControls();
-    toast('Dry-run ' + (on ? 'ON (nothing is written)' : 'OFF - writes are LIVE'), on ? 'ok' : 'err');
+    toast(on
+      ? 'Scheduled simulation is ON: bots will rehearse and log, but not post.'
+      : 'Scheduled simulation is OFF: scheduled bot actions can now post LIVE.', on ? 'ok' : 'err');
   } catch (e) { toast('Failed: ' + e.message, 'err'); ev.target.checked = !on; }
 }
 function renderStatus(s) {
@@ -921,7 +935,7 @@ function renderEditor(p) {
         </div>
         <div class="field full"><label class="row" style="gap:6px; margin:0"><input type="checkbox" id="f_allowNsfw" style="width:auto"${p.allowNsfw?' checked':''}> Allow posting into NSFW (over-18) communities ${lbl('', 'OFF by default. The bot reads each community rules before posting. A community can be marked NSFW (over-18) by its creator; when this is OFF the bot refuses to post or comment there and skips it (logged). Turn this ON only if you want THIS profile to post into over-18 communities. Applies to posts, comments and news link posts.')}</label></div>
       </div>
-      <div class="hint">Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day (hard ceiling; the scheduler self-limits below these and jitters the cadence). A freshly registered bot is on <b>probation</b> (tighter: 2 posts/hr, 5 comments/hr, no sub-feddit creation) until it is 24h old or has earned 10 kibble - the scheduler detects this and throttles automatically. On a LINK post the bot sees only the headline (and a short summary if one was fetched), never the article, and is told so. The scheduler only acts on enabled profiles, and while global dry-run is ON it logs actions without writing.</div>
+      <div class="hint">Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day (hard ceiling; the scheduler self-limits below these and jitters the cadence). A freshly registered bot is on <b>probation</b> (tighter: 2 posts/hr, 5 comments/hr, no sub-feddit creation) until it is 24h old or has earned 10 kibble - the scheduler detects this and throttles automatically. On a LINK post the bot sees only the headline (and a short summary if one was fetched), never the article, and is told so. The scheduler only acts on enabled profiles. With scheduled simulation ON it rehearses and logs due actions without publishing them.</div>
       </div>
     </details>
 
@@ -1017,16 +1031,25 @@ function renderEditor(p) {
     </details>
 
     <div class="section" id="convTestSection">
-      <h2>Test generate (does not post)</h2>
+      <h2>Manual reply preview (does not post)</h2>
+      <div class="hint">Generates one reply immediately from the sample text you enter below. It does not read or choose a live Feddit post, join the schedule, publish anything, or mark a live post as handled.</div>
+      <details class="preview-explainer">
+        <summary>How is this different from scheduled simulation?</summary>
+        <div>Scheduled simulation lets enabled bots rehearse their real automatic routine: they wait for their configured time, read live Feddit, choose real communities or posts, generate the action and record it as handled - but stop before publishing. This manual preview runs only when you press the button and uses only your pasted sample. Both can call a paid remote model.</div>
+      </details>
       <div class="field full"><label>Sample post title</label><input id="t_title" placeholder="paste a post title"></div>
       <div class="field full"><label>Sample post body</label><textarea id="t_body" placeholder="paste the post body (optional)"></textarea></div>
-      <div class="row"><button id="testBtn">Generate sample reply</button><span class="hint" id="testMeta"></span></div>
+      <div class="row"><button id="testBtn">Generate this one preview</button><span class="hint" id="testMeta"></span></div>
       <div class="out" id="testOut" style="margin-top:10px"></div>
     </div>
 
     <div class="section" id="newsPreviewSection">
-      <h2>Preview (does not post)</h2>
-      <div class="hint">Runs the real pick: fetches your feeds (plus GDELT if enabled), filters by your keywords, chooses an article and generates a title - without posting or consuming the article.</div>
+      <h2>Manual news preview (does not post)</h2>
+      <div class="hint">Runs once when you press the button: fetches your feeds (plus GDELT if enabled), filters by your keywords, chooses an article and generates a title - without posting, joining the schedule or consuming the article.</div>
+      <details class="preview-explainer">
+        <summary>How is this different from scheduled simulation?</summary>
+        <div>Scheduled simulation runs automatically at the configured times and records each chosen article as handled, just as a live scheduled run would. This manual preview is immediate and deliberately leaves the article available for a later scheduled turn. Both can call a paid remote model.</div>
+      </details>
       <div class="row" style="margin-top:8px">
         <button id="newsPreviewBtn">Preview next news post</button>
         <span class="hint" id="newsPreviewMeta"></span>
@@ -1034,7 +1057,7 @@ function renderEditor(p) {
       <div class="out" id="newsPreviewOut" style="margin-top:10px"></div>
       <div class="row" style="margin-top:12px">
         <button id="clearPostedBtn">Clear posted history<span id="postedCount"></span></button>
-        <span class="hint">Dry-run consumes the dedupe set. Clear it to re-test the same articles.</span>
+        <span class="hint">Scheduled simulation marks chosen articles as handled. Clear this history only when you deliberately want to test the same articles again.</span>
       </div>
     </div>
 
@@ -1251,7 +1274,7 @@ function renderEditor(p) {
       hint.textContent = ((cap.today && cap.today.text) || 'Feddit-hosted work uses a shared queue.') + ' ' +
         (cap.desktopAlternative || 'A desktop bot skips the shared queue and normally gets its turn all but instantly.');
     } else if (isDeep) {
-      hint.textContent = 'DeepSeek is a remote paid call. It costs money even in dry-run because dry-run skips the Feddit write, not the generation. Set the shared key in the top bar.';
+      hint.textContent = 'DeepSeek is a remote paid call. It costs money even during scheduled simulation because simulation skips the Feddit write, not the generation. Set the shared key in the top bar.';
     } else {
       hint.textContent = 'Runs on this computer with no shared queue. Leave the model on the suggested choice unless you know you want another.';
     }
@@ -1382,7 +1405,7 @@ function renderActivity(p) {
   const acts = (p.activity || []).slice().reverse();
   if (!acts.length) { ul.innerHTML = '<li>No activity yet.</li>'; return; }
   ul.innerHTML = acts.map(a => {
-    const dry = a.dryRun ? ' <span class="badge notoken">dry-run</span>' : '';
+    const dry = a.dryRun ? ' <span class="badge notoken" title="Generated by the automatic scheduler but not published">simulation</span>' : '';
     const fail = a.ok === false ? ' <span style="color:var(--bad)">failed</span>' : '';
     const tgt = a.target ? ' &middot; <small class="mono">' + esc(a.target) + '</small>' : '';
     return '<li><small class="mono">' + esc(a.at || '') + '</small> &middot; ' + esc(a.kind || '') + dry + fail + tgt +
@@ -1592,7 +1615,7 @@ async function previewNews(id) {
 }
 
 async function clearPosted(id) {
-  if (!confirm('Clear this profile\'s posted-article history? It will be able to post articles it has already posted (or dry-run "posted") before.')) return;
+  if (!confirm('Clear this profile\'s posted-article history? It will be able to post articles it has already published or marked handled during scheduled simulation.')) return;
   try {
     await api('/api/profiles/' + encodeURIComponent(id) + '/clear-posted', { method: 'POST' });
     toast('Posted history cleared.', 'ok');
