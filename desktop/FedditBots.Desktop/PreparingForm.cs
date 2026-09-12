@@ -42,7 +42,21 @@ internal sealed class PreparingForm : Form
 
     public void SetMessage(string message)
     {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action<string>(SetMessage), message);
+            return;
+        }
         _message.Text = message;
-        Application.DoEvents();
+    }
+
+    public void Complete()
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(Complete));
+            return;
+        }
+        Close();
     }
 }

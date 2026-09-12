@@ -45,7 +45,7 @@ New-Item -ItemType Directory -Path $install, $publish, $payload -Force | Out-Nul
 
 dotnet publish (Join-Path $PSScriptRoot "FedditBots.Desktop\FedditBots.Desktop.csproj") `
     -c Release -r win-x64 --self-contained true `
-    -p:PublishSingleFile=true -p:DebugType=None `
+    -p:PublishSingleFile=true -p:DebugType=None -p:Version=$Version `
     --configfile (Join-Path $PSScriptRoot "NuGet.Config") `
     -o $publish
 if ($LASTEXITCODE -ne 0) { throw "Desktop launcher publish failed." }

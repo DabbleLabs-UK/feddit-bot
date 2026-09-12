@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using System.Windows.Forms;
 
 namespace DabbleLabs.FedditBots.Desktop;
@@ -27,14 +28,7 @@ internal static class Program
         VersionPointer current;
         try
         {
-            using (var preparing = new PreparingForm())
-            {
-                preparing.Show();
-                Application.DoEvents();
-                var provisioner = new RuntimeProvisioner(paths, config, log);
-                await provisioner.EnsureOllamaAsync(preparing.SetMessage, cancellation.Token);
-                preparing.Close();
-            }
+            ProvisionRuntime(paths, config, log, cancellation.Token);
             current = paths.ReadCurrent(config);
             var pending = updater.ReadPending();
             if (pending is not null && UpdateSecurity.CompareVersions(pending.Version, current.Version) > 0)
@@ -136,6 +130,35 @@ internal static class Program
                 await Task.Delay(TimeSpan.FromSeconds(30));
             }
         }
+    }
+
+    private static void ProvisionRuntime(AppPaths paths, DesktopConfig config, AppLog log, CancellationToken cancellationToken)
+    {
+        Exception? failure = null;
+        using var preparing = new PreparingForm();
+        var provisioner = new RuntimeProvisioner(paths, config, log);
+
+        preparing.Shown += (_, _) =>
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await provisioner.EnsureOllamaAsync(preparing.SetMessage, cancellationToken);
+                }
+                catch (Exception error)
+                {
+                    failure = error;
+                }
+                finally
+                {
+                    preparing.Complete();
+                }
+            });
+        };
+
+        Application.Run(preparing);
+        if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     private static void OpenExisting(int port)
