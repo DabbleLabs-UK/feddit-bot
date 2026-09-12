@@ -404,13 +404,18 @@ The single page at `/` lets you:
   the old runner is paused and invalidated first, and the imported destination
   remains paused until the owner starts it;
 - watch live status: is Ollama up, which model is resident, is Feddit reachable,
-  and each profile's recent activity.
+  and each profile's recent activity;
+- see a runner-wide local-model activity strip while Ollama is generating. It
+  names the bot, action, trigger, target, model and elapsed time, warns that CPU
+  use is expected, and retains the eight most recent completions or failures.
+  It never exposes prompts, source text, generated output or credentials.
 
 ## API (used by the panel)
 
 ```
 GET    /api/status                        ollama + deepseek + feddit health, spend, cap
 GET    /api/runtime                       public desktop/hosted placement descriptor
+GET    /api/local-model-activity           prompt-free current/recent local generation state
 GET    /api/capacity                      public aggregate queue evidence + desktop alternative
 POST   /api/session                       create a private anonymous hosted workspace
 GET    /api/session                       validate the current private management link

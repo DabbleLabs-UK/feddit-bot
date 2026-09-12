@@ -129,6 +129,30 @@
     color: #c9e4ff; font-size: 12.5px;
   }
   .capacitybar b { color: #fff; }
+  .local-model-activity {
+    padding: 10px 16px; background: #18212a; border-bottom: 1px solid #38506a;
+    color: #d7e8f7; font-size: 12.5px;
+  }
+  .local-model-activity.working { background: #34280f; border-color: var(--warn); color: #f4dfad; }
+  .local-model-activity.failed { background: #33191b; border-color: var(--bad); color: #f0c1c1; }
+  .local-model-main { display: flex; align-items: flex-start; gap: 10px; }
+  .local-model-copy { min-width: 0; }
+  .local-model-copy strong { color: #fff; }
+  .local-model-meta { margin-top: 2px; color: inherit; opacity: .88; overflow-wrap: anywhere; }
+  .working-pulse {
+    width: 11px; height: 11px; margin-top: 4px; flex: 0 0 auto; border-radius: 50%;
+    background: var(--warn); box-shadow: 0 0 0 0 rgba(224,168,58,.65);
+    animation: working-pulse 1.5s infinite;
+  }
+  @keyframes working-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(224,168,58,.65); }
+    70% { box-shadow: 0 0 0 8px rgba(224,168,58,0); }
+    100% { box-shadow: 0 0 0 0 rgba(224,168,58,0); }
+  }
+  .local-model-history { margin: 7px 0 0 21px; }
+  .local-model-history summary { cursor: pointer; color: var(--accent); }
+  .local-model-history ul { margin: 6px 0 0; padding-left: 18px; color: var(--dim); }
+  .local-model-history li { margin: 3px 0; }
   .willuse { font-size: 12.5px; color: var(--text); margin-top: 6px; }
   .willuse b { color: var(--accent); }
   .spendline { font-size: 12px; color: var(--dim); margin-top: 6px; }
@@ -186,6 +210,9 @@
 
 <div class="capbanner" id="capBanner" style="display:none"></div>
 <div class="capacitybar" id="capacityBar" style="display:none"></div>
+<div class="local-model-activity" id="localModelActivity" style="display:none">
+  <div class="local-model-main"><span class="dot unknown"></span><div class="local-model-copy"><strong>Local model activity unavailable</strong></div></div>
+</div>
 <div class="runnerbar" id="runnerBar">
   <span>DeepSeek key: <b id="dsKeyState">unknown</b></span>
   <button id="setKeyBtn">Set / change key</button>
@@ -249,7 +276,7 @@ function toast(msg, kind) {
   setTimeout(() => t.remove(), kind === 'err' ? 6000 : 3500);
 }
 
-let state = { profiles: [], selected: null, defaultModel: '', status: null, settings: null, capacity: null, placement: 'desktop', appVersion: '', reloadingForUpdate: false, models: null, modelChoice: '', modelPoll: null };
+let state = { profiles: [], selected: null, defaultModel: '', status: null, settings: null, capacity: null, placement: 'desktop', appVersion: '', reloadingForUpdate: false, models: null, modelChoice: '', modelPoll: null, localModelActivity: null, localModelActivityLoading: false };
 
 function applyPlacementChrome() {
   const hosted = state.placement === 'hosted';
@@ -258,6 +285,7 @@ function applyPlacementChrome() {
   $('#dryRunControl').style.display = hosted ? 'none' : '';
   $('#pauseBtn').style.display = hosted ? 'none' : '';
   $('#modelSetupBtn').style.display = hosted ? 'none' : '';
+  $('#localModelActivity').style.display = hosted ? 'none' : '';
   $('#manageLinkBtn').style.display = hosted && ownerAccessToken() ? '' : 'none';
   $('#newBtn').disabled = hosted && !ownerAccessToken();
   $('#importBtn').disabled = hosted && !ownerAccessToken();
@@ -349,12 +377,92 @@ async function recoverHostedWorkspace() {
 
 async function enterWorkspace(openNewBot) {
   applyPlacementChrome();
-  await Promise.all([loadStatus(), loadCapacity(), loadProfiles(), loadModels()]);
+  await Promise.all([loadStatus(), loadCapacity(), loadProfiles(), loadModels(), loadLocalModelActivity()]);
   const selectedInstalled = state.models && state.models.installed.includes(state.models.selectedModel);
   if (state.placement === 'desktop' && !selectedInstalled) {
     renderModelSetup(true);
   } else if (openNewBot || !state.profiles.length) {
     renderNewBotFlow();
+  }
+}
+
+function activityDuration(ms) {
+  const total = Math.max(0, Math.floor(Number(ms) / 1000));
+  if (total < 60) return total + 's';
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return minutes + 'm ' + String(seconds).padStart(2, '0') + 's';
+}
+
+function activityDescription(item) {
+  const parts = [esc(item.action || 'writing bot output')];
+  if (item.trigger) parts.push(esc(item.trigger));
+  if (item.target) parts.push(esc(item.target));
+  return parts.join(' &middot; ');
+}
+
+function renderLocalModelActivity() {
+  const panel = $('#localModelActivity');
+  if (state.placement === 'hosted') { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  const snapshot = state.localModelActivity;
+  if (!snapshot) {
+    panel.className = 'local-model-activity';
+    panel.innerHTML = '<div class="local-model-main"><span class="dot unknown"></span><div class="local-model-copy"><strong>Checking local model activity...</strong></div></div>';
+    return;
+  }
+
+  const active = snapshot.active;
+  const recent = snapshot.recent || [];
+  const wasOpen = !!panel.querySelector('details[open]');
+  let headline = 'Local model idle';
+  let detail = 'No bot output is being generated on this computer right now.';
+  let marker = '<span class="dot good"></span>';
+  panel.className = 'local-model-activity';
+
+  if (active) {
+    const elapsed = Date.now() - Number(active.startedAt || Date.now());
+    headline = 'Local model working for ' + esc(active.botName || 'unknown bot');
+    detail = activityDescription(active) + ' &middot; ' + activityDuration(elapsed) +
+      (active.model ? ' &middot; model ' + esc(active.model) : '') +
+      '. High CPU use is expected while this is shown.';
+    marker = '<span class="working-pulse" aria-hidden="true"></span>';
+    panel.className += ' working';
+  } else if (recent.length) {
+    const last = recent[0];
+    const ago = Math.max(0, Date.now() - Number(last.finishedAt || Date.now()));
+    headline = last.status === 'failed' ? 'Local model idle - last generation failed' : 'Local model idle';
+    detail = 'Last: ' + esc(last.botName || 'unknown bot') + ' &middot; ' + activityDescription(last) +
+      ' &middot; took ' + activityDuration(last.durationMs) + ' &middot; finished ' + activityDuration(ago) + ' ago.';
+    marker = '<span class="dot ' + (last.status === 'failed' ? 'bad' : 'good') + '"></span>';
+    if (last.status === 'failed') panel.className += ' failed';
+  }
+
+  const history = recent.length
+    ? '<details class="local-model-history"' + (wasOpen ? ' open' : '') + '><summary>Recent local model generations (' + recent.length + ')</summary><ul>' +
+      recent.map((item) => {
+        const when = item.finishedAt ? new Date(item.finishedAt).toLocaleTimeString() : '';
+        const result = item.status === 'failed' ? 'failed' : 'completed';
+        const error = item.error ? ' - ' + esc(item.error) : '';
+        return '<li><span class="mono">' + esc(when) + '</span> - <b>' + esc(item.botName || 'unknown bot') + '</b>: ' +
+          activityDescription(item) + ' - ' + result + ' in ' + activityDuration(item.durationMs) + error + '</li>';
+      }).join('') + '</ul></details>'
+    : '';
+
+  panel.innerHTML = '<div class="local-model-main">' + marker + '<div class="local-model-copy"><strong>' + headline +
+    '</strong><div class="local-model-meta">' + detail + '</div></div></div>' + history;
+}
+
+async function loadLocalModelActivity() {
+  if (state.placement === 'hosted' || state.localModelActivityLoading) return;
+  state.localModelActivityLoading = true;
+  try {
+    state.localModelActivity = await api('/api/local-model-activity');
+    renderLocalModelActivity();
+  } catch {
+    // The runner can briefly disappear while an automatic update switches it.
+  } finally {
+    state.localModelActivityLoading = false;
   }
 }
 
@@ -2151,6 +2259,11 @@ setInterval(async () => {
   }
   loadCapacity();
 }, 20000);
+// This endpoint is deliberately lightweight, so the UI can reveal CPU-heavy
+// local inference within a few seconds. The one-second redraw keeps elapsed
+// time moving without making an HTTP request every second.
+setInterval(loadLocalModelActivity, 3000);
+setInterval(renderLocalModelActivity, 1000);
 </script>
 </body>
 </html>

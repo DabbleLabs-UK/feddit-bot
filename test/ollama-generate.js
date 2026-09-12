@@ -79,6 +79,40 @@ async function run() {
       (error) => error.code === 'OLLAMA_TIMEOUT' && /did not finish within 5ms/i.test(error.message),
     );
     assert.equal(ollama.isBusy(), false, 'single-flight gate is released after a timeout');
+
+    let releaseVisibleGeneration;
+    global.fetch = async () => new Promise((resolve) => {
+      releaseVisibleGeneration = () => resolve(fakeResponse({
+        message: { content: 'Tracked reply.' },
+        prompt_eval_count: 12,
+        eval_count: 3,
+        done_reason: 'stop',
+      }));
+    });
+    const tracked = ollama.generate({
+      model: 'tracked-model',
+      profileId: 'profile-1',
+      botName: 'happy_dayz',
+      kind: 'scheduled-generation',
+      activityAction: 'writing a comment',
+      activityTrigger: 'scheduled simulation',
+      activityTarget: 'f/localnews t3_123',
+    });
+    await Promise.resolve();
+    const active = ollama.generationActivity().active;
+    assert.equal(active.botName, 'happy_dayz');
+    assert.equal(active.action, 'writing a comment');
+    assert.equal(active.trigger, 'scheduled simulation');
+    assert.equal(active.target, 'f/localnews t3_123');
+    assert.equal(active.status, 'running');
+    assert.equal(Object.hasOwn(active, 'prompt'), false, 'activity status never exposes the prompt');
+    releaseVisibleGeneration();
+    await tracked;
+    const finished = ollama.generationActivity();
+    assert.equal(finished.active, null);
+    assert.equal(finished.recent[0].status, 'completed');
+    assert.equal(finished.recent[0].botName, 'happy_dayz');
+    assert.ok(finished.recent[0].durationMs >= 0);
   } finally {
     global.fetch = originalFetch;
   }

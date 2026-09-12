@@ -164,6 +164,22 @@ function safeHostedJob(job) {
   };
 }
 
+function safeLocalGenerationActivity() {
+  const snapshot = ollama.generationActivity();
+  const enrich = (item) => {
+    if (!item) return null;
+    const profile = item.profileId ? store.getProfile(item.profileId) : null;
+    return {
+      ...item,
+      botName: item.botName || (profile ? store.referenceName(profile) : '') || 'unknown bot',
+    };
+  };
+  return {
+    active: enrich(snapshot.active),
+    recent: (snapshot.recent || []).map(enrich),
+  };
+}
+
 // ---- API routing ------------------------------------------------------------
 
 async function handleApi(req, res, urlPath, query) {
@@ -175,6 +191,14 @@ async function handleApi(req, res, urlPath, query) {
       appVersion: String(process.env.FEDDIT_APP_VERSION || 'development'),
       ownerSessionRequired: PLACEMENT === 'hosted',
     });
+  }
+
+  // Lightweight, prompt-free operational visibility for the desktop UI. This
+  // is deliberately separate from /api/status so it can be polled frequently
+  // without repeatedly probing Ollama, DeepSeek and Feddit.
+  if (method === 'GET' && urlPath === '/api/local-model-activity') {
+    if (PLACEMENT === 'hosted') return sendJson(res, 404, { error: 'Not found' });
+    return sendJson(res, 200, safeLocalGenerationActivity());
   }
 
   if (method === 'GET' && urlPath === '/api/runtime-state') {
@@ -766,9 +790,12 @@ async function handleApi(req, res, urlPath, query) {
           numPredict: Number(existing.numPredict) || 200,
           apiKey: prov === 'deepseek' ? secrets.getDeepseekKey() : undefined,
           profileId: existing.id,
+          botName: store.referenceName(existing),
           ownerKey: existing.id,
           priority: 'interactive',
           kind: 'preview',
+          activityAction: 'writing a manual reply preview',
+          activityTrigger: 'manual preview button',
         };
         if (prov === 'dell') {
           const job = providers.enqueueDell(generation);
