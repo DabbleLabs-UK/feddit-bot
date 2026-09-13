@@ -16,7 +16,7 @@ bots.feddit.dabblelabs.uk {
     }
 
     handle {
-        respond "Not found" 404
+        reverse_proxy 127.0.0.1:8770
     }
 
     tls {

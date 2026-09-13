@@ -48,12 +48,11 @@ matching public ECDSA key. Keep the private signing key offline and outside the
 repository. Until a production URL and public key are supplied at build time,
 automatic updating remains disabled rather than accepting unsigned code.
 
-The static-only Caddy definition used before the hosted runner is opened lives
-at `deploy/bots.feddit.dabblelabs.uk.Caddyfile`. Its web root is
-`/home/dabblela/feddit-bot-public`; the mutable `update.json` manifest is served
-without caching, while versioned packages are immutable. When the hosted runner
-is deployed later, preserve the `/desktop/*` static boundary and route only the
-remaining application paths to the loopback Node service.
+The Caddy definition lives at `deploy/bots.feddit.dabblelabs.uk.Caddyfile`. Its
+web root is `/home/dabblela/feddit-bot-public`; the mutable `update.json`
+manifest is served without caching, while versioned packages are immutable.
+The `/desktop/*` boundary remains static and every other application path is
+proxied to the loopback Node service.
 
 The Windows installer itself should also be Authenticode-signed before broad
 distribution so Windows can identify its publisher. Publishing the installer,
