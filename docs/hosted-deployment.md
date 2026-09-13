@@ -40,6 +40,35 @@ Never start two publishers for one identity. An imported ordinary profile pack
 is paused and secret-free. Moving a registered identity requires the explicit
 private handover file, which pauses the source and rotates the token first.
 
+## DELL worker services
+
+DELL uses the user-level systemd definitions in `deploy/dell/`. The worker is a
+Windows Node process launched from WSL, rather than a Linux Node process. This
+is intentional: Windows Node can reach the existing Windows Ollama listener on
+`127.0.0.1` without making Ollama available on the LAN. The Ollama supervisor
+keeps the existing Windows service available and does not launch a duplicate
+when the desktop Ollama app already owns the port.
+
+Install the repository payload below
+`~/.local/lib/feddit-bot/releases/<release>` and point
+`~/.local/lib/feddit-bot/current` at that immutable release. Put the two service
+files in `~/.config/systemd/user/`, and put the supervisor script in
+`~/.local/lib/feddit-bot/ops/`.
+
+The access-restricted `~/.config/feddit-bot/worker.env` contains:
+
+```bash
+FEDDIT_RUNNER_URL=https://feddit-bots.dabblelabs.uk
+FEDDIT_WORKER_KEY=the-same-secret-as-the-public-runner
+FEDDIT_WORKER_ID=dell
+FEDDIT_WORKER_MODELS=hf.co/mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated-GGUF:Q5_K_M
+```
+
+Enable both services into the existing `feddit-bots.target`, then verify
+`systemctl --user status feddit-worker.service` and the public `/api/capacity`
+response. User lingering must be enabled so the target survives disconnected
+SSH sessions. Never print the worker key in logs or copy it into the repository.
+
 ## Desktop updates
 
 Publish desktop manifests and signed update payloads below

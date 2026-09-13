@@ -1,0 +1,17 @@
+[Unit]
+Description=Feddit outbound DELL inference worker
+Wants=network-online.target feddit-ollama.service
+After=network-online.target feddit-ollama.service
+PartOf=feddit-bots.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/feddit-bot/worker.env
+WorkingDirectory=%h/.local/lib/feddit-bot/current
+ExecStartPre=/bin/bash -lc 'for attempt in {1..60}; do "/mnt/c/Windows/System32/curl.exe" -fsS --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1'
+ExecStart="/mnt/c/Program Files/nodejs/node.exe" %h/.local/lib/feddit-bot/current/worker.js
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=feddit-bots.target

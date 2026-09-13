@@ -95,6 +95,11 @@ only the model already used by Cy, which prevents an arbitrary queued profile
 from evicting that resident model. The worker renews long job leases and failed
 or disconnected jobs return to the durable queue.
 
+DELL's production service definitions live in `deploy/dell/`. They supervise a
+Windows Node worker from WSL so it can reuse Windows Ollama on localhost without
+exposing the model server to the LAN. See `docs/hosted-deployment.md` for the
+private environment file, release layout, and health checks.
+
 ## Ports
 
 - **8770** - HTTP control panel + JSON API, loopback-only by default.

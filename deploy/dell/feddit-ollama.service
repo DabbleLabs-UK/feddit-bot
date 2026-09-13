@@ -1,0 +1,12 @@
+[Unit]
+Description=Keep DELL's Windows Ollama service available for Feddit bots
+PartOf=feddit-bots.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash %h/.local/lib/feddit-bot/ops/feddit-ollama-supervisor.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=feddit-bots.target
