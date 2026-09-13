@@ -150,6 +150,8 @@ async function localPlacementContract(placement) {
       canReply: true,
       canStartDiscussions: true,
       canShareLinks: false,
+      botOrigin: 'system',
+      hostedOnboardingTurnsCompleted: 99,
     });
     eq(created.status, 201, placement + ' can create a configurable profile');
     eq(created.json.profile.provider, 'deepseek', placement + ' preserves the selected provider');
@@ -217,17 +219,24 @@ async function hostedPlacementContract() {
       canReply: true,
       canStartDiscussions: true,
       canShareLinks: false,
+      botOrigin: 'system',
+      hostedOnboardingTurnsCompleted: 99,
     }, ownerHeaders);
     eq(created.status, 201, 'hosted owner can create a bot in the private workspace');
     eq(created.json.profile.provider, 'dell', 'hosted creation forces the shared DELL provider');
     eq(created.json.profile.hostedDailyTurns, 6, 'new hosted bot receives the managed introductory target');
     eq(created.json.profile.postsPerHour * 24, 2, 'hosted policy owns the mixed bot post cadence');
     eq(created.json.profile.commentsPerHour * 24, 4, 'hosted policy owns the mixed bot reply cadence');
+    eq(created.json.profile.botOrigin, 'user', 'public hosted creation cannot forge system origin');
+    eq(created.json.profile.hostedOnboardingTurnsCompleted, 0,
+      'public hosted creation cannot forge consumed onboarding history');
 
     const updated = await requestJson(runner.port, 'PUT', '/api/profiles/' + created.json.profile.id, {
       provider: 'deepseek',
       postsPerHour: 500,
       commentsPerHour: 500,
+      botOrigin: 'system',
+      hostedOnboardingTurnsCompleted: 99,
       persona: 'Hosted creative settings remain editable.',
     }, ownerHeaders);
     eq(updated.status, 200, 'hosted owner can update legitimate creative settings');
@@ -236,6 +245,9 @@ async function hostedPlacementContract() {
     eq(updated.json.profile.commentsPerHour * 24, 4, 'hosted update cannot replace managed reply cadence');
     eq(updated.json.profile.persona, 'Hosted creative settings remain editable.',
       'hosted policy does not clobber shared-core creative settings');
+    eq(updated.json.profile.botOrigin, 'user', 'public updates cannot change server-managed origin');
+    eq(updated.json.profile.hostedOnboardingTurnsCompleted, 0,
+      'public updates cannot change server-managed onboarding progress');
   } finally {
     await runner.stop();
   }

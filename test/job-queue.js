@@ -53,6 +53,38 @@ function run() {
   {
     const f = fixture();
     try {
+      fs.writeFileSync(f.file, JSON.stringify({
+        version: 1,
+        jobs: [{
+          id: 'legacy-job',
+          ownerKey: 'legacy-owner',
+          profileId: 'legacy-profile',
+          priority: 'normal',
+          status: 'queued',
+          createdAt: f.now(),
+          notBefore: f.now(),
+          attempts: 0,
+          maxAttempts: 3,
+          payload: { prompt: 'from version one' },
+        }],
+        workers: {},
+        lastOwnerByPriority: { normal: 'legacy-owner' },
+      }, null, 2), 'utf8');
+      const migrated = createQueue({ file: f.file, now: f.now, random: () => 0.345678 });
+      const claimed = migrated.claim('dell-legacy');
+      eq(claimed.id, 'legacy-job', 'a queued version-one job remains claimable');
+      eq(claimed.allocationClass, undefined,
+        'legacy records remain byte-compatible while their user class is derived at selection time');
+      eq(JSON.parse(fs.readFileSync(f.file, 'utf8')).version, 2,
+        'saving a legacy queue upgrades the durable envelope version');
+    } finally {
+      f.cleanup();
+    }
+  }
+
+  {
+    const f = fixture();
+    try {
       const first = f.queue.enqueue({ ownerKey: 'same', dedupeKey: 'operation-1', payload: { prompt: 'one' } });
       const repeated = f.queue.enqueue({ ownerKey: 'same', dedupeKey: 'operation-1', payload: { prompt: 'two' } });
       eq(repeated.id, first.id, 'an active operation is not enqueued twice');
@@ -97,19 +129,21 @@ function run() {
   }
 
   {
-    const f = fixture({ maxActivePerOwner: 1 });
+    const f = fixture({ maxActivePerProfile: 1 });
     try {
-      const first = f.queue.enqueue({ ownerKey: 'one-bot', payload: { prompt: 'one' } });
+      const first = f.queue.enqueue({ ownerKey: 'one-owner', profileId: 'one-bot', payload: { prompt: 'one' } });
       assert.throws(
-        () => f.queue.enqueue({ ownerKey: 'one-bot', payload: { prompt: 'two' } }),
-        (err) => err && err.code === 'QUEUE_OWNER_LIMIT',
+        () => f.queue.enqueue({ ownerKey: 'one-owner', profileId: 'one-bot', payload: { prompt: 'two' } }),
+        (err) => err && err.code === 'QUEUE_PROFILE_LIMIT',
         'one bot cannot accumulate hosted generations',
       );
       checks++;
+      eq(f.queue.enqueue({ ownerKey: 'one-owner', profileId: 'another-bot' }).status, 'queued',
+        'another bot owned by the same person retains its own in-flight slot');
       f.queue.claim('dell-1');
       f.queue.complete(first.id, 'dell-1', { text: 'finished' });
-      eq(f.queue.enqueue({ ownerKey: 'one-bot' }).status, 'queued', 'the bot may queue again after finishing');
-      eq(f.queue.enqueue({ ownerKey: 'another-bot' }).status, 'queued', 'another bot keeps its own fair queue slot');
+      eq(f.queue.enqueue({ ownerKey: 'one-owner', profileId: 'one-bot' }).status, 'queued',
+        'the bot may queue again after finishing');
     } finally {
       f.cleanup();
     }
@@ -195,10 +229,93 @@ function run() {
   {
     const f = fixture();
     try {
-      const background = f.queue.enqueue({ ownerKey: 'patient', priority: 'background' });
+      f.queue.enqueue({ ownerKey: 'patient', priority: 'background' });
       f.advance(5 * 60 * 60 * 1000);
-      f.queue.enqueue({ ownerKey: 'new', priority: 'interactive' });
-      eq(f.queue.claim('dell-1').id, background.id, 'aging eventually prevents background starvation');
+      const interactive = f.queue.enqueue({ ownerKey: 'new', priority: 'interactive' });
+      eq(f.queue.claim('dell-1').id, interactive.id,
+        'aging cannot let old synthetic work cross the interactive class boundary');
+    } finally {
+      f.cleanup();
+    }
+  }
+
+  {
+    const f = fixture();
+    try {
+      const synthetic = f.queue.enqueue({
+        ownerKey: 'system-population',
+        profileId: 'synthetic-a',
+        priority: 'normal',
+        allocationClass: 'synthetic',
+      });
+      f.advance(48 * 60 * 60 * 1000);
+      const user = f.queue.enqueue({
+        ownerKey: 'human-owner',
+        profileId: 'user-a',
+        priority: 'normal',
+        allocationClass: 'user',
+      });
+      eq(f.queue.claim('dell-1').id, user.id,
+        'established user-created work outranks even very old synthetic work');
+      eq(f.queue.get(synthetic.id).allocationClass, 'synthetic',
+        'explicit system allocation class persists in the durable queue');
+      eq(f.queue.capacity().byAllocationClass.synthetic, 1,
+        'capacity reports aggregate system-population waiting work');
+    } finally {
+      f.cleanup();
+    }
+  }
+
+  {
+    const f = fixture();
+    try {
+      f.queue.enqueue({
+        ownerKey: 'owner-a', profileId: 'established', allocationClass: 'user', onboarding: false,
+      });
+      const newcomer = f.queue.enqueue({
+        ownerKey: 'owner-a', profileId: 'newcomer', allocationClass: 'user', onboarding: true,
+      });
+      eq(f.queue.claim('dell-1').id, newcomer.id,
+        'new-bot onboarding wins within the same owner fair share');
+    } finally {
+      f.cleanup();
+    }
+  }
+
+  {
+    const f = fixture();
+    try {
+      const firstProfile = f.queue.enqueue({
+        ownerKey: 'one-human', profileId: 'profile-a', allocationClass: 'user',
+      });
+      const secondProfile = f.queue.enqueue({
+        ownerKey: 'one-human', profileId: 'profile-b', allocationClass: 'user',
+      });
+      eq(f.queue.claim('dell-1').id, firstProfile.id, 'one owner starts with its oldest profile');
+      f.queue.complete(firstProfile.id, 'dell-1', { text: 'done' });
+      eq(f.queue.claim('dell-1').id, secondProfile.id,
+        'profile-level rotation gives another bot of the same owner progress');
+    } finally {
+      f.cleanup();
+    }
+  }
+
+  {
+    const f = fixture();
+    try {
+      const ownerAFirst = f.queue.enqueue({
+        ownerKey: 'owner-a', profileId: 'a-new-1', allocationClass: 'user', onboarding: true,
+      });
+      f.queue.enqueue({
+        ownerKey: 'owner-a', profileId: 'a-new-2', allocationClass: 'user', onboarding: true,
+      });
+      const ownerB = f.queue.enqueue({
+        ownerKey: 'owner-b', profileId: 'b-established', allocationClass: 'user', onboarding: false,
+      });
+      eq(f.queue.claim('dell-1').id, ownerAFirst.id, 'the oldest owner receives the first user turn');
+      f.queue.complete(ownerAFirst.id, 'dell-1', { text: 'done' });
+      eq(f.queue.claim('dell-1').id, ownerB.id,
+        'many onboarding bots do not let one owner take another owner\'s next fair share');
     } finally {
       f.cleanup();
     }

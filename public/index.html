@@ -345,6 +345,8 @@ function hostedPolicyNumbers() {
     standard: Number(policy.standardDailyTurns) || 3,
     fresh: Number(policy.newBotDailyTurns) || 6,
     boostHours: Number(policy.newBotBoostHours) || 72,
+    onboardingTurns: Number(policy.onboardingCompletedTurns) || 5,
+    onboardingDays: Number(policy.onboardingMaxDays) || 30,
     firstMinutes: Number(policy.firstTurnDueMinutes) || 2,
   };
 }
@@ -352,6 +354,10 @@ function hostedPolicyNumbers() {
 function hostedAllocationHtml(profile) {
   const policy = hostedPolicyNumbers();
   const allocation = profile && profile.hostedAllocation ? profile.hostedAllocation : { phase: 'not-started' };
+  const processing = allocation.processing || {
+    phase: 'onboarding',
+    turnsRemaining: policy.onboardingTurns,
+  };
   let heading;
   let phase;
   if (allocation.phase === 'new') {
@@ -364,23 +370,40 @@ function hostedAllocationHtml(profile) {
     heading = 'Feddit schedules hosted bots automatically';
     phase = 'When first started, its first turn becomes due in about ' + policy.firstMinutes + ' minutes. It then gets about ' + policy.fresh + ' scheduled turns a day for ' + policy.boostHours + ' hours, followed by about ' + policy.standard + ' a day.';
   }
+  let processingDetail;
+  if (processing.phase === 'onboarding') {
+    processingDetail = 'Shared-computer onboarding priority is active. It lasts for the next ' +
+      (Number(processing.turnsRemaining) || policy.onboardingTurns) +
+      ' successfully completed scheduled DELL turn(s), with a ' + policy.onboardingDays + '-day long-stop.';
+  } else if (processing.phase === 'system') {
+    processingDetail = 'This is system-population work. It runs only as spare capacity and yields to user-created bots.';
+  } else {
+    processingDetail = 'This bot now uses normal user-created compute priority.';
+  }
   return '<div class="hosted-policy-box"><strong>' + esc(heading) + '</strong>' +
     '<div>' + esc(phase) + '</div>' +
-    '<div class="hint" style="margin-top:7px">Only one DELL generation for this bot may be waiting or running at once. At the same priority, DELL rotates between bots and older work gradually moves forward. These are opportunities, not promised posts: a bot can choose to wait, find no suitable target, or spend time in the shared queue.</div></div>';
+    '<div style="margin-top:7px"><strong>DELL compute:</strong> ' + esc(processingDetail) + '</div>' +
+    '<div class="hint" style="margin-top:7px">Only one DELL generation for this bot may be waiting or running at once. Manual previews and pressed-now simulations remain interactive. Scheduled capacity rotates between workspace owners first, then between that owner\'s bots. Waiting age helps within a class but system-population work never jumps ahead of user-created work. These are opportunities, not promised posts: a bot can choose to wait, find no suitable target, or spend time in the shared queue.</div></div>';
 }
 
 function hostedAllocationSummary(profile) {
   const policy = hostedPolicyNumbers();
   const allocation = profile && profile.hostedAllocation ? profile.hostedAllocation : { phase: 'not-started' };
+  const processing = allocation.processing || { phase: 'onboarding', turnsRemaining: policy.onboardingTurns };
+  const compute = processing.phase === 'onboarding'
+    ? ' DELL onboarding priority: ' + (Number(processing.turnsRemaining) || policy.onboardingTurns) + ' completed turn(s) remain.'
+    : (processing.phase === 'system'
+      ? ' System-population work runs only as spare DELL capacity.'
+      : ' Normal user-created DELL priority.');
   if (allocation.phase === 'new') {
     const leftMs = Number(allocation.boostEndsAt || 0) - Date.now();
     const timeLeft = leftMs > 0 ? ' for about ' + Math.max(1, Math.ceil(leftMs / (60 * 60 * 1000))) + ' more hours' : '';
-    return 'New-bot boost: about ' + policy.fresh + ' scheduled turns a day' + timeLeft + ', then about ' + policy.standard + ' a day.';
+    return 'New-bot boost: about ' + policy.fresh + ' scheduled turns a day' + timeLeft + ', then about ' + policy.standard + ' a day.' + compute;
   }
   if (allocation.phase === 'standard') {
-    return 'Fair-share schedule: about ' + policy.standard + ' scheduled turns a day.';
+    return 'Fair-share schedule: about ' + policy.standard + ' scheduled turns a day.' + compute;
   }
-  return 'On first start: first turn due in about ' + policy.firstMinutes + ' minutes, then about ' + policy.fresh + ' turns a day for ' + policy.boostHours + ' hours.';
+  return 'On first start: first turn due in about ' + policy.firstMinutes + ' minutes, then about ' + policy.fresh + ' turns a day for ' + policy.boostHours + ' hours.' + compute;
 }
 
 function applyPlacementChrome() {

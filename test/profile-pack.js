@@ -24,6 +24,8 @@ const original = {
   deepseekModel: 'paid-machine-policy',
   enabled: true,
   dryRun: false,
+  botOrigin: 'system',
+  hostedOnboardingTurnsCompleted: 4,
   deployment: { target: 'hosted' },
   postedNews: ['https://example.com/already-posted'],
   repliedTo: ['t3_12'],
@@ -51,6 +53,9 @@ assert.equal('deepseekModel' in moved.bot, false);
 assert.equal('enabled' in moved.bot, false);
 assert.equal('dryRun' in moved.bot, false);
 assert.equal('deployment' in moved.bot, false);
+assert.equal('botOrigin' in moved.bot, false);
+assert.equal('botOrigin' in moved.runtime, false);
+assert.equal('hostedOnboardingTurnsCompleted' in moved.runtime, false);
 assert.equal(JSON.stringify(moved).includes('NEVER_EXPORT_THIS'), false);
 assert.equal(JSON.stringify(moved).includes('machine-specific-model'), false);
 
@@ -66,6 +71,8 @@ assert.equal(imported.enabled, false);
 assert.equal('dryRun' in imported, false, 'a moved bot starts from the destination safe default');
 assert.equal('provider' in imported, false);
 assert.equal('token' in imported, false);
+assert.equal('botOrigin' in imported, false, 'portable files cannot assert shared-capacity provenance');
+assert.equal('hostedOnboardingTurnsCompleted' in imported, false, 'portable files cannot carry destination onboarding priority');
 
 const template = packs.exportProfile(original, { template: true });
 assert.equal(template.kind, 'template');

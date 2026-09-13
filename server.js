@@ -21,7 +21,7 @@ const gdelt = require('./lib/gdelt');
 const feeds = require('./lib/feeds');
 const scheduler = require('./lib/scheduler');
 const profilePack = require('./lib/profile-pack');
-const { createQueue } = require('./lib/job-queue');
+const { cleanAllocationClass, createQueue } = require('./lib/job-queue');
 const { createTurnStore } = require('./lib/turn-store');
 const hostedPolicy = require('./lib/hosted-policy');
 const workerAuth = require('./lib/worker-auth');
@@ -43,7 +43,7 @@ const PLACEMENT = ['desktop', 'hosted', 'advanced'].includes(requestedPlacement)
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const jobQueue = createQueue({
   file: path.join(store.DATA_DIR, 'jobs.json'),
-  maxActivePerOwner: PLACEMENT === 'hosted' ? hostedPolicy.MAX_ACTIVE_JOBS_PER_BOT : 0,
+  maxActivePerProfile: PLACEMENT === 'hosted' ? hostedPolicy.MAX_ACTIVE_JOBS_PER_BOT : 0,
 });
 const turnStore = createTurnStore({ file: path.join(store.DATA_DIR, 'turns.json') });
 providers.configureDellQueue(jobQueue);
@@ -171,10 +171,16 @@ function safeProfile(p) {
 
 function safeHostedJob(job) {
   const result = job && job.result && typeof job.result === 'object' ? job.result : {};
+  const allocationClass = cleanAllocationClass(job.allocationClass, job.priority);
   return {
     id: job.id,
     status: job.status,
     priority: job.priority,
+    serviceClass: allocationClass === 'interactive'
+      ? 'interactive'
+      : (allocationClass === 'synthetic'
+        ? 'system spare capacity'
+        : (job.onboarding ? 'new bot onboarding' : 'user-created bot')),
     kind: job.kind,
     activityAction: job.activityAction,
     activityTrigger: job.activityTrigger,
@@ -595,6 +601,9 @@ async function handleApi(req, res, urlPath, query) {
   if (method === 'POST' && urlPath === '/api/profiles') {
     const body = await readBody(req);
     delete body.ownerId;
+    delete body.botOrigin;
+    delete body.hostedOnboardingTurnsCompleted;
+    delete body.hostedActivatedAt;
     if (requestOwner) {
       body.ownerId = requestOwner.id;
       applyHostedProfilePolicy(body);
@@ -724,6 +733,9 @@ async function handleApi(req, res, urlPath, query) {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
       const body = await readBody(req);
       delete body.ownerId;
+      delete body.botOrigin;
+      delete body.hostedOnboardingTurnsCompleted;
+      delete body.hostedActivatedAt;
       if (existing.token && Object.prototype.hasOwnProperty.call(body, 'fedditUsername')) {
         const currentUsername = String(existing.fedditUsername || '').trim().toLowerCase();
         const requestedUsername = String(body.fedditUsername || '').trim().toLowerCase();
@@ -960,7 +972,7 @@ async function handleApi(req, res, urlPath, query) {
           apiKey: prov === 'deepseek' ? secrets.getDeepseekKey() : undefined,
           profileId: existing.id,
           botName: store.referenceName(existing),
-          ownerKey: existing.id,
+          ownerKey: existing.ownerId || existing.id,
           priority: 'interactive',
           kind: 'preview',
           activityAction: 'writing a manual reply preview',
@@ -988,7 +1000,7 @@ async function handleApi(req, res, urlPath, query) {
           : (err.code === 'BAD_KEY' || err.code === 'NO_KEY') ? 400
           : (err.code === 'INSUFFICIENT_BALANCE') ? 402
           : (err.code === 'RATE_LIMITED') ? 429
-          : (err.code === 'QUEUE_OWNER_LIMIT') ? 429
+          : (err.code === 'QUEUE_OWNER_LIMIT' || err.code === 'QUEUE_PROFILE_LIMIT') ? 429
           : 500;
         return sendJson(res, code, { error: err.message });
       }
@@ -1171,12 +1183,20 @@ const server = http.createServer((req, res) => {
 function reconcileHostedProfiles(at = Date.now()) {
   if (PLACEMENT !== 'hosted') return;
   for (const profile of store.listProfiles()) {
-    if (!profile.ownerId) continue;
+    if (!profile.ownerId && profile.botOrigin !== 'system') continue;
     const managed = applyHostedProfilePolicy({}, profile, at);
     const changed = Object.keys(managed).some((key) =>
       JSON.stringify(profile[key]) !== JSON.stringify(managed[key]));
     if (changed) store.updateProfile(profile.id, managed);
   }
+}
+
+function activeSyntheticTurnCount() {
+  if (PLACEMENT !== 'hosted') return 0;
+  return turnStore.listActive().filter((turn) => {
+    const profile = store.getProfile(turn.profileId);
+    return profile && profile.botOrigin === 'system';
+  }).length;
 }
 reconcileHostedProfiles();
 const schedulerHandle = scheduler.start({
@@ -1187,6 +1207,14 @@ const schedulerHandle = scheduler.start({
   feddit,
   gdelt,
   feeds,
+  queueAllocationFor: PLACEMENT === 'hosted'
+    ? (profile, at) => hostedPolicy.processingFor(profile, at)
+    : undefined,
+  admitHostedTurn: PLACEMENT === 'hosted'
+    ? (profile) => hostedPolicy.admissionFor(profile, jobQueue.capacity(), {
+      activeSyntheticTurns: activeSyntheticTurnCount(),
+    })
+    : undefined,
   getDeepseekKey: () => secrets.getDeepseekKey(),
   log: (message) => console.log('[scheduler] ' + message),
 });

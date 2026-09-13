@@ -93,4 +93,16 @@ assert.equal(modernMixed.canShareLinks, true);
 assert.equal(modernMixed.botType, 'conversational', 'mixed profiles use the safest legacy compatibility type');
 assert.equal(modernMixed.mode, 'both', 'legacy mode remains coherent with independent abilities');
 
+const originUpgrade = store.migrateProfiles([
+  { id: 'existing-without-origin' },
+  { id: 'future-system', botOrigin: 'system', hostedOnboardingTurnsCompleted: 3 },
+  { id: 'invalid-origin', botOrigin: 'robot', hostedOnboardingTurnsCompleted: -9 },
+], 8);
+assert.equal(originUpgrade[0].botOrigin, 'user', 'existing profiles default safely to user-created origin');
+assert.equal(originUpgrade[0].hostedOnboardingTurnsCompleted, 0, 'existing profiles start with no consumed onboarding turns');
+assert.equal(originUpgrade[1].botOrigin, 'system', 'explicit system-generated origin persists through migration');
+assert.equal(originUpgrade[1].hostedOnboardingTurnsCompleted, 3, 'durable onboarding progress persists through migration');
+assert.equal(originUpgrade[2].botOrigin, 'user', 'invalid origin cannot create a third implicit class');
+assert.equal(originUpgrade[2].hostedOnboardingTurnsCompleted, 0, 'invalid negative onboarding progress is clamped safely');
+
 console.log('model-migration: all checks passed');

@@ -9,6 +9,7 @@ const { createQueue } = require('../lib/job-queue');
 const { createDellProvider } = require('../lib/providers/dell');
 const { createScheduler } = require('../lib/scheduler');
 const { createTurnStore } = require('../lib/turn-store');
+const hostedPolicy = require('../lib/hosted-policy');
 
 let checks = 0;
 function ok(value, message) {
@@ -31,6 +32,10 @@ async function settle(rounds = 6) {
 function makeProfile(id, dryRun) {
   return {
     id,
+    ownerId: 'owner-' + id,
+    botOrigin: 'user',
+    hostedActivatedAt: new Date(0).toISOString(),
+    hostedOnboardingTurnsCompleted: 0,
     tempName: id,
     fedditUsername: id,
     token: 'secret-' + id,
@@ -115,6 +120,12 @@ function makeStore(profiles, now) {
       profile.spendDays.push(entry);
       return entry;
     },
+    recordHostedTurnCompletion(id) {
+      const profile = byId.get(id);
+      profile.hostedOnboardingTurnsCompleted =
+        (Number(profile.hostedOnboardingTurnsCompleted) || 0) + 1;
+      return profile.hostedOnboardingTurnsCompleted;
+    },
     runnerSpend: () => ({ monthUsd: 0, dayUsd: 0 }),
   };
 }
@@ -185,6 +196,8 @@ function harness(options = {}) {
       turnStore,
       now,
       random: () => 0.5,
+      queueAllocationFor: options.queueAllocationFor,
+      admitHostedTurn: options.admitHostedTurn,
       log: (message) => logs.push(message),
     });
   }
@@ -214,6 +227,8 @@ function harness(options = {}) {
       turnStore: restartedTurns,
       now,
       random: () => 0.5,
+      queueAllocationFor: options.queueAllocationFor,
+      admitHostedTurn: options.admitHostedTurn,
       log: (message) => logs.push(message),
     });
     return {
@@ -243,7 +258,10 @@ function harness(options = {}) {
 
 async function run() {
   {
-    const h = harness({ profiles: [makeProfile('bot-a', true), makeProfile('bot-b', true)] });
+    const h = harness({
+      profiles: [makeProfile('bot-a', true), makeProfile('bot-b', true)],
+      queueAllocationFor: hostedPolicy.processingFor,
+    });
     try {
       const firstScheduler = h.scheduler();
       const tick = await firstScheduler.runTick();
@@ -251,11 +269,44 @@ async function run() {
       eq(tick.acted, 2, 'one scheduler tick hands off every due hosted profile');
       eq(h.turnStore.listActive().length, 2, 'two hosted logical turns can be in progress together');
       eq(h.queue.capacity().queued, 2, 'both hosted generations reached the durable queue');
+      const queued = queueJobs(h.queueFile);
+      const queuedA = queued.find((job) => job.profileId === 'bot-a');
+      eq(queuedA.ownerKey, 'owner-bot-a', 'durable jobs use the real private workspace owner key');
+      eq(queuedA.allocationClass, 'user', 'user-created durable work enters the user allocation class');
+      eq(queuedA.onboarding, true, 'new user-created durable work carries onboarding priority');
 
       const secondTick = await firstScheduler.runTick();
       await settle();
       ok(secondTick.skipped !== 'reentrant', 'a later scheduler tick is free while DELL work is outstanding');
       eq(queueJobs(h.queueFile).length, 2, 'an active logical turn prevents duplicate jobs for the same profiles');
+    } finally {
+      h.cleanup();
+    }
+  }
+
+  {
+    const system = makeProfile('system-bot', true);
+    system.botOrigin = 'system';
+    system.ownerId = null;
+    const user = makeProfile('user-bot', true);
+    const h = harness({
+      profiles: [system, user],
+      admitHostedTurn: (profile) => profile.botOrigin === 'system'
+        ? { admit: false, reason: 'synthetic-yields-to-shared-capacity' }
+        : { admit: true, reason: 'user-created' },
+    });
+    try {
+      await h.scheduler().runTick();
+      await settle();
+      eq(h.turnStore.listActive().length, 1,
+        'turn admission allows the due user bot without creating a synthetic turn');
+      eq(h.turnStore.activeForProfile('system-bot'), null,
+        'system population yields before durable turn creation under congestion');
+      eq(h.queue.capacity().queued, 1, 'only user-created work reaches the DELL queue');
+      await h.scheduler().runTick();
+      await settle();
+      eq(h.queue.capacity().queued, 1,
+        'repeated scheduler ticks cannot build a synthetic backlog while admission is closed');
     } finally {
       h.cleanup();
     }
@@ -280,12 +331,16 @@ async function run() {
       eq(h.writes.length, 0, 'the turn keeps its frozen rehearsal mode even if the profile changes after restart');
       eq(queueJobs(h.queueFile).length, 1, 'the completed generation is reused rather than regenerated');
       eq(h.profiles[0].activity.filter((entry) => entry.dryRun).length, 1, 'post-generation rehearsal handling runs once');
+      eq(h.profiles[0].hostedOnboardingTurnsCompleted, 1,
+        'one useful completed scheduled DELL turn consumes one onboarding opportunity');
 
       const anotherRestart = h.restartRuntime();
       anotherRestart.scheduler.reconcileDurableTurns();
       await settle();
       eq(queueJobs(h.queueFile).length, 1, 'a terminal turn remains terminal across another restart');
       eq(h.profiles[0].activity.filter((entry) => entry.dryRun).length, 1, 'terminal reconciliation does not duplicate activity');
+      eq(h.profiles[0].hostedOnboardingTurnsCompleted, 1,
+        'restart reconciliation never consumes the same onboarding opportunity twice');
     } finally {
       h.cleanup();
     }

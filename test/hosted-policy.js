@@ -19,10 +19,15 @@ eq(advertised.newBotDailyTurns, 6, 'new-bot allocation is six turns a day');
 eq(advertised.newBotBoostHours, 72, 'new-bot boost lasts 72 hours');
 eq(advertised.firstTurnDueMinutes, 2, 'first turn becomes due promptly');
 eq(advertised.maxActiveJobsPerBot, 1, 'only one active job is allowed per bot');
-eq(advertised.queueOrder, 'round-robin-with-aging', 'fair queue order is public');
+eq(advertised.onboardingCompletedTurns, 5, 'compute onboarding is bounded by completed turns');
+eq(advertised.onboardingMaxDays, 30, 'compute onboarding has a wall-clock long-stop');
+eq(advertised.queueOrder, 'interactive-then-owner-and-profile-fair-share', 'fair queue order is public');
 
 eq(policy.allocationFor({}, startedAt).phase, 'not-started', 'draft has not started its boost clock');
 eq(policy.allocationFor({}, startedAt).dailyTurns, 6, 'draft previews the new-bot allocation');
+eq(policy.processingFor({}, startedAt).origin, 'user', 'missing origin safely defaults to user-created');
+eq(policy.processingFor({}, startedAt).phase, 'onboarding', 'a user-created draft previews onboarding priority');
+eq(policy.processingFor({}, startedAt).turnsRemaining, 5, 'all onboarding turns initially remain');
 
 const firstStart = policy.applyHostedPolicy({
   enabled: true,
@@ -30,6 +35,8 @@ const firstStart = policy.applyHostedPolicy({
   canStartDiscussions: true,
   canShareLinks: false,
   hostedDailyTurns: 999,
+  botOrigin: 'system',
+  hostedOnboardingTurnsCompleted: 999,
   postsPerHour: 999,
   commentsPerHour: 999,
 }, {}, startedAt);
@@ -40,6 +47,8 @@ eq(firstStart.commentsPerHour * 24, 4, 'mixed bot reserves two thirds for replie
 eq(firstStart.sched.nextPostAt, startedAt + 2 * 60 * 1000, 'first post becomes due in two minutes');
 eq(firstStart.sched.nextCommentAt, startedAt + 2 * 60 * 1000, 'first reply becomes due in two minutes');
 eq(firstStart.simulationState.sched.nextPostAt, startedAt + 2 * 60 * 1000, 'rehearsal is seeded too');
+eq(firstStart.botOrigin, 'user', 'browser-supplied origin cannot replace the safe user default');
+eq(firstStart.hostedOnboardingTurnsCompleted, 0, 'browser-supplied onboarding history cannot be forged');
 
 const establishedProfile = {
   enabled: true,
@@ -93,5 +102,39 @@ const resumed = policy.applyHostedPolicy({ enabled: true }, {
 }, startedAt + 24 * 60 * 60 * 1000);
 eq(resumed.hostedActivatedAt, establishedProfile.hostedActivatedAt, 'pause and resume do not restart the boost');
 eq(Object.prototype.hasOwnProperty.call(resumed, 'sched'), false, 'resume does not reseed established schedules');
+
+const almostOnboarded = {
+  botOrigin: 'user',
+  hostedActivatedAt: new Date(startedAt).toISOString(),
+  hostedOnboardingTurnsCompleted: 4,
+};
+eq(policy.processingFor(almostOnboarded, boostEnd).phase, 'onboarding', 'compute onboarding survives the shorter cadence boost');
+eq(policy.processingFor(almostOnboarded, boostEnd).turnsRemaining, 1, 'completed activity consumes onboarding turns');
+eq(policy.processingFor({ ...almostOnboarded, hostedOnboardingTurnsCompleted: 5 }, boostEnd).phase,
+  'standard', 'compute onboarding expires after five completed scheduled turns');
+eq(policy.processingFor(almostOnboarded, startedAt + policy.ONBOARDING_MAX_MS).phase,
+  'standard', 'unused compute onboarding expires at the 30-day long-stop');
+eq(policy.processingFor({ botOrigin: 'system' }, startedAt).phase,
+  'system', 'explicit system origin persists as the spare-capacity class');
+const reconciledSystem = policy.applyHostedPolicy({}, {
+  botOrigin: 'system',
+  hostedOnboardingTurnsCompleted: 12,
+  hostedActivatedAt: new Date(startedAt).toISOString(),
+}, startedAt);
+eq(reconciledSystem.botOrigin, 'system', 'trusted explicit system origin survives hosted reconciliation');
+eq(reconciledSystem.hostedOnboardingTurnsCompleted, 12,
+  'trusted system activity evidence survives hosted reconciliation');
+
+eq(policy.admissionFor({ botOrigin: 'user' }, { online: false, queued: 20, running: 1 }).admit,
+  true, 'user-created turns remain admissible under congestion');
+eq(policy.admissionFor({ botOrigin: 'system' }, { online: false, queued: 0, running: 0 }).admit,
+  false, 'system population does not backlog while DELL is offline');
+eq(policy.admissionFor({ botOrigin: 'system' }, { online: true, queued: 1, running: 0 }).admit,
+  false, 'system population yields while user work is waiting');
+eq(policy.admissionFor({ botOrigin: 'system' }, { online: true, queued: 0, running: 0 }, {
+  activeSyntheticTurns: 1,
+}).admit, false, 'only one system-population turn is admitted at a time');
+eq(policy.admissionFor({ botOrigin: 'system' }, { online: true, queued: 0, running: 0 }).admit,
+  true, 'system population may use genuinely spare capacity');
 
 console.log('hosted policy: ' + checks + ' checks passed');
