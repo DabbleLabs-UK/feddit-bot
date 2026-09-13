@@ -1,0 +1,60 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'feddit-bot-simulation-'));
+process.env.FEDDIT_BOT_DATA_DIR = dataDir;
+
+try {
+  const store = require('../lib/store');
+  const profile = store.createProfile({ fedditUsername: 'simulation_test' });
+  const id = profile.id;
+  const options = { simulation: true, profileId: id };
+
+  store.updateSched(id, { nextPostAt: 111, sentPosts: [101] });
+  store.updateSched(id, { nextPostAt: 222, sentPosts: [202] }, options);
+  store.recordReplied(id, 't3_live');
+  store.recordReplied(id, 't3_simulation', options);
+  store.recordPostedNews(id, 'https://example.com/live');
+  store.recordPostedNews(id, 'https://example.com/simulation', options);
+  store.recordNewsDomain(id, '2026-09-13', 'example.com');
+  store.recordNewsDomain(id, '2026-09-13', 'simulation.example', options);
+  store.bumpThreadReply(10);
+  store.bumpThreadReply(20, options);
+  store.logActivity(id, { kind: 'comment', dryRun: true, ok: true, note: 'simulation card' });
+  store.logActivity(id, { kind: 'comment', dryRun: false, ok: true, note: 'live history' });
+
+  assert.equal(store.getProfile(id).sched.nextPostAt, 111);
+  assert.equal(store.getProfile(id).simulationState.sched.nextPostAt, 222);
+  assert.equal(store.hasReplied(id, 't3_live'), true);
+  assert.equal(store.hasReplied(id, 't3_simulation'), false);
+  assert.equal(store.hasReplied(id, 't3_simulation', options), true);
+  assert.equal(store.hasPostedNews(id, 'https://example.com/live'), true);
+  assert.equal(store.hasPostedNews(id, 'https://example.com/simulation'), false);
+  assert.equal(store.hasPostedNews(id, 'https://example.com/simulation', options), true);
+  assert.equal(store.getThreadReplyCount(10), 1);
+  assert.equal(store.getThreadReplyCount(20, options), 1);
+
+  assert.equal(store.resetSimulation(id), true);
+  const reset = store.getProfile(id);
+  assert.equal(reset.sched.nextPostAt, 111, 'live cadence is preserved');
+  assert.deepEqual(reset.repliedTo, ['t3_live'], 'live reply dedupe is preserved');
+  assert.deepEqual(reset.postedNews, ['https://example.com/live'], 'live article dedupe is preserved');
+  assert.equal(store.getThreadReplyCount(10), 1, 'live thread cap is preserved');
+  assert.equal(reset.simulationState.sched.nextPostAt, null, 'simulation cadence is reset');
+  assert.deepEqual(reset.simulationState.repliedTo, [], 'simulation reply dedupe is reset');
+  assert.deepEqual(reset.simulationState.postedNews, [], 'simulation article dedupe is reset');
+  assert.equal(store.getThreadReplyCount(20, options), 0, 'simulation thread cap is reset');
+  assert.deepEqual(reset.activity.map((entry) => entry.note), ['live history'], 'only simulation cards are removed');
+
+  const migrated = store.migrateProfiles([{ id: 'old' }], 4)[0];
+  assert.equal(migrated.feedSort, 'best', 'old profiles get the Best feed view');
+  assert.deepEqual(migrated.simulationState, store.simulationDefaults(), 'old profiles get separate simulation state');
+
+  console.log('simulation-state: all checks passed');
+} finally {
+  fs.rmSync(dataDir, { recursive: true, force: true });
+}

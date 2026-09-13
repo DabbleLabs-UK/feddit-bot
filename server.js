@@ -139,16 +139,25 @@ function serveStatic(req, res, urlPath) {
 function safeProfile(p) {
   // Strip the token and the potentially-large dedupe/tracking arrays; surface a
   // count of the news dedupe set so the UI can show it on the clear button.
-  const { token, ownerId, repliedTo, postedNews, newsDomainDaily, newsDomainDays, ...rest } = p;
+  const {
+    token, ownerId, repliedTo, postedNews, newsDomainDaily, newsDomainDays,
+    simulationState, ...rest
+  } = p;
   const now = Date.now();
   const spend = store.profileSpend(p, cost.dayKey(now), cost.monthKey(now));
+  const simulation = !!store.getSettings().dryRun;
   return {
     ...rest,
+    sched: simulation && simulationState && simulationState.sched ? simulationState.sched : rest.sched,
     hasToken: Boolean(token),
     handoverPending: Boolean(secrets.getFedditHandover(p.id)),
     referenceName: store.referenceName(p),
     postedNewsCount: Array.isArray(postedNews) ? postedNews.length : 0,
-    nextAction: scheduler.nextAction(p),
+    simulationHandledCount: simulationState && Array.isArray(simulationState.repliedTo)
+      ? simulationState.repliedTo.length : 0,
+    simulationArticleCount: simulationState && Array.isArray(simulationState.postedNews)
+      ? simulationState.postedNews.length : 0,
+    nextAction: scheduler.nextAction(p, simulation),
     effProvider: scheduler.providerOf(p),
     effModel: scheduler.modelOf(p, store.DEFAULT_MODEL),
     spend,
@@ -562,14 +571,23 @@ async function handleApi(req, res, urlPath, query) {
     // stale client state.
     if (method === 'GET' && !sub) {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
-      const { token, ownerId, postedNews, newsDomainDaily, newsDomainDays, ...rest } = existing;
+      const {
+        token, ownerId, postedNews, newsDomainDaily, newsDomainDays,
+        simulationState, ...rest
+      } = existing;
+      const simulation = !!store.getSettings().dryRun;
       return sendJson(res, 200, {
         profile: {
           ...rest,
+          sched: simulation && simulationState && simulationState.sched ? simulationState.sched : rest.sched,
           hasToken: Boolean(token),
           handoverPending: Boolean(secrets.getFedditHandover(existing.id)),
           referenceName: store.referenceName(existing),
           postedNewsCount: Array.isArray(postedNews) ? postedNews.length : 0,
+          simulationHandledCount: simulationState && Array.isArray(simulationState.repliedTo)
+            ? simulationState.repliedTo.length : 0,
+          simulationArticleCount: simulationState && Array.isArray(simulationState.postedNews)
+            ? simulationState.postedNews.length : 0,
         },
       });
     }
@@ -766,6 +784,19 @@ async function handleApi(req, res, urlPath, query) {
       });
     }
 
+    // POST /api/profiles/:id/reset-simulation - clear rehearsal-only cards,
+    // timers and handled-target/article continuity. Live publishing continuity
+    // is deliberately untouched, so this cannot cause real duplicate replies.
+    if (method === 'POST' && sub === '/reset-simulation') {
+      if (!existing) return sendJson(res, 404, { error: 'No such profile' });
+      const task = hostedSimulationTasks.get(id);
+      if ((task && task.status === 'running') || schedulerHandle.isProfileBusy(id)) {
+        return sendJson(res, 409, { error: 'This bot is still finishing a simulation. Reset it when that work has finished.' });
+      }
+      store.resetSimulation(id);
+      return sendJson(res, 200, { ok: true, profile: safeProfile(store.getProfile(id)) });
+    }
+
     // POST /api/profiles/:id/test-generate - generate a sample reply against a
     // pasted post title+body. Does NOT post anywhere. Routes through the
     // profile's chosen provider. Ollama respects single-flight; deepseek uses
@@ -901,8 +932,8 @@ async function handleApi(req, res, urlPath, query) {
       return sendJson(res, 200, { feeds: schedulerHandle.feedHealth(id) });
     }
 
-    // POST /api/profiles/:id/clear-posted - wipe this profile's posted-article
-    // history (and per-domain counts). Needed because dry-run consumes the dedupe.
+    // POST /api/profiles/:id/clear-posted - wipe this profile's LIVE
+    // posted-article history (and per-domain counts). Simulation is separate.
     if (method === 'POST' && sub === '/clear-posted') {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
       store.clearPostedNews(id);

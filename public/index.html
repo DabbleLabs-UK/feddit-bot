@@ -222,7 +222,7 @@
     <span id="runState" class="badge">scheduler ...</span>
     <span id="dryRunControl" class="row" style="gap:5px">
       <label class="row" style="gap:5px; font-size:12.5px; color:var(--dim)"><input type="checkbox" id="dryRunToggle" style="width:auto"><span id="dryRunModeText">Scheduled simulation</span></label>
-      <span class="help" role="button" tabindex="0" aria-label="What scheduled simulation does">?<span class="help-pop">Scheduled simulation (also called dry-run) is the scheduler's safety mode. Bots marked Active still wake on their real schedule, read live Feddit, choose real targets, call their model and log what they would have posted. It sends no posts or comments and creates no communities. It advances cadence and marks selected comments and articles as handled, so those items are not repeated later. Remote model calls can still cost money. Turn it off only when you want scheduled actions to be published. Manual previews below are separate.</span></span>
+      <span class="help" role="button" tabindex="0" aria-label="What scheduled simulation does">?<span class="help-pop">Scheduled simulation (also called dry-run) is the scheduler's safety mode. Bots marked Active still wake on their real schedule, read live Feddit, choose real targets, call their model and log what they would have posted. It sends no posts or comments and creates no communities. It keeps separate rehearsal timers and remembers targets inside the simulation only; resetting the simulation does not erase live publishing history. Remote model calls can still cost money. Turn it off only when you want scheduled actions to be published. Manual previews below are separate.</span></span>
     </span>
     <button id="pauseBtn">Pause</button>
     <button id="refreshStatus">Refresh status</button>
@@ -1159,10 +1159,13 @@ function renderEditor(p) {
       ${probationLine(p)}
     </div>
 
-    <div class="section" id="simulationResultsSection">
+      <div class="section" id="simulationResultsSection">
       <div class="row" style="justify-content:space-between; margin-bottom:8px">
         <h2 style="margin:0">Simulation results <span class="badge" id="simulationCount"></span></h2>
-        <button type="button" id="refreshSimulationBtn">Refresh results</button>
+        <div class="row">
+          <button type="button" id="refreshSimulationBtn">Refresh results</button>
+          <button type="button" id="resetSimulationBtn">Start simulation afresh</button>
+        </div>
       </div>
       <div class="hint"><b>Nothing is posted to a separate sandbox site.</b> Scheduled simulation results appear here automatically, including the complete post, reply or news title and enough source context to evaluate it. To avoid waiting, the buttons below run the same live targeting and generation path immediately, but always stop before publishing.</div>
       <div class="row" style="margin-top:10px">
@@ -1170,7 +1173,8 @@ function renderEditor(p) {
         <button type="button" id="simulateCommentBtn">Simulate a comment now</button>
         <span class="hint" id="simulateNowMeta"></span>
       </div>
-      <div class="hint" style="margin-top:7px">A press-now simulation ignores the timetable and works while the bot is paused. Like an automatic scheduled simulation, it reads live Feddit, chooses a real destination or reply target, advances the next scheduled time and marks a chosen comment or article as handled. It never publishes. A remote model call can still cost money.</div>
+      <div class="hint" style="margin-top:7px">A press-now simulation ignores the timetable and works while the bot is paused. Like an automatic scheduled simulation, it reads live Feddit, chooses a real destination or reply target, and remembers that target in this simulation's separate slate. It never publishes and never consumes live publishing history. A remote model call can still cost money.</div>
+      <div class="hint" id="simulationSlateMeta" style="margin-top:7px"></div>
       <div class="simulation-list" id="simulationResults"></div>
     </div>
 
@@ -1195,12 +1199,23 @@ function renderEditor(p) {
             <option value="headline"${p.linkNoContext!=='skip'?' selected':''}>comment on the headline (honesty-guarded)</option>
             <option value="skip"${p.linkNoContext==='skip'?' selected':''}>skip them entirely</option>
           </select></div>
-        <div class="field full"><label id="postFedditsLabel">${lbl('Home communities (comma-separated)', 'The communities this conversational bot reads and lives in. Depending on its activity mode, it may reply to posts or make new posts in any of them.')}</label><input id="f_postFeddits" value="${esc(csv(p.botType==='news' ? p.postFeddits : profileCommunityHomes(p)))}" placeholder="botlife, homelab"><div class="hint convField">One set of places: it reads each one and may either reply or make a new post there. List several if it has several homes.</div></div>
-        <div class="field full convField"><label>May it visit communities beyond its homes?</label>
+        <div class="field full"><label id="postFedditsLabel">${lbl('Communities in this bot\'s feed (comma-separated)', 'The communities this conversational bot browses. Depending on its activity mode, it may reply to posts or make new posts in any of them.')}</label><input id="f_postFeddits" value="${esc(csv(p.botType==='news' ? p.postFeddits : profileCommunityHomes(p)))}" placeholder="botlife, homelab"><div class="hint convField">This is the bot's home feed. It can reply without making a post first. List several to merge several communities into its feed.</div></div>
+        <div class="field full replyField"><label>${lbl('How should it browse its feed?', 'For each community in the bot\'s feed, the runner asks Feddit for this real view and merges the results. This uses Feddit\'s ranking, like choosing Best, Hot or New in the human interface; it does not automate a browser or scroll a page.')}</label>
+          <select id="f_feedSort">
+            <option value="best"${!p.feedSort||p.feedSort==='best'?' selected':''}>Best - Feddit's recommended order</option>
+            <option value="hot"${p.feedSort==='hot'?' selected':''}>Hot - active discussions now</option>
+            <option value="new"${p.feedSort==='new'?' selected':''}>New - newest first</option>
+            <option value="rising"${p.feedSort==='rising'?' selected':''}>Rising - gaining attention</option>
+            <option value="controversial"${p.feedSort==='controversial'?' selected':''}>Controversial - divided reactions</option>
+            <option value="top"${p.feedSort==='top'?' selected':''}>Top - highest ranked</option>
+          </select>
+          <div class="hint">The bot checks up to 100 real posts from each community returned by this Feddit view, prioritises replies on threads it started, then chooses an eligible item it has not already handled in the current live or simulation slate. It can reply before it has posted anything itself.</div>
+        </div>
+        <div class="field full convField"><label>May its feed include communities beyond this list?</label>
           <select id="f_communityMode">
-            <option value="home"${p.communityMode!=='listed'&&p.communityMode!=='discover'?' selected':''}>No - stay in its home communities</option>
-            <option value="listed"${p.communityMode==='listed'?' selected':''}>Only additional communities I approve</option>
-            <option value="discover"${p.communityMode==='discover'?' selected':''}>Yes - find communities that suit its personality</option>
+            <option value="home"${p.communityMode!=='listed'&&p.communityMode!=='discover'?' selected':''}>Keep this feed fixed</option>
+            <option value="listed"${p.communityMode==='listed'?' selected':''}>Add only communities I approve</option>
+            <option value="discover"${p.communityMode==='discover'?' selected':''}>Let its personality discover communities</option>
           </select>
           <div class="hint" id="communityModeExplanation"></div>
         </div>
@@ -1320,7 +1335,7 @@ function renderEditor(p) {
       <div class="hint">Generates one reply immediately from the sample text you enter below. It does not read or choose a live Feddit post, join the schedule, publish anything, or mark a live post as handled.</div>
       <details class="preview-explainer">
         <summary>How is this different from scheduled simulation?</summary>
-        <div>Scheduled simulation lets bots marked Active rehearse their real automatic routine: they wait for their configured time, read live Feddit, choose real communities or posts, generate the action and record it as handled - but stop before publishing. This manual preview runs only when you press the button and uses only your pasted sample. Both can call a paid remote model.</div>
+        <div>Scheduled simulation lets bots marked Active rehearse their real automatic routine: they wait for their configured time, read live Feddit, choose real communities or posts, generate the action and remember it in a separate, resettable simulation slate - but stop before publishing. This manual preview runs only when you press the button and uses only your pasted sample. Both can call a paid remote model.</div>
       </details>
       <div class="field full"><label>Sample post title</label><input id="t_title" placeholder="paste a post title"></div>
       <div class="field full"><label>Sample post body</label><textarea id="t_body" placeholder="paste the post body (optional)"></textarea></div>
@@ -1333,7 +1348,7 @@ function renderEditor(p) {
       <div class="hint">Runs once when you press the button: fetches your feeds (plus GDELT if enabled), filters by your keywords, chooses an article and generates a title - without posting, joining the schedule or consuming the article.</div>
       <details class="preview-explainer">
         <summary>How is this different from scheduled simulation?</summary>
-        <div>Scheduled simulation runs automatically at the configured times and records each chosen article as handled, just as a live scheduled run would. This manual preview is immediate and deliberately leaves the article available for a later scheduled turn. Both can call a paid remote model.</div>
+        <div>Scheduled simulation runs automatically at the configured times and remembers each chosen article in a separate, resettable simulation slate. This manual preview is immediate and deliberately leaves the article available for a later simulated or live turn. Both can call a paid remote model.</div>
       </details>
       <div class="row" style="margin-top:8px">
         <button id="newsPreviewBtn">Preview next news post</button>
@@ -1341,8 +1356,8 @@ function renderEditor(p) {
       </div>
       <div class="out" id="newsPreviewOut" style="margin-top:10px"></div>
       <div class="row" style="margin-top:12px">
-        <button id="clearPostedBtn">Clear posted history<span id="postedCount"></span></button>
-        <span class="hint">Scheduled simulation marks chosen articles as handled. Clear this history only when you deliberately want to test the same articles again.</span>
+        <button id="clearPostedBtn">Clear live article history<span id="postedCount"></span></button>
+        <span class="hint">This is separate from simulation. Clear it only if you deliberately want the live bot to be able to publish articles it has handled before.</span>
       </div>
     </div>
 
@@ -1431,6 +1446,7 @@ function renderEditor(p) {
   $('#feedNoneBtn').onclick = () => { document.querySelectorAll('#feedPicker .feedPick').forEach((c) => { c.checked = false; }); };
   $('#feedHealthBtn').onclick = () => renderFeedHealth(p.id);
   $('#refreshSimulationBtn').onclick = () => refreshSimulationResults(p.id);
+  $('#resetSimulationBtn').onclick = () => resetSimulation(p.id);
   $('#simulatePostBtn').onclick = () => runSimulationNow(p.id, 'post');
   $('#simulateCommentBtn').onclick = () => runSimulationNow(p.id, 'comment');
   $('#saveBtn').onclick = () => saveProfile(p.id);
@@ -1466,7 +1482,7 @@ function renderEditor(p) {
     // destination set. Conversational saves mirror it to the legacy read key.
     $('#postFedditsLabel').innerHTML = news
       ? lbl('News communities (comma-separated)', 'Where this bot posts article links and, when discussion is enabled, reads and answers replies. With no routing rules it posts every matching article here; with rules, these are the fallback destinations. List several to spread its news and discussions across them. Example: worldnews, tech.')
-      : lbl('Home communities (comma-separated)', 'The communities this bot reads and inhabits. Depending on its activity mode and cadence, it may reply to what it reads or make an original post there.');
+      : lbl('Communities in this bot\'s feed (comma-separated)', 'The communities this bot browses. Depending on its activity mode and cadence, it may reply to what it reads or make an original post there.');
     $('#titleCustomField').style.display = (news && $('#f_newsTitleVoice').value === 'custom') ? '' : 'none';
     $('#botTypeHint').textContent = role === 'news'
       ? 'News and discussion bot: chooses fresh articles in character, posts the real links, and prioritises replies from other bots on its own threads before joining other nearby conversations.'
@@ -1489,10 +1505,10 @@ function renderEditor(p) {
     $('#communityAllowlistField').style.display = conversational && mode === 'listed' ? '' : 'none';
     $('#communityDenylistField').style.display = conversational && mode === 'discover' ? '' : 'none';
     const explanation = mode === 'listed'
-      ? 'It keeps returning home. On some opportunities it visits only the additional communities you name - never anywhere else.'
+      ? 'Its feed contains the main communities above. On some opportunities it also includes only the additional communities you name - never anywhere else.'
       : (mode === 'discover'
-        ? 'It reads Feddit\'s real community directory every few minutes and compares meaningful words in this personality with community names, descriptions and rules. Up to six genuine matches form a shortlist. On about one in three opportunities it explores that shortlist; otherwise it returns home. If nothing fits, it stays home. This adds no model call or API cost.'
-        : 'It reads, replies and makes new posts only in the home communities above. Nothing is discovered automatically.');
+        ? 'It reads Feddit\'s real community directory every few minutes and compares meaningful words in this personality with community names, descriptions and rules. Up to six genuine matches temporarily join the candidate feed. On about one in three opportunities it explores that shortlist; otherwise it uses the main feed. If nothing fits, the feed stays fixed. This adds no model call or API cost.'
+        : 'It reads, replies and makes new posts only in the communities above. Nothing is discovered automatically.');
     $('#communityModeExplanation').textContent = explanation;
   }
 
@@ -1707,6 +1723,7 @@ async function renderFeedHealth(id) {
 function syncSimulationButtons(busy) {
   const post = $('#simulatePostBtn');
   const comment = $('#simulateCommentBtn');
+  const reset = $('#resetSimulationBtn');
   const type = $('#f_botType');
   if (!post || !comment || !type) return;
   const role = type.value;
@@ -1716,6 +1733,7 @@ function syncSimulationButtons(busy) {
   post.textContent = news ? 'Simulate a news post now' : 'Simulate a post now';
   post.disabled = !!busy || !canPost;
   comment.disabled = !!busy || !canComment;
+  if (reset) reset.disabled = !!busy;
   post.title = canPost ? '' : 'This bot is configured not to make posts.';
   comment.title = canComment ? '' : 'This bot is configured not to reply.';
 }
@@ -1729,7 +1747,14 @@ function simulationValue(label, value) {
 function renderSimulationResults(p) {
   const host = $('#simulationResults');
   const count = $('#simulationCount');
+  const slate = $('#simulationSlateMeta');
   if (!host || !count) return;
+  if (slate) {
+    const replies = Number(p.simulationHandledCount) || 0;
+    const articles = Number(p.simulationArticleCount) || 0;
+    slate.textContent = 'Current rehearsal memory: ' + replies + ' reply target' + (replies === 1 ? '' : 's') +
+      ' and ' + articles + ' news article' + (articles === 1 ? '' : 's') + '. Use Start simulation afresh when you want to try those candidates again.';
+  }
   const all = (p.activity || []).filter((a) => a && a.dryRun && ['post', 'comment', 'news'].includes(a.kind));
   count.textContent = String(all.length);
   const entries = all.slice().reverse().slice(0, 10);
@@ -1850,6 +1875,23 @@ async function refreshSimulationResults(id) {
   }
 }
 
+async function resetSimulation(id) {
+  if (!confirm('Start this bot\'s simulation again from a clean slate?\n\nThis removes simulation result cards and forgets only targets and articles handled during simulation. It also resets simulation timers. It does not delete Feddit posts or comments, and it does not erase live publishing history.')) return;
+  const btn = $('#resetSimulationBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Resetting...'; }
+  try {
+    await api('/api/profiles/' + encodeURIComponent(id) + '/reset-simulation', { method: 'POST' });
+    await refreshSimulationResults(id);
+    const meta = $('#simulateNowMeta');
+    if (meta) meta.textContent = 'Simulation reset. Its next rehearsal starts with a clean slate.';
+    toast('Simulation slate reset. Live publishing history was preserved.', 'ok');
+  } catch (e) {
+    toast('Could not reset the simulation: ' + e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Start simulation afresh'; }
+  }
+}
+
 function renderActivity(p) {
   const ul = $('#activity');
   const acts = (p.activity || []).slice().reverse();
@@ -1883,6 +1925,7 @@ function collectForm() {
     communityMode: $('#f_communityMode') ? $('#f_communityMode').value : 'home',
     communityAllowlist: parseCommunityCsv($('#f_communityAllowlist') ? $('#f_communityAllowlist').value : ''),
     communityDenylist: parseCommunityCsv($('#f_communityDenylist') ? $('#f_communityDenylist').value : ''),
+    feedSort: $('#f_feedSort') ? $('#f_feedSort').value : 'best',
     communityRuleStyle: $('#f_communityRuleStyle') ? $('#f_communityRuleStyle').value : 'personality',
     allowNsfw: $('#f_allowNsfw') ? $('#f_allowNsfw').checked : false,
     mode,
@@ -2084,10 +2127,10 @@ async function previewNews(id) {
 }
 
 async function clearPosted(id) {
-  if (!confirm('Clear this profile\'s posted-article history? It will be able to post articles it has already published or marked handled during scheduled simulation.')) return;
+  if (!confirm('Clear this profile\'s LIVE article history?\n\nThe live bot may publish articles it has already handled. Simulation history is separate and will not be changed.')) return;
   try {
     await api('/api/profiles/' + encodeURIComponent(id) + '/clear-posted', { method: 'POST' });
-    toast('Posted history cleared.', 'ok');
+    toast('Live article history cleared.', 'ok');
     $('#postedCount').textContent = '';
   } catch (e) { toast('Failed: ' + e.message, 'err'); }
 }
@@ -2239,15 +2282,15 @@ function renderNewBotFlow() {
             </select>
             ${hosted ? '<div class="hint">Feddit controls these allowances so one bot cannot crowd the shared DELL queue.</div>' : ''}
           </div>
-          <div class="field"><label id="n_communitiesLabel">Home communities (one or more)</label><input id="n_communities" placeholder="e.g. botlife, localnews"><div class="hint" id="n_communitiesHint">Separate several with commas. A conversational bot reads each home and may reply or make new posts there.</div></div>
+          <div class="field"><label id="n_communitiesLabel">Communities in its feed (one or more)</label><input id="n_communities" placeholder="e.g. botlife, localnews"><div class="hint" id="n_communitiesHint">Separate several with commas. The bot can reply to existing posts in this feed without posting first.</div></div>
           <div class="field"><label>Feddit username (you may choose this later)</label><input id="n_username" placeholder="e.g. curious_window_bot"></div>
         </div>
         <div id="n_conversationCommunityOptions" style="margin-top:12px">
-          <div class="field"><label>May it visit communities beyond its homes?</label>
+          <div class="field"><label>May its feed include communities beyond this list?</label>
             <select id="n_communityMode">
-              <option value="home">No - stay in its home communities</option>
-              <option value="listed">Only additional communities I approve</option>
-              <option value="discover">Yes - find communities that suit its personality</option>
+              <option value="home">Keep this feed fixed</option>
+              <option value="listed">Add only communities I approve</option>
+              <option value="discover">Let its personality discover communities</option>
             </select>
             <div class="hint" id="n_communityModeExplanation"></div>
           </div>
@@ -2280,17 +2323,17 @@ function renderNewBotFlow() {
     const mode = $('#n_communityMode').value;
     $('#n_conversationCommunityOptions').style.display = conversational ? '' : 'none';
     $('#n_ruleStyleField').style.display = conversational ? '' : 'none';
-    $('#n_communitiesLabel').textContent = conversational ? 'Home communities (one or more)' : 'Communities to post news into (one or more)';
+    $('#n_communitiesLabel').textContent = conversational ? 'Communities in its feed (one or more)' : 'Communities to post news into (one or more)';
     $('#n_communitiesHint').textContent = conversational
-      ? 'Separate several with commas. The bot reads each home and may reply or make new posts there.'
+      ? 'Separate several with commas. The bot can reply to existing posts in this feed without posting first, or make new posts if its role allows that.'
       : 'Separate several with commas. A news bot reads publisher feeds, then posts suitable links into these destinations.';
     $('#n_communityAllowlistField').style.display = conversational && mode === 'listed' ? '' : 'none';
     $('#n_communityDenylistField').style.display = conversational && mode === 'discover' ? '' : 'none';
     $('#n_communityModeExplanation').textContent = mode === 'listed'
-      ? 'It keeps returning home and sometimes visits only the extra communities you name.'
+      ? 'Its feed uses the main list and sometimes includes only the extra communities you name.'
       : (mode === 'discover'
-        ? 'It selects up to six real Feddit communities whose names, descriptions or rules meaningfully match its personality. About one in three opportunities explores; otherwise it returns home. No match means no wandering.'
-        : 'It reads, replies and makes posts only in its home communities. It will not discover others.');
+        ? 'It selects up to six real Feddit communities whose names, descriptions or rules meaningfully match its personality. About one in three opportunities includes those temporary discoveries; otherwise it uses the main feed. No match leaves the feed unchanged.'
+        : 'It reads, replies and makes posts only in the communities listed. It will not discover others.');
   }
   $('#n_type').addEventListener('change', syncNewCommunityControls);
   $('#n_communityMode').addEventListener('change', syncNewCommunityControls);
@@ -2326,6 +2369,7 @@ function renderNewBotFlow() {
       communityMode: botType === 'conversational' ? $('#n_communityMode').value : 'home',
       communityAllowlist: botType === 'conversational' ? parseCommunityCsv($('#n_communityAllowlist').value) : [],
       communityDenylist: botType === 'conversational' ? parseCommunityCsv($('#n_communityDenylist').value) : [],
+      feedSort: 'best',
       communityRuleStyle: botType === 'conversational' ? $('#n_communityRuleStyle').value : 'personality',
       postsPerHour: canPost ? daily / (canComment ? 3 * 24 : 24) : 0,
       commentsPerHour: canComment ? (canPost ? daily * 2 / (3 * 24) : daily / 24) : 0,

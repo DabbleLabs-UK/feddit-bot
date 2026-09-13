@@ -153,6 +153,7 @@ function profile(over) {
     communityMode: over.communityMode || 'home',
     communityAllowlist: over.communityAllowlist || [],
     communityDenylist: over.communityDenylist || [],
+    feedSort: over.feedSort || 'new',
     communityRuleStyle: over.communityRuleStyle || 'personality',
     allowNsfw: over.allowNsfw || false,
     mode: over.mode || 'both',
@@ -237,7 +238,7 @@ function commentChild(c) {
 }
 
 function makeFeddit(world) {
-  world.calls = { submit: [], comment: [], createFeddit: [], botInfo: [], about: [], feddits: 0 };
+  world.calls = { submit: [], comment: [], createFeddit: [], botInfo: [], about: [], feddit: [], feddits: 0 };
   const client = {
     feddits: async () => {
       world.calls.feddits++;
@@ -259,9 +260,11 @@ function makeFeddit(world) {
         created_utc: 0, created_by: null, subscriber_count: 0, post_count: 0, url: '/f/' + name,
       } } };
     },
-    feddit: async (name) => {
+    feddit: async (name, sort, options) => {
+      world.calls.feddit.push({ name, sort, options });
       const posts = world.feddits[name] || [];
-      return { ok: true, status: 200, data: { kind: 'Listing', data: { after: null, children: posts.map(postChild) } } };
+      const limit = options && Number(options.limit) > 0 ? Number(options.limit) : 25;
+      return { ok: true, status: 200, data: { kind: 'Listing', data: { after: null, children: posts.slice(0, limit).map(postChild) } } };
     },
     comments: async (postId) => {
       const cs = world.comments[postId] || [];
@@ -374,6 +377,8 @@ async function scenarioTargetingDedupe() {
   ok(!targets.includes('t3_2'), 'never targeted its OWN post (t3_2)');
   ok(new Set(targets).size === targets.length, 'no target was replied to twice (dedupe)');
   eq(JSON.stringify(targets), JSON.stringify(['t3_4', 't3_3', 't3_1']), 'targeted newest-first: t3_4, t3_3, t3_1');
+  ok(world.calls.feddit.length > 0 && world.calls.feddit.every((call) => call.sort === 'new'), 'the configured Feddit feed view is used for every community scan');
+  ok(world.calls.feddit.every((call) => call.options && call.options.limit === 100), 'each community scan requests the Feddit API maximum of 100 feed posts');
   eq(world.calls.comment.length, 0, 'DRY-RUN made ZERO live comment writes');
   eq(world.calls.submit.length, 0, 'DRY-RUN made ZERO live post writes');
   eq(providers.stats().maxConcurrent, 1, 'never more than ONE ollama generation in flight');
@@ -382,6 +387,25 @@ async function scenarioTargetingDedupe() {
   eq(simulations[0].simulation.community, 'f/botlife', 'simulated reply records its community');
   ok(simulations[0].simulation.context.includes('newest by other1'), 'simulated reply retains the live post context it answered');
   ok(simulations[0].simulation.reply.includes('\n\nGenerated body text'), 'simulated reply retains the COMPLETE generated text, including newlines');
+
+  // Regression: the Feddit API defaults to 25 results. If those 25 are all
+  // ineligible, an eligible 26th post must still be found by the expanded
+  // bounded feed request.
+  const deepPosts = Array.from({ length: 25 }, (_, index) => ({
+    id: 200 - index, feddit: 'deepfeed', title: 'own post ' + index, author: 'deepbot',
+  }));
+  deepPosts.push({ id: 100, feddit: 'deepfeed', title: 'eligible beyond page default', author: 'someone_else' });
+  const deepWorld = { feddits: { deepfeed: deepPosts }, comments: {} };
+  const deepBot = profile({
+    id: 'deepbot', fedditUsername: 'deepbot', mode: 'comment', commentsPerHour: 0,
+    postFeddits: ['deepfeed'], readFeddits: ['deepfeed'],
+  });
+  const deepScheduler = scheduler.createScheduler({
+    store: makeStore([deepBot]), providers: makeProviders(), feddit: makeFeddit(deepWorld),
+    now: clock.now, random: () => 0, getDeepseekKey: KEY,
+  });
+  const deepResult = await deepScheduler.simulateNow('deepbot', 'comment');
+  ok(deepResult.ok && deepResult.result.target === 't3_100', 'an eligible post beyond Feddit\'s default first 25 is still found');
 }
 
 // ============================================================================
@@ -475,9 +499,9 @@ async function scenarioImmediateSimulation() {
   ok(commentLog && /live target/.test(commentLog.simulation.context), 'press-now comment retains the real target context');
 
   const emptyResult = await sched.simulateNow('now-empty', 'comment');
-  ok(!emptyResult.ok && /no eligible unread/i.test(emptyResult.error), 'press-now comment explains when no eligible target exists');
+  ok(!emptyResult.ok && /every eligible target.*unavailable or already handled/i.test(emptyResult.error), 'press-now comment explains when no eligible target exists');
   const emptyLog = emptyBot.activity.find((entry) => entry.dryRun && entry.ok === false);
-  ok(emptyLog && /no eligible unread/i.test(emptyLog.simulation.error), 'the no-target reason is retained in simulation results');
+  ok(emptyLog && /every eligible target.*unavailable or already handled/i.test(emptyLog.simulation.error), 'the no-target reason is retained in simulation results');
 }
 
 // ============================================================================

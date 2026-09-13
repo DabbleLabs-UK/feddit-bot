@@ -14,6 +14,7 @@ const original = {
   mode: 'post',
   postFeddits: ['localnews'],
   readFeddits: [],
+  feedSort: 'controversial',
   postsPerHour: 0.5,
   provider: 'deepseek',
   model: 'machine-specific-model',
@@ -24,6 +25,7 @@ const original = {
   repliedTo: ['t3_12'],
   sched: { nextPostAt: 1234 },
   activity: [{ at: '2026-09-12T12:00:00Z', kind: 'post', ok: true }],
+  simulationState: { sched: { nextPostAt: 5678 }, repliedTo: ['t3_simulated'] },
 };
 
 const moved = packs.exportProfile(original);
@@ -32,6 +34,8 @@ assert.equal(moved.version, packs.VERSION);
 assert.equal(moved.kind, 'move');
 assert.equal(moved.bot.persona, original.persona);
 assert.deepEqual(moved.runtime.postedNews, original.postedNews);
+assert.equal(moved.bot.feedSort, 'controversial');
+assert.deepEqual(moved.runtime.simulationState, original.simulationState);
 assert.equal('token' in moved.bot, false);
 assert.equal('token' in moved.runtime, false);
 assert.equal('provider' in moved.bot, false);
@@ -45,6 +49,8 @@ assert.equal(JSON.stringify(moved).includes('machine-specific-model'), false);
 const imported = packs.importPatch(moved);
 assert.equal(imported.persona, original.persona);
 assert.deepEqual(imported.postedNews, original.postedNews);
+assert.equal(imported.feedSort, 'controversial');
+assert.deepEqual(imported.simulationState, original.simulationState);
 assert.equal(imported.enabled, false);
 assert.equal('provider' in imported, false);
 assert.equal('token' in imported, false);
