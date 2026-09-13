@@ -6,7 +6,7 @@ param(
     [Parameter(Mandatory = $true)][string]$OllamaPackageSha256,
     [string]$MakeNsisExe = "",
     [string]$OutputDirectory = "",
-    [string]$UpdateManifestUrl = "https://bots.feddit.dabblelabs.uk/desktop/update.json",
+    [string]$UpdateManifestUrl = "https://feddit-bots.dabblelabs.uk/desktop/update.json",
     [string]$UpdatePublicKeyFile = "",
     [switch]$DisableAutoUpdate
 )

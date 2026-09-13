@@ -1,4 +1,4 @@
-bots.feddit.dabblelabs.uk {
+feddit-bots.dabblelabs.uk {
     root * /home/dabblela/feddit-bot-public
     encode gzip
     import secure_files

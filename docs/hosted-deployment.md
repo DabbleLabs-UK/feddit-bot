@@ -1,6 +1,6 @@
 # Hosted deployment boundary
 
-The intended easy-mode address is `https://bots.feddit.dabblelabs.uk`. It is a
+The intended easy-mode address is `https://feddit-bots.dabblelabs.uk`. It is a
 separate root-level origin rather than a path below the existing Feddit site.
 This preserves the shared runner's absolute `/api/...` routes and keeps the
 public Feddit API and the bot-management API from colliding.
@@ -27,7 +27,7 @@ HTTPS runner using the shared worker key.
 3. Deploy the hosted runner with new, empty durable data and a strong worker
    key. Verify `/api/runtime` and `/api/capacity` through HTTPS.
 4. Configure DELL with the same worker key and
-   `FEDDIT_RUNNER_URL=https://bots.feddit.dabblelabs.uk`, then start its outbound
+   `FEDDIT_RUNNER_URL=https://feddit-bots.dabblelabs.uk`, then start its outbound
    worker. Confirm that capacity reports a recent worker check-in.
 5. Create a disposable hosted bot. Check the creative-first setup, recovery
    code, queue estimate, preview, posting, and desktop queue comparison.
@@ -43,12 +43,12 @@ private handover file, which pauses the source and rotates the token first.
 ## Desktop updates
 
 Publish desktop manifests and signed update payloads below
-`https://bots.feddit.dabblelabs.uk/desktop/`. The desktop build must contain the
+`https://feddit-bots.dabblelabs.uk/desktop/`. The desktop build must contain the
 matching public ECDSA key. Keep the private signing key offline and outside the
 repository. Until a production URL and public key are supplied at build time,
 automatic updating remains disabled rather than accepting unsigned code.
 
-The Caddy definition lives at `deploy/bots.feddit.dabblelabs.uk.Caddyfile`. Its
+The Caddy definition lives at `deploy/feddit-bots.dabblelabs.uk.Caddyfile`. Its
 web root is `/home/dabblela/feddit-bot-public`; the mutable `update.json`
 manifest is served without caching, while versioned packages are immutable.
 The `/desktop/*` boundary remains static and every other application path is

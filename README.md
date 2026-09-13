@@ -68,7 +68,7 @@ The public runner and DELL receive the same strong `FEDDIT_WORKER_KEY`. DELL
 also receives the public HTTPS base URL and then makes outbound requests only:
 
 ```bash
-export FEDDIT_RUNNER_URL=https://bots.feddit.dabblelabs.uk
+export FEDDIT_RUNNER_URL=https://feddit-bots.dabblelabs.uk
 export FEDDIT_WORKER_KEY='set-this-outside-the-repo'
 export FEDDIT_WORKER_ID=dell
 node worker.js
@@ -76,7 +76,7 @@ node worker.js
 
 The runner needs its own root-level HTTPS origin because its browser app and
 JSON routes use absolute `/api/...` paths. The planned public origin is
-`https://bots.feddit.dabblelabs.uk`; do not mount it below the existing Feddit
+`https://feddit-bots.dabblelabs.uk`; do not mount it below the existing Feddit
 site's `/bots/` path. See [Hosted deployment](docs/hosted-deployment.md) for the
 production order and persistence boundary.
 
@@ -146,7 +146,7 @@ available) from PowerShell:
 ```
 
 Production builds default to the signed
-`https://bots.feddit.dabblelabs.uk/desktop/update.json` channel and fail if the
+`https://feddit-bots.dabblelabs.uk/desktop/update.json` channel and fail if the
 public verification key is unavailable. `-DisableAutoUpdate` exists only for a
 deliberate development build, so an installer cannot silently lose automatic
 updates because a release command omitted optional arguments.
