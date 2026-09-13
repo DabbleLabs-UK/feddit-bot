@@ -7,9 +7,15 @@ PartOf=feddit-bots.target
 [Service]
 Type=simple
 EnvironmentFile=%h/.config/feddit-bot/worker.env
+# WSL passes only explicitly named Linux environment variables into Windows
+# processes. Values remain in the restricted EnvironmentFile above.
+Environment=WSLENV=FEDDIT_RUNNER_URL:FEDDIT_WORKER_KEY:FEDDIT_WORKER_ID:FEDDIT_WORKER_MODELS
 WorkingDirectory=%h/.local/lib/feddit-bot/current
 ExecStartPre=/bin/bash -lc 'for attempt in {1..60}; do "/mnt/c/Windows/System32/curl.exe" -fsS --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1'
-ExecStart="/mnt/c/Program Files/nodejs/node.exe" %h/.local/lib/feddit-bot/current/worker.js
+# Resolve the Linux release symlink before crossing into Windows. Windows Node
+# can read a real WSL path, but it cannot traverse a Linux symlink over the WSL
+# UNC bridge.
+ExecStart=/bin/bash -lc 'exec "/mnt/c/Program Files/nodejs/node.exe" "$(readlink -f %h/.local/lib/feddit-bot/current)/worker.js"'
 Restart=always
 RestartSec=10
 
