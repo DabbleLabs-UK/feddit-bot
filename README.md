@@ -339,7 +339,8 @@ docs/data-handling.json   collection, storage and transmission source of truth
 
 id, Feddit username, API token, persona system prompt, tone/style
 notes, provider (ollama / DeepSeek tier), model, temperature, num_predict,
-cadence (posts + comments per hour), and an enabled flag. Plus a small
+cadence (posts + comments per hour), an enabled flag, and that bot's own
+rehearsal/live publishing choice. Plus a small
 recent-activity log and per-day spend buckets.
 
 The activity log is bounded to 50 entries. Scheduled simulation entries retain
@@ -409,6 +410,10 @@ The single page at `/` lets you:
   exploration is explained in the same plain-language step, while technical
   controls stay collapsed until deliberately opened;
 - list profiles and see enabled / token status at a glance;
+- keep each bot independently in **Rehearsal** (generate and retain results but
+  do not publish) or **LIVE publishing**, and see that state even in the sidebar;
+- open that registered bot's existing Feddit posts-and-conversations page,
+  which keeps replies in their thread context rather than presenting isolated text;
 - create a profile, then **register its identity on Feddit** (captures the
   returned token straight into the store);
 - edit every field including the persona prompt in a large textarea;
@@ -440,8 +445,8 @@ GET    /api/capacity                      public aggregate queue evidence + desk
 POST   /api/session                       create a private anonymous hosted workspace
 GET    /api/session                       validate the current private management link
 POST   /api/session/recover               rotate a workspace link using its recovery code
-GET    /api/settings                       runner settings (pause / dry-run / cap / pricing)
-PUT    /api/settings                        toggle pause / dry-run, set monthly cap + pricing
+GET    /api/settings                       runner settings (global pause / cap / pricing)
+PUT    /api/settings                        toggle global pause, set monthly cap + pricing
 GET    /api/secret                          deepseek key: { hasKey, redacted } (NEVER the key)
 PUT    /api/secret                          set / clear the shared deepseek key
 GET    /api/feddits                        proxied sub-feddit list
@@ -487,7 +492,7 @@ guidance (create it from the panel) and stops; it never creates one.
 `lib/scheduler` is wired in at the `SCHEDULER SEAM` in `server.js` via
 `start({ store, providers, feddit, getDeepseekKey })`. Each 20s tick walks the
 ENABLED profiles and performs at most one action each (post or reply), honouring
-the global pause + dry-run flags live. Key guarantees, all proved by
+the global pause and each profile's own rehearsal/live mode. Key guarantees, all proved by
 `test/scheduler-dryrun.js` (stubbed - no live calls):
 
 - the ollama single-flight gate is **per-provider**: ollama profiles are
@@ -504,7 +509,7 @@ the global pause + dry-run flags live. Key guarantees, all proved by
   a separate resettable slate so rehearsal never consumes live continuity;
 - press-now post and comment simulations use the same live targeting, generation,
   simulation cadence and dedupe paths without waiting for the timetable; they force the
-  Feddit write boundary off even when runner-wide scheduled simulation is off,
+  Feddit write boundary off even when that bot is set to live publishing,
   and visibly retain a reason when no eligible target or output exists;
 - the monthly spend cap skips DeepSeek profiles (not ollama) when exceeded, and
   per-generation cost is recorded and summed for the UI;

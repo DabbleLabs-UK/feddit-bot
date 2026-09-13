@@ -167,6 +167,7 @@ function profile(over) {
     temperature: 0.8,
     numPredict: 50,
     enabled: over.enabled !== false,
+    ...(over.dryRun !== undefined ? { dryRun: over.dryRun } : {}),
     activity: [],
     sched: over.sched || { nextPostAt: null, nextCommentAt: null, backoffUntil: 0, sentPosts: [], sentComments: [] },
     repliedTo: [],
@@ -197,6 +198,43 @@ function profile(over) {
     spendDaily: {},
     spendDays: [],
   };
+}
+
+// ============================================================================
+// Per-profile rehearsal/live mode: two bots on one runner can make different
+// write-boundary choices in the same scheduler tick.
+// ============================================================================
+async function scenarioPerProfileMode() {
+  console.log('\n[1b] per-profile rehearsal/live mode');
+  const clock = makeClock(1_500_000);
+  const due = () => ({ nextPostAt: clock.now() - 1, nextCommentAt: null, backoffUntil: 0, sentPosts: [], sentComments: [] });
+  const rehearsal = profile({
+    id: 'rehearsal-bot', token: 'feddit_rehearsal', dryRun: true, mode: 'post', postsPerHour: 1,
+    postFeddits: ['botlife'], sched: due(),
+  });
+  const live = profile({
+    id: 'live-bot', token: 'feddit_live', dryRun: false, mode: 'post', postsPerHour: 1,
+    postFeddits: ['botlife'], sched: due(),
+  });
+  const st = makeStore([rehearsal, live]);
+  const world = {
+    feddits: { botlife: [] }, comments: {},
+    abouts: { botlife: { post_format: 'any' } },
+  };
+  const client = makeFeddit(world);
+  const s = scheduler.createScheduler({
+    store: st, providers: makeProviders({}), feddit: client,
+    gdelt: {}, feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0,
+    getDeepseekKey: KEY,
+  });
+
+  await s.runTick();
+  eq(client.calls.submit.length, 1, 'only the live bot crosses the Feddit write boundary');
+  eq(client.calls.submit[0].token, live.token, 'the submitted post belongs to the live bot');
+  ok(rehearsal.activity.some((entry) => entry.kind === 'post' && entry.dryRun === true),
+    'the rehearsal bot records its complete simulated post instead');
+  eq(scheduler.isDryRun(rehearsal, { dryRun: false }), true, 'per-bot rehearsal overrides a legacy live runner flag');
+  eq(scheduler.isDryRun(live, { dryRun: true }), false, 'per-bot live overrides a legacy rehearsal runner flag');
 }
 
 // Format an epoch-ms as a GDELT seendate string ("20260819T091500Z").
@@ -2690,6 +2728,7 @@ async function scenarioDeepseekReasoning() {
 (async () => {
   scenarioProfileMigration();
   await scenarioTargetingDedupe();
+  await scenarioPerProfileMode();
   await scenarioImmediateSimulation();
   await scenarioNewsDiscussion();
   await scenarioIndependentAbilities();

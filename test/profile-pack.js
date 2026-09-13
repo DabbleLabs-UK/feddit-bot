@@ -23,6 +23,7 @@ const original = {
   model: 'machine-specific-model',
   deepseekModel: 'paid-machine-policy',
   enabled: true,
+  dryRun: false,
   deployment: { target: 'hosted' },
   postedNews: ['https://example.com/already-posted'],
   repliedTo: ['t3_12'],
@@ -48,6 +49,7 @@ assert.equal('provider' in moved.bot, false);
 assert.equal('model' in moved.bot, false);
 assert.equal('deepseekModel' in moved.bot, false);
 assert.equal('enabled' in moved.bot, false);
+assert.equal('dryRun' in moved.bot, false);
 assert.equal('deployment' in moved.bot, false);
 assert.equal(JSON.stringify(moved).includes('NEVER_EXPORT_THIS'), false);
 assert.equal(JSON.stringify(moved).includes('machine-specific-model'), false);
@@ -61,6 +63,7 @@ assert.deepEqual(imported.postedNews, original.postedNews);
 assert.equal(imported.feedSort, 'controversial');
 assert.deepEqual(imported.simulationState, original.simulationState);
 assert.equal(imported.enabled, false);
+assert.equal('dryRun' in imported, false, 'a moved bot starts from the destination safe default');
 assert.equal('provider' in imported, false);
 assert.equal('token' in imported, false);
 

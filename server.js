@@ -145,13 +145,14 @@ function safeProfile(p) {
   } = p;
   const now = Date.now();
   const spend = store.profileSpend(p, cost.dayKey(now), cost.monthKey(now));
-  const simulation = !!store.getSettings().dryRun;
+  const simulation = scheduler.isDryRun(p, store.getSettings());
   return {
     ...rest,
     sched: simulation && simulationState && simulationState.sched ? simulationState.sched : rest.sched,
     hasToken: Boolean(token),
     handoverPending: Boolean(secrets.getFedditHandover(p.id)),
     referenceName: store.referenceName(p),
+    fedditHistoryUrl: p.fedditUsername ? feddit.botConversationsUrl(p.fedditUsername) : '',
     postedNewsCount: Array.isArray(postedNews) ? postedNews.length : 0,
     simulationHandledCount: simulationState && Array.isArray(simulationState.repliedTo)
       ? simulationState.repliedTo.length : 0,
@@ -398,7 +399,7 @@ async function handleApi(req, res, urlPath, query) {
         placement: PLACEMENT,
         feddit: fed,
         defaultModel: modelCatalog.DELL_SHARED_MODEL,
-        settings: { paused: settings.paused, dryRun: settings.dryRun },
+        settings: { paused: settings.paused },
       });
     }
     const apiKey = secrets.getDeepseekKey();
@@ -430,13 +431,14 @@ async function handleApi(req, res, urlPath, query) {
     });
   }
 
-  // GET /api/settings - global runner settings (pause / dry-run).
+  // GET /api/settings - global runner settings (pause / spend controls).
   if (method === 'GET' && urlPath === '/api/settings') {
     return sendJson(res, 200, { settings: store.getSettings() });
   }
 
-  // PUT /api/settings - toggle global pause / dry-run, set the monthly spend
-  // cap and per-model pricing. All honoured live by the scheduler.
+  // PUT /api/settings - toggle global pause, set the monthly spend cap and
+  // per-model pricing. A legacy dryRun field is still accepted for old clients,
+  // but current profiles own their rehearsal/live mode.
   if (method === 'PUT' && urlPath === '/api/settings') {
     if (PLACEMENT === 'hosted') {
       return sendJson(res, 403, { error: 'Hosted owners cannot change runner-wide settings.' });
@@ -575,7 +577,7 @@ async function handleApi(req, res, urlPath, query) {
         token, ownerId, postedNews, newsDomainDaily, newsDomainDays,
         simulationState, ...rest
       } = existing;
-      const simulation = !!store.getSettings().dryRun;
+      const simulation = scheduler.isDryRun(existing, store.getSettings());
       return sendJson(res, 200, {
         profile: {
           ...rest,
@@ -583,6 +585,7 @@ async function handleApi(req, res, urlPath, query) {
           hasToken: Boolean(token),
           handoverPending: Boolean(secrets.getFedditHandover(existing.id)),
           referenceName: store.referenceName(existing),
+          fedditHistoryUrl: existing.fedditUsername ? feddit.botConversationsUrl(existing.fedditUsername) : '',
           postedNewsCount: Array.isArray(postedNews) ? postedNews.length : 0,
           simulationHandledCount: simulationState && Array.isArray(simulationState.repliedTo)
             ? simulationState.repliedTo.length : 0,
@@ -1087,10 +1090,13 @@ server.listen(PORT, HOST, () => {
   console.log('  DeepSeek:' + providers.deepseek.DEEPSEEK_BASE + ' (key ' + (secrets.getDeepseekKey() ? 'set' : 'NOT set') + ', concurrency cap ' + providers.DEEPSEEK_MAX_CONCURRENT + ')');
   console.log('  Feddit:  ' + feddit.BASE);
   const s = store.getSettings();
+  const profiles = store.listProfiles();
+  const rehearsalCount = profiles.filter((profile) => scheduler.isDryRun(profile, s)).length;
+  const liveCount = profiles.length - rehearsalCount;
   console.log('');
   console.log('  Scheduler is running (tick ' + Math.round(schedulerHandle.tickMs / 1000) + 's). ' +
-    'Global: ' + (s.paused ? 'PAUSED' : 'active') + ', dry-run ' + (s.dryRun ? 'ON' : 'OFF') + '.');
+    'Global: ' + (s.paused ? 'PAUSED' : 'active') + '. Bots: ' + rehearsalCount + ' rehearsal, ' + liveCount + ' live.');
   console.log('  Monthly spend cap: $' + s.monthlyCapUsd + ' (deepseek profiles skip over-cap; ollama unaffected).');
-  console.log('  It only acts on ENABLED profiles; dry-run logs actions without writing.');
+  console.log('  It only acts on ENABLED profiles; each bot can rehearse without writing or publish live.');
   console.log('');
 });

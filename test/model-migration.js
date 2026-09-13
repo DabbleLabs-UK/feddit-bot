@@ -32,6 +32,13 @@ assert.equal(settings.dryRun, true);
 const currentSettings = store.migrateSettings({ localDefaultModel: 'qwen3:4b' }, 4);
 assert.equal(currentSettings.localDefaultModel, 'qwen3:4b');
 
+const inheritedLiveMode = store.migrateProfiles([{ id: 'was-live' }], 6, false)[0];
+assert.equal(inheritedLiveMode.dryRun, false, 'an old live runner keeps its bots live during the schema-7 migration');
+const inheritedRehearsalMode = store.migrateProfiles([{ id: 'was-rehearsing' }], 6, true)[0];
+assert.equal(inheritedRehearsalMode.dryRun, true, 'an old rehearsal runner keeps its bots safe during migration');
+const explicitPerBotMode = store.migrateProfiles([{ id: 'modern', dryRun: false }], 7, true)[0];
+assert.equal(explicitPerBotMode.dryRun, false, 'a current per-bot mode is never overwritten by the legacy runner fallback');
+
 const capabilityUpgrade = store.migrateProfiles([
   {
     id: 'old-conversation',

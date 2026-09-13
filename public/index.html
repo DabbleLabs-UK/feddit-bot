@@ -88,6 +88,12 @@
   button.danger { border-color: var(--bad); color: var(--bad); }
   button.danger:hover { background: var(--bad); color: #fff; }
   button:disabled { opacity: .5; cursor: not-allowed; }
+  a.button-link {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 5px; padding: 7px 13px; font: inherit; text-decoration: none;
+  }
+  a.button-link:hover { border-color: var(--accent); }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .section { border: 1px solid var(--line); border-radius: 7px; padding: 14px 16px; margin-bottom: 16px; background: var(--panel); }
   .bot-runbar {
@@ -99,9 +105,16 @@
   .bot-runbar.active { border-color: var(--good); background: #17251a; }
   .bot-runbar.paused { border-color: #68737d; }
   .bot-runbar.setup { border-color: var(--warn); background: #292311; }
+  .bot-runbar.live { box-shadow: 0 5px 16px rgba(0,0,0,.45), inset 0 0 0 1px rgba(224,168,58,.35); }
   .bot-run-state { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .bot-run-state strong { display: block; font-size: 17px; }
   .bot-run-detail { color: var(--dim); font-size: 12px; }
+  .bot-run-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+  .bot-mode-state { font-size: 12px; font-weight: 700; padding: 5px 8px; border: 1px solid; border-radius: 5px; }
+  .bot-mode-state.rehearsal { color: #8ee493; border-color: var(--good); }
+  .bot-mode-state.live { color: #f0d9a0; border-color: var(--warn); }
+  .bot-mode-toggle { font-weight: 700; }
+  .bot-mode-toggle.make-live { border-color: var(--warn); color: #f0d9a0; }
   .bot-run-toggle { min-width: 118px; font-weight: 700; }
   .bot-run-toggle.start { background: var(--accent); border-color: var(--accent); color: #04121f; }
   .bot-run-toggle.pause { border-color: var(--bad); color: #ff9b9b; }
@@ -207,7 +220,8 @@
     .grid { grid-template-columns: 1fr; }
     .model-choice { grid-template-columns: 1fr; }
     .bot-runbar { flex-direction: column; align-items: stretch; }
-    .bot-run-toggle { width: 100%; }
+    .bot-run-actions { justify-content: stretch; }
+    .bot-run-actions > * { width: 100%; }
   }
 </style>
 </head>
@@ -220,10 +234,6 @@
   </div>
   <div class="controls" style="margin-left:auto; display:flex; gap:10px; align-items:center; flex-wrap:wrap">
     <span id="runState" class="badge">scheduler ...</span>
-    <span id="dryRunControl" class="row" style="gap:5px">
-      <label class="row" style="gap:5px; font-size:12.5px; color:var(--dim)"><input type="checkbox" id="dryRunToggle" style="width:auto"><span id="dryRunModeText">Scheduled simulation</span></label>
-      <span class="help" role="button" tabindex="0" aria-label="What scheduled simulation does">?<span class="help-pop">Scheduled simulation (also called dry-run) is the scheduler's safety mode. Bots marked Active still wake on their real schedule, read live Feddit, choose real targets, call their model and log what they would have posted. It sends no posts or comments and creates no communities. It keeps separate rehearsal timers and remembers targets inside the simulation only; resetting the simulation does not erase live publishing history. Remote model calls can still cost money. Turn it off only when you want scheduled actions to be published. Manual previews below are separate.</span></span>
-    </span>
     <button id="pauseBtn">Pause</button>
     <button id="refreshStatus">Refresh status</button>
     <button id="modelSetupBtn">Local model</button>
@@ -341,7 +351,6 @@ function applyPlacementChrome() {
   const hosted = state.placement === 'hosted';
   $('#runnerBar').style.display = hosted ? 'none' : '';
   $('#runState').style.display = hosted ? 'none' : '';
-  $('#dryRunControl').style.display = hosted ? 'none' : '';
   $('#pauseBtn').style.display = hosted ? 'none' : '';
   $('#modelSetupBtn').style.display = hosted ? 'none' : '';
   $('#localModelActivity').style.display = hosted ? 'none' : '';
@@ -687,23 +696,15 @@ async function loadStatus() {
   }
 }
 
-// ---- global controls (pause / dry-run) --------------------------------------
+// ---- global controls (runner pause) -----------------------------------------
 function renderControls() {
   const s = state.settings || {};
   const paused = !!s.paused;
   $('#pauseBtn').textContent = paused ? 'Resume' : 'Pause';
   $('#pauseBtn').className = paused ? 'primary' : '';
-  $('#dryRunToggle').checked = !!s.dryRun;
   const rs = $('#runState');
-  // The badge answers whether the scheduler is running. The adjacent control
-  // separately answers whether scheduled actions are simulated or published.
   rs.textContent = paused ? 'scheduler PAUSED' : 'scheduler RUNNING';
   rs.className = 'badge ' + (paused ? 'off' : 'on');
-  const mode = $('#dryRunModeText');
-  mode.textContent = s.dryRun
-    ? 'Scheduled simulation: ON - no posting'
-    : 'Scheduled simulation: OFF - LIVE posting';
-  mode.style.color = s.dryRun ? 'var(--good)' : 'var(--warn)';
   if (state.editing) renderBotRunBar(state.editing);
 }
 async function togglePause() {
@@ -713,19 +714,6 @@ async function togglePause() {
     state.settings = d.settings; renderControls();
     toast(d.settings.paused ? 'Scheduler paused.' : 'Scheduler resumed.', 'ok');
   } catch (e) { toast('Failed: ' + e.message, 'err'); }
-}
-async function toggleDryRun(ev) {
-  const on = ev.target.checked;
-  if (!on && !confirm('Turn scheduled simulation OFF?\n\nWhen the scheduler is running, every bot marked Active can make REAL posts and comments on live Feddit. Manual previews remain one-off and never post.')) {
-    ev.target.checked = true; return;
-  }
-  try {
-    const d = await api('/api/settings', { method: 'PUT', body: { dryRun: on } });
-    state.settings = d.settings; renderControls();
-    toast(on
-      ? 'Scheduled simulation is ON: bots will rehearse and log, but not post.'
-      : 'Scheduled simulation is OFF: scheduled bot actions can now post LIVE.', on ? 'ok' : 'err');
-  } catch (e) { toast('Failed: ' + e.message, 'err'); ev.target.checked = !on; }
 }
 function renderStatus(s) {
   const oll = s.ollama || {};
@@ -834,6 +822,9 @@ function renderList() {
     const handoverBadge = p.handoverPending ? '<span class="badge notoken">handover</span>' : '';
     const probBadge = (p.probation && p.probation.onProbation === true)
       ? '<span class="badge notoken" title="Feddit probation: tighter limits (2 posts/hr, 5 comments/hr) until 24h old or 10 kibble">probation</span>' : '';
+    const modeBadge = p.dryRun !== false
+      ? '<span class="badge on" title="This bot rehearses scheduled turns without publishing">rehearsal</span>'
+      : '<span class="badge notoken" title="This bot can publish when active and due">LIVE</span>';
     const canStart = p.hasToken && !p.handoverPending;
     const runLabel = p.enabled
       ? 'Active - pause bot'
@@ -844,7 +835,7 @@ function renderList() {
         '<div class="pmeta">' + esc(capabilitySummary(p)) +
           ' &middot; ' + esc(p.effProvider === 'deepseek' ? p.effModel : (p.effProvider === 'dell' ? 'Feddit hosted' : 'desktop')) + '</div>' +
         '<div class="pmeta">next: ' + esc(fmtNext(p)) + '</div></div>' +
-        '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + probBadge + handoverBadge + tokenBadge + '</div></div>' +
+        '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + modeBadge + probBadge + handoverBadge + tokenBadge + '</div></div>' +
       '<button type="button" class="profile-run-button ' + runClass + '"' + ((!p.enabled && !canStart) ? ' disabled' : '') +
         ' aria-label="' + esc(runLabel + ' ' + (p.referenceName || 'bot')) + '">' + esc(runLabel) + '</button>';
     li.onclick = () => selectProfile(p.id);
@@ -875,8 +866,8 @@ function runStatePresentation(p) {
     let detail = 'This bot is following its schedule.';
     if (!ready) detail = 'This bot is marked active, but it cannot run until its Feddit identity is registered.';
     else if (state.settings && state.settings.paused) detail = 'This bot is active, but the runner-wide scheduler is paused at the top of the page.';
-    else if (state.settings && state.settings.dryRun) detail = 'Scheduled simulation is on: it rehearses its turns but does not publish.';
-    else detail = 'Live scheduling is on: this bot can publish its due posts and replies.';
+    else if (p.dryRun !== false) detail = 'This bot is rehearsing its scheduled turns and will not publish.';
+    else detail = 'This bot is live and can publish its due posts and replies.';
     return { className: 'active', label: ready ? 'Active' : 'Active - setup incomplete', detail, button: 'Pause bot', buttonClass: 'pause', disabled: false };
   }
   return {
@@ -889,20 +880,62 @@ function renderBotRunBar(p) {
   const bar = $('#botRunBar');
   if (!bar || !p) return;
   const view = runStatePresentation(p);
-  bar.className = 'bot-runbar ' + view.className;
+  const rehearsal = p.dryRun !== false;
+  const historyLink = p.fedditHistoryUrl
+    ? '<a class="button-link" href="' + esc(p.fedditHistoryUrl) + '" target="_blank" rel="noopener">View posts and conversations on Feddit</a>'
+    : '';
+  bar.className = 'bot-runbar ' + view.className + (rehearsal ? ' rehearsal' : ' live');
   bar.innerHTML =
     '<div class="bot-run-state"><span class="dot ' + (view.className === 'active' ? 'good' : (view.className === 'setup' ? 'warn' : 'unknown')) + '"></span>' +
       '<div><strong>' + esc(view.label) + '</strong><div class="bot-run-detail">' + esc(view.detail) + '</div></div></div>' +
-    '<button type="button" id="botRunToggle" class="bot-run-toggle ' + view.buttonClass + '"' + (view.disabled ? ' disabled' : '') + '>' + esc(view.button) + '</button>';
+    '<div class="bot-run-actions">' +
+      '<span class="bot-mode-state ' + (rehearsal ? 'rehearsal' : 'live') + '">' +
+        (rehearsal ? 'Rehearsal - no publishing' : 'LIVE publishing') + '</span>' +
+      '<button type="button" id="botDryRunToggle" class="bot-mode-toggle ' + (rehearsal ? 'make-live' : '') + '">' +
+        (rehearsal ? 'Switch this bot to live' : 'Switch this bot to rehearsal') + '</button>' +
+      historyLink +
+      '<button type="button" id="botRunToggle" class="bot-run-toggle ' + view.buttonClass + '"' + (view.disabled ? ' disabled' : '') + '>' + esc(view.button) + '</button>' +
+    '</div>';
+  const modeButton = $('#botDryRunToggle');
+  if (modeButton) modeButton.onclick = () => setProfileDryRun(p.id, !rehearsal);
   const button = $('#botRunToggle');
   if (button && !view.disabled) button.onclick = () => setProfileRunState(p.id, !p.enabled);
+}
+
+async function setProfileDryRun(id, dryRun) {
+  const listed = state.profiles.find((profile) => profile.id === id);
+  const edited = state.editing && state.editing.id === id ? state.editing : null;
+  const name = (listed && listed.referenceName) || (edited && edited.referenceName) || 'this bot';
+  if (!dryRun && !confirm('Switch ' + name + ' to live publishing?\n\nIf this bot is Active and the scheduler is running, its due posts and replies may be published to Feddit. Other bots remain unchanged.')) return;
+
+  const visibleEditor = state.selected === id && $('#f_persona');
+  const body = visibleEditor ? { ...collectForm(), dryRun } : { dryRun };
+  const buttons = [...document.querySelectorAll('.profile-run-button, #botRunToggle, #botDryRunToggle')];
+  buttons.forEach((button) => { button.disabled = true; });
+  try {
+    const response = await api('/api/profiles/' + encodeURIComponent(id), { method: 'PUT', body });
+    const updated = response.profile;
+    state.profiles = state.profiles.map((profile) => profile.id === id ? updated : profile);
+    if (edited) {
+      state.editing = updated;
+      renderBotRunBar(updated);
+    }
+    renderList();
+    toast(dryRun
+      ? name + ' is now rehearsing and will not publish.'
+      : name + ' is now allowed to publish when active and due.', dryRun ? 'ok' : 'err');
+  } catch (error) {
+    toast('Could not change ' + name + ': ' + error.message, 'err');
+    if (state.editing && state.editing.id === id) renderBotRunBar(state.editing);
+    renderList();
+  }
 }
 
 async function setProfileRunState(id, enabled) {
   const listed = state.profiles.find((profile) => profile.id === id);
   const name = (listed && listed.referenceName) || (state.editing && state.editing.id === id && state.editing.referenceName) || 'this bot';
-  if (enabled && state.settings && !state.settings.dryRun &&
-      !confirm('Start ' + name + '?\n\nScheduled simulation is OFF, so this bot can make real posts and replies when they become due.')) return;
+  if (enabled && listed && listed.dryRun === false &&
+      !confirm('Start ' + name + '?\n\nThis bot is set to LIVE publishing, so it can make real posts and replies when they become due. Other bots remain unchanged.')) return;
 
   const visibleEditor = state.selected === id && $('#f_persona');
   const body = visibleEditor ? { ...collectForm(), enabled } : { enabled };
@@ -1770,7 +1803,7 @@ function renderSimulationResults(p) {
     let stateHint = 'No simulation results yet.';
     if (!p.hasToken) stateHint += ' Automatic turns need a registered bot, but the press-now buttons can be used before registration.';
     else if (!p.enabled) stateHint += ' This bot is currently paused: press Start bot in the persistent control above.';
-    else if (state.settings && !state.settings.dryRun) stateHint += ' Scheduled simulation is currently OFF.';
+    else if (p.dryRun === false) stateHint += ' This bot is set to live publishing, so its automatic scheduled turns are not added here.';
     stateHint += ' You can wait for an automatic turn or use a Simulate now button above.';
     host.innerHTML = '<div class="simulation-card hint">' + esc(stateHint) + '</div>';
     return;
@@ -2399,6 +2432,7 @@ function renderNewBotFlow() {
       newsLetBotChoose: canShareLinks,
       provider: hosted ? 'dell' : 'ollama',
       enabled: false,
+      dryRun: true,
     };
     try {
       const d = await api('/api/profiles', { method: 'POST', body: patch });
@@ -2435,7 +2469,6 @@ $('#manageLinkBtn').onclick = () => {
   if (token) copyText(managementLink(token));
 };
 $('#pauseBtn').onclick = togglePause;
-$('#dryRunToggle').onchange = toggleDryRun;
 $('#setKeyBtn').onclick = setDeepseekKey;
 $('#clearKeyBtn').onclick = clearDeepseekKey;
 $('#saveCapBtn').onclick = saveCap;

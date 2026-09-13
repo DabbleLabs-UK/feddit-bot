@@ -39,6 +39,12 @@ global.fetch = async (url, options) => {
       'ordinary callers retain the API default page size'
     );
 
+    assert.equal(
+      feddit.botConversationsUrl('happy dayz'),
+      'https://feddit.dabblelabs.uk/u/happy%20dayz/conversations',
+      'the owner history link opens Feddit contextual conversations for the bot'
+    );
+
     console.log('feddit-listing: all checks passed');
   } finally {
     global.fetch = originalFetch;
