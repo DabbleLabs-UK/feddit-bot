@@ -866,10 +866,11 @@ async function handleApi(req, res, urlPath, query) {
 
     // POST /api/profiles/:id/preview-news - run the news pick (query GDELT ->
     // filter -> choose -> generate a title) and return the chosen article + title
-    // WITHOUT posting or consuming (recording) the article. News profiles only.
+    // WITHOUT posting or consuming (recording) the article. Available only to
+    // profiles whose independent abilities include sharing article links.
     if (method === 'POST' && sub === '/preview-news') {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
-      if (existing.botType !== 'news') return sendJson(res, 400, { error: 'This profile is not a news bot.' });
+      if (!scheduler.caps(existing).canShareLinks) return sendJson(res, 400, { error: 'This bot is not configured to share article links.' });
       const prov = scheduler.providerOf(existing);
       if (prov === 'ollama' && ollama.isBusy()) {
         return sendJson(res, 409, { error: 'Ollama is busy with another generation. Try again in a moment.' });
@@ -941,7 +942,7 @@ async function handleApi(req, res, urlPath, query) {
     }
 
     // POST /api/profiles/:id/create-feddit - explicitly create a sub-feddit with
-    // THIS profile's bot token. The owner authors name + title + description +
+    // THIS profile's bot token. The owner authors name + description + format +
     // ordered rules + nsfw in the panel; NO model is involved. Length caps are
     // enforced client-side (see index.html) AND here as a backstop, then the
     // three server outcomes (name taken / probation / daily cap) are surfaced as
@@ -953,22 +954,22 @@ async function handleApi(req, res, urlPath, query) {
 
       const body = await readBody(req);
       const name = String(body.name || '').trim();
-      const title = String(body.title || '').trim();
       const description = String(body.description || '').trim();
       const nsfw = body.nsfw === true;
+      const postFormat = String(body.postFormat || 'any').toLowerCase();
       const rules = Array.isArray(body.rules) ? body.rules : [];
 
       // Backstop the exact Feddit caps (read from V:/feddit/src/api/Validate.php):
-      // name [A-Za-z0-9_]{3,24}, title 1..255, description <=2000, at most 15
+      // name [A-Za-z0-9_]{3,24}, description <=2000, at most 15
       // rules, rule title 1..100, rule detail <=500.
       if (!/^[A-Za-z0-9_]{3,24}$/.test(name)) {
         return sendJson(res, 400, { error: 'Name must be 3-24 characters: letters, numbers or underscore only.' });
       }
-      if (title.length < 1 || title.length > 255) {
-        return sendJson(res, 400, { error: 'Title is required and must be at most 255 characters.' });
-      }
       if (description.length > 2000) {
         return sendJson(res, 400, { error: 'Description must be at most 2000 characters.' });
+      }
+      if (!['any', 'text', 'link'].includes(postFormat)) {
+        return sendJson(res, 400, { error: 'Post format must be text, link or either.' });
       }
       if (rules.length > 15) {
         return sendJson(res, 400, { error: 'A sub-feddit can have at most 15 rules.' });
@@ -984,7 +985,7 @@ async function handleApi(req, res, urlPath, query) {
         }
       }
 
-      const r = await feddit.createFeddit({ token: existing.token, name, title, description, nsfw, rules });
+      const r = await feddit.createFeddit({ token: existing.token, name, description, nsfw, rules, postFormat });
       if (!r.ok) {
         const msg = feddit.createErrorMessage(r, name);
         store.logActivity(id, { kind: 'feddit', ok: false, target: 'f/' + name, note: 'Create failed: ' + msg });
@@ -993,7 +994,7 @@ async function handleApi(req, res, urlPath, query) {
         return sendJson(res, status, { error: msg });
       }
 
-      const created = (r.data && r.data.feddit) || { name, title };
+      const created = (r.data && r.data.feddit) || { name, title: name, post_format: postFormat };
       const ruleCount = Array.isArray(created.rules) ? created.rules.length : rules.length;
       store.logActivity(id, {
         kind: 'feddit', ok: true, target: 'f/' + name,

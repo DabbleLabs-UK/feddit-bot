@@ -172,6 +172,9 @@ function profile(over) {
     repliedTo: [],
     // ---- news config + state ----
     botType: over.botType || 'conversational',
+    ...(over.canReply !== undefined ? { canReply: over.canReply } : {}),
+    ...(over.canStartDiscussions !== undefined ? { canStartDiscussions: over.canStartDiscussions } : {}),
+    ...(over.canShareLinks !== undefined ? { canShareLinks: over.canShareLinks } : {}),
     newsUseAllFeeds: over.newsUseAllFeeds != null ? over.newsUseAllFeeds : true,
     newsFeedSelection: over.newsFeedSelection || [],
     newsCustomFeeds: over.newsCustomFeeds || [],
@@ -256,6 +259,7 @@ function makeFeddit(world) {
         name, title: a.title || name,
         description: a.description != null ? a.description : null,
         sidebar_text: null, over_18: !!a.over_18,
+        post_format: a.post_format || 'any',
         rules: Array.isArray(a.rules) ? a.rules : [],
         created_utc: 0, created_by: null, subscriber_count: 0, post_count: 0, url: '/f/' + name,
       } } };
@@ -448,6 +452,101 @@ async function scenarioNewsDiscussion() {
   ok(simulation.simulation.context.includes('What do you make of this?'), 'the reply includes the other bot reaction');
   ok(simulation.simulation.context.includes('A useful summary of the story.'), 'the reply includes available article context');
   eq(feddit.calls.comment.length, 0, 'news discussion dry-run makes no live write');
+}
+
+// ============================================================================
+// Scenario 1ab: independent abilities, personality-led choice and hard
+// community post formats. A failed reply choice falls through to another real
+// ability; WAIT is valid; link-only communities never receive invented text.
+// ============================================================================
+async function scenarioIndependentAbilities() {
+  console.log('\n[1ab] independent abilities + personality choice + community post format');
+
+  // The personality initially chooses reply (1), but the feed is empty. Because
+  // starting a discussion is also available, the same turn falls through to a
+  // valid text post rather than ending as a useless no-target result.
+  {
+    const clock = makeClock(1_800_000);
+    const p = profile({
+      id: 'flex', mode: 'both', postsPerHour: 60, commentsPerHour: 60,
+      postFeddits: ['botlife'], readFeddits: ['botlife'],
+      canReply: true, canStartDiscussions: true, canShareLinks: false,
+    });
+    p.sched.nextPostAt = clock.now();
+    p.sched.nextCommentAt = clock.now();
+    const store = makeStore([p]);
+    const providers = makeProviders({ textFor: (_opts, index) => (
+      index === 0 ? '1' : 'A discussion worth having\n\nHere is an actual opening thought.'
+    ) });
+    const world = {
+      feddits: { botlife: [] }, comments: {},
+      abouts: { botlife: { post_format: 'text', description: 'General discussion.', rules: [] } },
+    };
+    const client = makeFeddit(world);
+    const sched = scheduler.createScheduler({
+      store, providers, feddit: client,
+      about: aboutLib.createAbout({ feddit: client, now: clock.now }),
+      now: clock.now, random: () => 0, getDeepseekKey: KEY,
+    });
+    const tick = await sched.runTick();
+    eq(tick.results[0].action, 'post', 'no reply target falls through to another available ability in the same turn');
+    ok((p.activity || []).some((entry) => entry.simulation && entry.simulation.title === 'A discussion worth having'),
+      'the fallback records a complete text-discussion simulation');
+    eq(providers.stats().calls, 2, 'one short personality decision and one content generation were made');
+    eq(client.calls.submit.length, 0, 'the fallback remains a dry-run and publishes nothing');
+  }
+
+  // WAIT is an intentional result, not a failure. It reschedules both due kinds
+  // and creates a visible simulation card explaining the choice.
+  {
+    const clock = makeClock(1_900_000);
+    const p = profile({
+      id: 'waiter', mode: 'both', postsPerHour: 60, commentsPerHour: 60,
+      postFeddits: ['botlife'], readFeddits: ['botlife'],
+      canReply: true, canStartDiscussions: true, canShareLinks: false,
+    });
+    p.sched.nextPostAt = clock.now();
+    p.sched.nextCommentAt = clock.now();
+    const store = makeStore([p]);
+    const providers = makeProviders({ textFor: () => 'WAIT' });
+    const sched = scheduler.createScheduler({
+      store, providers, feddit: makeFeddit({ feddits: { botlife: [] }, comments: {} }),
+      now: clock.now, random: () => 0, getDeepseekKey: KEY,
+    });
+    const tick = await sched.runTick();
+    eq(tick.results[0].action, 'wait', 'the personality may choose to wait');
+    ok(p.sched.nextPostAt > clock.now() && p.sched.nextCommentAt > clock.now(), 'waiting reschedules every due kind');
+    ok((p.activity || []).some((entry) => entry.simulation && entry.simulation.action === 'wait'),
+      'the reason for waiting is visible in simulation results');
+  }
+
+  // Top-level text format is a hard community invariant. It is checked before
+  // any model call, while replies remain a separate capability.
+  {
+    const clock = makeClock(2_000_000);
+    const p = profile({
+      id: 'wrong-format', mode: 'post', postsPerHour: 60,
+      postFeddits: ['localnews'], readFeddits: ['localnews'],
+      canReply: false, canStartDiscussions: true, canShareLinks: false,
+    });
+    p.sched.nextPostAt = clock.now();
+    const store = makeStore([p]);
+    const providers = makeProviders();
+    const world = {
+      feddits: { localnews: [] }, comments: {},
+      abouts: { localnews: { post_format: 'link', description: 'Links to real local reporting.', rules: [] } },
+    };
+    const client = makeFeddit(world);
+    const sched = scheduler.createScheduler({
+      store, providers, feddit: client,
+      about: aboutLib.createAbout({ feddit: client, now: clock.now }),
+      now: clock.now, random: () => 0, getDeepseekKey: KEY,
+    });
+    await sched.runTick();
+    eq(providers.stats().calls, 0, 'a text post in a link-only community is rejected before generation');
+    ok((p.activity || []).some((entry) => /requires a real source URL/.test(entry.note || '')),
+      'the format rejection plainly explains why no text news post was made');
+  }
 }
 
 // ============================================================================
@@ -2123,8 +2222,9 @@ async function scenarioSubFedditCreation() {
   // --- payload shape: the EXACT body Feddit's FedditService::create reads ----
   {
     const payload = feddit.buildFedditPayload({
-      name: 'localnews', title: 'Local News',
+      name: 'localnews',
       description: '  Neighbourhood updates.  ', nsfw: true,
+      postFormat: 'link',
       rules: [
         { title: 'Be civil', detail: 'No personal attacks.' },
         { title: 'Stay on topic', detail: '' },   // empty detail -> omitted
@@ -2135,13 +2235,14 @@ async function scenarioSubFedditCreation() {
     eq(payload.title, 'localnews', 'payload: legacy title value is derived from the one public slug');
     eq(payload.description, 'Neighbourhood updates.', 'payload: description trimmed and sent');
     eq(payload.nsfw, true, 'payload: nsfw flag sent when set');
+    eq(payload.post_format, 'link', 'payload: top-level link-only format is sent');
     ok(!('sidebar_text' in payload), 'payload: no sidebar_text (the form does not collect one)');
     eq(JSON.stringify(payload.rules),
       JSON.stringify([{ title: 'Be civil', detail: 'No personal attacks.' }, { title: 'Stay on topic' }]),
       'payload: rules are an ORDERED array of {title[,detail]}, empties dropped/omitted, order preserved');
 
     const bare = feddit.buildFedditPayload({ name: 'quietplace' });
-    eq(JSON.stringify(bare), JSON.stringify({ name: 'quietplace', title: 'quietplace' }),
+    eq(JSON.stringify(bare), JSON.stringify({ name: 'quietplace', title: 'quietplace', post_format: 'any' }),
       'payload: bare create derives the internal legacy title from the slug');
   }
 
@@ -2237,6 +2338,10 @@ async function scenarioSubFedditCreation() {
 // ============================================================================
 async function scenarioAboutRules() {
   console.log('\n[19] community about/rules: shared fetch + 3-path injection + empty-rules + NSFW opt-in');
+  eq(aboutLib.normalize({ name: 'links', post_format: 'link' }).postFormat, 'link',
+    'community about data preserves a link-only top-level post format');
+  eq(aboutLib.normalize({ name: 'legacy' }).postFormat, 'any',
+    'communities without a stored format remain compatible with either post kind');
   const H = 3_600_000;
   const RULES = [
     { number: 1, title: 'No spam', detail: 'Self-promo at most once a week' },
@@ -2587,6 +2692,7 @@ async function scenarioDeepseekReasoning() {
   await scenarioTargetingDedupe();
   await scenarioImmediateSimulation();
   await scenarioNewsDiscussion();
+  await scenarioIndependentAbilities();
   await scenarioCommunityMovement();
   await scenarioCadenceCeiling();
   await scenarioThreadCap();

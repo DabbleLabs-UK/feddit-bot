@@ -841,7 +841,7 @@ function renderList() {
     const runClass = p.enabled ? 'active' : (canStart ? 'paused' : 'setup');
     li.innerHTML =
       '<div class="profile-list-summary"><div><div class="pname">' + esc(p.referenceName || '(unnamed)') + '</div>' +
-        '<div class="pmeta">' + esc(p.botType === 'news' ? 'news' : p.mode) +
+        '<div class="pmeta">' + esc(capabilitySummary(p)) +
           ' &middot; ' + esc(p.effProvider === 'deepseek' ? p.effModel : (p.effProvider === 'dell' ? 'Feddit hosted' : 'desktop')) + '</div>' +
         '<div class="pmeta">next: ' + esc(fmtNext(p)) + '</div></div>' +
         '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + probBadge + handoverBadge + tokenBadge + '</div></div>' +
@@ -961,6 +961,23 @@ function profileCommunityHomes(profile) {
     ...((profile && profile.readFeddits) || []),
   ].map((name) => String(name || '').replace(/^f\//i, '').toLowerCase()).filter(Boolean))];
 }
+function profileCapabilities(profile) {
+  const p = profile || {};
+  const modern = p.canReply !== undefined || p.canStartDiscussions !== undefined || p.canShareLinks !== undefined;
+  return {
+    canReply: modern ? p.canReply === true : p.mode === 'both' || p.mode === 'comment',
+    canStartDiscussions: modern ? p.canStartDiscussions === true : p.botType !== 'news' && (p.mode === 'both' || p.mode === 'post'),
+    canShareLinks: modern ? p.canShareLinks === true : p.botType === 'news',
+  };
+}
+function capabilitySummary(profile) {
+  const c = profileCapabilities(profile);
+  const parts = [];
+  if (c.canReply) parts.push('replies');
+  if (c.canStartDiscussions) parts.push('discussions');
+  if (c.canShareLinks) parts.push('article links');
+  return parts.length ? parts.join(' + ') : 'no activities selected';
+}
 // One-per-line list (e.g. the custom-feed URLs textarea) back to a trimmed array.
 function parseLines(s) { return String(s || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean); }
 // Human "how long ago" for a past epoch-ms timestamp (0/absent = never).
@@ -1054,6 +1071,7 @@ function collectFedditRules() {
 async function createSubFeddit(id) {
   const name = $('#cf_name').value.trim();
   const description = $('#cf_description').value.trim();
+  const postFormat = $('#cf_postFormat').value;
   const nsfw = $('#cf_nsfw').checked;
   const rules = collectFedditRules();
 
@@ -1071,7 +1089,7 @@ async function createSubFeddit(id) {
   btn.disabled = true; $('#cf_meta').textContent = 'Creating f/' + name + '...';
   try {
     const r = await api('/api/profiles/' + encodeURIComponent(id) + '/create-feddit', {
-      method: 'POST', body: { name, description, nsfw, rules },
+      method: 'POST', body: { name, description, postFormat, nsfw, rules },
     });
     const f = r.feddit || {};
     const rc = Array.isArray(f.rules) ? f.rules.length : rules.length;
@@ -1114,9 +1132,7 @@ function fmtNext(p) {
 
 function renderEditor(p) {
   state.editing = p;
-  const role = p.botType === 'news'
-    ? (p.mode === 'post' ? 'news-only' : 'news')
-    : (p.mode === 'comment' ? 'talk' : (p.mode === 'post' ? 'write-only' : 'conversational'));
+  const abilities = profileCapabilities(p);
   const hostedDailyTurns = hostedDailyTurnsFor(p);
   const providerChoice = p.provider === 'deepseek'
     ? (p.deepseekModel || 'deepseek-v4-flash')
@@ -1141,16 +1157,12 @@ function renderEditor(p) {
       <h2 id="editorHeading" style="margin-top:0">${esc(p.referenceName || '(unnamed)')}</h2>
       <div class="grid">
         <div class="field"><label>Feddit username (this is the profile's name)</label><input id="f_fedditUsername" value="${esc(p.fedditUsername)}" placeholder="e.g. quip_bot"></div>
-        <div class="field"><label>What this bot does</label>
-          <select id="f_botType">
-            <option value="talk"${role==='talk'?' selected':''}>Talk with other bots (replies only)</option>
-            <option value="conversational"${role==='conversational'?' selected':''}>Write original posts and join conversations</option>
-            <option value="write-only"${role==='write-only'?' selected':''}>Write original posts only</option>
-            <option value="news"${role==='news'?' selected':''}>Share news and join the discussion</option>
-            <option value="news-only"${role==='news-only'?' selected':''}>Share news without replying</option>
-          </select></div>
+        <div class="field"><label>What may this bot do?</label>
+          <label class="row" style="gap:7px;margin-top:7px"><input type="checkbox" id="f_canReply" style="width:auto"${abilities.canReply?' checked':''}> Reply to discussions</label>
+          <label class="row" style="gap:7px;margin-top:7px"><input type="checkbox" id="f_canStartDiscussions" style="width:auto"${abilities.canStartDiscussions?' checked':''}> Start original text discussions</label>
+          <label class="row" style="gap:7px;margin-top:7px"><input type="checkbox" id="f_canShareLinks" style="width:auto"${abilities.canShareLinks?' checked':''}> Share real article links</label></div>
       </div>
-      <div class="hint" id="botTypeHint"></div>
+      <div class="hint" id="botTypeHint">These are independent abilities, not fixed bot types. When several are available, the bot chooses in character and may decide to wait.</div>
     </div>
 
     <div class="section">
@@ -1167,7 +1179,7 @@ function renderEditor(p) {
           <button type="button" id="resetSimulationBtn">Start simulation afresh</button>
         </div>
       </div>
-      <div class="hint"><b>Nothing is posted to a separate sandbox site.</b> Scheduled simulation results appear here automatically, including the complete post, reply or news title and enough source context to evaluate it. To avoid waiting, the buttons below run the same live targeting and generation path immediately, but always stop before publishing.</div>
+      <div class="hint"><b>Nothing is posted to a separate sandbox site.</b> Scheduled simulation results appear here automatically, including the complete text post, reply or article-link title and enough source context to evaluate it. To avoid waiting, the buttons below run the same live targeting and generation path immediately, but always stop before publishing.</div>
       <div class="row" style="margin-top:10px">
         <button type="button" id="simulatePostBtn">Simulate a post now</button>
         <button type="button" id="simulateCommentBtn">Simulate a comment now</button>
@@ -1199,7 +1211,7 @@ function renderEditor(p) {
             <option value="headline"${p.linkNoContext!=='skip'?' selected':''}>comment on the headline (honesty-guarded)</option>
             <option value="skip"${p.linkNoContext==='skip'?' selected':''}>skip them entirely</option>
           </select></div>
-        <div class="field full"><label id="postFedditsLabel">${lbl('Communities in this bot\'s feed (comma-separated)', 'The communities this conversational bot browses. Depending on its activity mode, it may reply to posts or make new posts in any of them.')}</label><input id="f_postFeddits" value="${esc(csv(p.botType==='news' ? p.postFeddits : profileCommunityHomes(p)))}" placeholder="botlife, homelab"><div class="hint convField">This is the bot's home feed. It can reply without making a post first. List several to merge several communities into its feed.</div></div>
+        <div class="field full"><label id="postFedditsLabel">${lbl('Communities in this bot\'s feed (comma-separated)', 'The communities this bot browses and may act in. Community post-format settings decide whether a new top-level post may be text, a link, or either; comments are unaffected.')}</label><input id="f_postFeddits" value="${esc(csv(profileCommunityHomes(p)))}" placeholder="botlife, homelab"><div class="hint convField">This is one shared feed, not separate read and write lists. It can reply without making a post first. List several to merge several communities.</div></div>
         <div class="field full replyField"><label>${lbl('How should it browse its feed?', 'For each community in the bot\'s feed, the runner asks Feddit for this real view and merges the results. This uses Feddit\'s ranking, like choosing Best, Hot or New in the human interface; it does not automate a browser or scroll a page.')}</label>
           <select id="f_feedSort">
             <option value="best"${!p.feedSort||p.feedSort==='best'?' selected':''}>Best - Feddit's recommended order</option>
@@ -1298,9 +1310,9 @@ function renderEditor(p) {
         <label class="row" style="gap:6px; margin-left:16px"><input type="checkbox" id="f_newsRequireImage" style="width:auto"${p.newsRequireImage?' checked':''}> Only post articles that already have an image ${lbl('', 'When on, only posts articles whose feed already carries a preview image, so the link post is more likely to show a picture. The feed image is only a hint - Feddit does its own link preview fetch and that thumbnail is what actually shows. When off, the bot posts image-less articles too.')}</label>
       </div>
       <div class="row" style="margin-top:10px">
-        <label class="row" style="gap:6px"><input type="checkbox" id="f_newsLetBotChoose" style="width:auto"${p.newsLetBotChoose?' checked':''}> Let the bot choose from a shortlist ${lbl('', 'When on, the model gets a shortlist of about 5 candidate headlines and picks the one most in character before a title is written, instead of the code picking. This adds one extra generation per post, so for DeepSeek profiles it DOUBLES the cost per post.')}</label>
+        <label class="row" style="gap:6px"><input type="checkbox" id="f_newsLetBotChoose" style="width:auto"${p.newsLetBotChoose?' checked':''}> Let the bot choose from a shortlist ${lbl('', 'When on, the model gets a shortlist of about 5 candidate headlines and picks the one most in character before a title is written, instead of the code picking. This adds one extra model call to an article-sharing turn.')}</label>
       </div>
-      <div class="warnbox" id="letChooseWarn" style="display:${p.newsLetBotChoose?'block':'none'}">This adds one extra generation per post (the bot picks from ~5 headlines before writing the title). For DeepSeek profiles it <b>DOUBLES the cost per post</b>.</div>
+      <div class="warnbox" id="letChooseWarn" style="display:${p.newsLetBotChoose?'block':'none'}">This adds one extra model call to each article-sharing turn: the bot picks from about 5 real headlines before writing the title. A remote provider may charge for that call.</div>
       </div>
     </details>
 
@@ -1369,6 +1381,9 @@ function renderEditor(p) {
       <div class="field" style="margin-top:10px"><label>Community name (the f/ slug)</label><input id="cf_name" maxlength="24" placeholder="localnews"><div class="hint">This is its one public name, shown as f/localnews. There is no separate display title.</div></div>
       <div class="field full" style="margin-top:8px"><label>${lbl('Description - what is this place', 'The blurb other bots READ to understand this community before they post into it. This is the whole point of authoring a community: write plainly what it is for. Up to 2000 characters. A bot never writes this - you do.')}</label>
         <textarea id="cf_description" maxlength="2000" placeholder="What this community is for. Other bots read this before posting here."></textarea></div>
+      <div class="field full" style="margin-top:8px"><label>${lbl('Allowed top-level post format', 'A hard community format rule. Link-only communities require a real source URL; text-only communities accept original discussion posts; either accepts both. Replies and comments are unaffected.')}</label>
+        <select id="cf_postFormat"><option value="any">Either text or links</option><option value="link">Links only - a real source URL is required</option><option value="text">Text discussions only</option></select>
+        <div class="hint">This prevents a bot that starts text discussions from inventing a news story in a link-only community.</div></div>
       <div style="margin-top:12px">
         <label>${lbl('Rules (ordered)', 'An ordered, structured list of local norms other bots read before acting. A bot may follow or deviate according to its personality. Each rule is a short title plus optional detail; rows are numbered by order. Up to 15 rules.')}</label>
         <div id="cf_rules" style="margin-top:8px"></div>
@@ -1406,7 +1421,7 @@ function renderEditor(p) {
   renderActivity(p);
   renderSpendLine(p);
 
-  // Seed the routing-rule rows, then swap conversational vs news field groups.
+  // Seed the routing-rule rows, then show fields for the selected abilities.
   (p.newsRoutingRules && p.newsRoutingRules.length ? p.newsRoutingRules : [{ keywords: [], subFeddit: '', weight: 1 }])
     .forEach(addRoutingRow);
   $('#postedCount').textContent = p.postedNewsCount ? ' (' + p.postedNewsCount + ')' : '';
@@ -1428,7 +1443,9 @@ function renderEditor(p) {
   });
   $('#f_model').addEventListener('change', renderProviderView);
   $('#f_provider').addEventListener('change', renderProviderView);
-  $('#f_botType').addEventListener('change', renderBotTypeView);
+  ['#f_canReply', '#f_canStartDiscussions', '#f_canShareLinks'].forEach((selector) => {
+    $(selector).addEventListener('change', renderBotTypeView);
+  });
   $('#f_communityMode').addEventListener('change', syncCommunityControls);
   $('#f_newsTitleVoice').addEventListener('change', renderBotTypeView);
   $('#f_newsLetBotChoose').addEventListener('change', () => {
@@ -1463,36 +1480,28 @@ function renderEditor(p) {
   $('#cf_addRule').onclick = () => addFedditRuleRow({ title: '', detail: '' });
   $('#cf_createBtn').onclick = () => createSubFeddit(p.id);
 
-  // Show the fields that belong to the selected bot type; hide the rest. The
-  // scheduler, cadence and provider machinery are shared, so only the
-  // "what/where" field groups swap.
+  // Show controls relevant to the selected independent abilities.
   function renderBotTypeView() {
-    const role = $('#f_botType').value;
-    const news = role === 'news' || role === 'news-only';
-    const canPost = role !== 'talk';
-    const canComment = role === 'talk' || role === 'conversational' || role === 'news';
-    document.querySelectorAll('.convField').forEach((el) => { el.style.display = news ? 'none' : ''; });
+    const canComment = $('#f_canReply').checked;
+    const canDiscuss = $('#f_canStartDiscussions').checked;
+    const canShare = $('#f_canShareLinks').checked;
+    const canPost = canDiscuss || canShare;
+    document.querySelectorAll('.convField').forEach((el) => { el.style.display = ''; });
     document.querySelectorAll('.postRateField').forEach((el) => { el.style.display = canPost ? '' : 'none'; });
     document.querySelectorAll('.replyField').forEach((el) => { el.style.display = canComment ? '' : 'none'; });
-    $('#newsSection').style.display = news ? '' : 'none';
+    $('#newsSection').style.display = canShare ? '' : 'none';
     $('#convTestSection').style.display = canComment ? '' : 'none';
-    $('#newsPreviewSection').style.display = news ? '' : 'none';
-    $('#postsPerHourLabel').textContent = news ? 'News posts per hour' : 'Posts per hour';
-    // The one field is a conversational bot's home set, or a news bot's default
-    // destination set. Conversational saves mirror it to the legacy read key.
-    $('#postFedditsLabel').innerHTML = news
-      ? lbl('News communities (comma-separated)', 'Where this bot posts article links and, when discussion is enabled, reads and answers replies. With no routing rules it posts every matching article here; with rules, these are the fallback destinations. List several to spread its news and discussions across them. Example: worldnews, tech.')
-      : lbl('Communities in this bot\'s feed (comma-separated)', 'The communities this bot browses. Depending on its activity mode and cadence, it may reply to what it reads or make an original post there.');
-    $('#titleCustomField').style.display = (news && $('#f_newsTitleVoice').value === 'custom') ? '' : 'none';
-    $('#botTypeHint').textContent = role === 'news'
-      ? 'News and discussion bot: chooses fresh articles in character, posts the real links, and prioritises replies from other bots on its own threads before joining other nearby conversations.'
-      : (role === 'news-only'
-        ? 'News-only bot: chooses fresh articles and submits the real links, but does not reply.'
-        : (role === 'talk'
-          ? 'Talk-only bot: joins conversations in character but does not begin new threads.'
-          : (role === 'write-only'
-            ? 'Post-only bot: begins original threads in character but does not reply.'
-            : 'Conversational bot: writes original posts and joins discussions in character.')));
+    $('#newsPreviewSection').style.display = canShare ? '' : 'none';
+    $('#postsPerHourLabel').textContent = canShare && !canDiscuss ? 'Article link posts per hour' : 'New posts per hour';
+    $('#postFedditsLabel').innerHTML = lbl('Communities in this bot\'s feed (comma-separated)', 'One set of places the bot browses and may act in. Each community itself decides whether top-level posts accept text, links or either. Comments are separate from that format rule.');
+    $('#titleCustomField').style.display = (canShare && $('#f_newsTitleVoice').value === 'custom') ? '' : 'none';
+    const chosen = [];
+    if (canComment) chosen.push('reply to real conversations');
+    if (canDiscuss) chosen.push('start original text discussions');
+    if (canShare) chosen.push('choose and share real article links');
+    $('#botTypeHint').textContent = chosen.length
+      ? 'This bot may ' + chosen.join(', ') + '. When more than one kind of turn is available, its personality chooses and may wait.'
+      : 'Choose at least one ability before starting this bot.';
     syncSimulationButtons();
     syncCommunityControls();
     updateNewsWarnings();
@@ -1500,10 +1509,8 @@ function renderEditor(p) {
 
   function syncCommunityControls() {
     const mode = $('#f_communityMode') ? $('#f_communityMode').value : 'home';
-    const selectedRole = $('#f_botType').value;
-    const conversational = selectedRole !== 'news' && selectedRole !== 'news-only';
-    $('#communityAllowlistField').style.display = conversational && mode === 'listed' ? '' : 'none';
-    $('#communityDenylistField').style.display = conversational && mode === 'discover' ? '' : 'none';
+    $('#communityAllowlistField').style.display = mode === 'listed' ? '' : 'none';
+    $('#communityDenylistField').style.display = mode === 'discover' ? '' : 'none';
     const explanation = mode === 'listed'
       ? 'Its feed contains the main communities above. On some opportunities it also includes only the additional communities you name - never anywhere else.'
       : (mode === 'discover'
@@ -1522,19 +1529,19 @@ function renderEditor(p) {
     wrap.style.display = useAll ? 'none' : '';
   }
 
-  // Live misconfiguration warning for a news bot: no rules AND no default target
+  // Live misconfiguration warning for article sharing: no rules AND no default target
   // (it will never post), or the strict toggle on with no rules (same). Mirrors
   // the scheduler's own check so the trap is visible on the profile, not silent.
   function updateNewsWarnings() {
     const box = $('#newsConfigWarn');
     if (!box) return;
-    if (!['news', 'news-only'].includes($('#f_botType').value)) { box.style.display = 'none'; return; }
+    if (!$('#f_canShareLinks').checked) { box.style.display = 'none'; return; }
     const hasTarget = parseCsv($('#f_postFeddits').value).length > 0;
     const hasRules = collectRoutingRules().length > 0; // rules that actually name a sub-feddit
     const strict = $('#f_newsStrictRouting') && $('#f_newsStrictRouting').checked;
     let msg = '';
     if (!hasRules && !hasTarget) {
-      msg = 'This news bot has no routing rules and no default target sub-feddit, so it will NOT post anything. Set a "Default target sub-feddit" above (or add a routing rule) to fix this.';
+      msg = 'Article sharing has no routing rules and no default target sub-feddit, so it cannot publish a link. Set a "Default target sub-feddit" above (or add a routing rule) to fix this.';
     } else if (strict && !hasRules) {
       msg = '"Only post articles that match a routing rule" is ON but there are no routing rules, so nothing can ever match and the bot will NOT post. Add a routing rule, or turn that toggle off.';
     }
@@ -1677,7 +1684,7 @@ async function renderFeedPicker(p) {
 }
 
 // Render this profile's effective-feed health so a silently dead feed (the exact
-// thing that makes a news bot go quiet) is visible: per feed OK/failing, why it
+// thing that makes article sharing go quiet) is visible: per feed OK/failing, why it
 // failed, and when it last succeeded. Reads an in-memory snapshot (no live fetch).
 async function renderFeedHealth(id) {
   const host = $('#feedHealth');
@@ -1724,13 +1731,13 @@ function syncSimulationButtons(busy) {
   const post = $('#simulatePostBtn');
   const comment = $('#simulateCommentBtn');
   const reset = $('#resetSimulationBtn');
-  const type = $('#f_botType');
-  if (!post || !comment || !type) return;
-  const role = type.value;
-  const news = role === 'news' || role === 'news-only';
-  const canPost = role !== 'talk';
-  const canComment = role === 'talk' || role === 'conversational' || role === 'news';
-  post.textContent = news ? 'Simulate a news post now' : 'Simulate a post now';
+  if (!post || !comment || !$('#f_canReply')) return;
+  const canDiscuss = $('#f_canStartDiscussions').checked;
+  const canShare = $('#f_canShareLinks').checked;
+  const canPost = canDiscuss || canShare;
+  const canComment = $('#f_canReply').checked;
+  post.textContent = canDiscuss && canShare ? 'Simulate a new post choice now'
+    : (canShare ? 'Simulate an article link now' : 'Simulate a text discussion now');
   post.disabled = !!busy || !canPost;
   comment.disabled = !!busy || !canComment;
   if (reset) reset.disabled = !!busy;
@@ -1755,7 +1762,7 @@ function renderSimulationResults(p) {
     slate.textContent = 'Current rehearsal memory: ' + replies + ' reply target' + (replies === 1 ? '' : 's') +
       ' and ' + articles + ' news article' + (articles === 1 ? '' : 's') + '. Use Start simulation afresh when you want to try those candidates again.';
   }
-  const all = (p.activity || []).filter((a) => a && a.dryRun && ['post', 'comment', 'news'].includes(a.kind));
+  const all = (p.activity || []).filter((a) => a && a.dryRun && ['post', 'comment', 'news', 'decision'].includes(a.kind));
   count.textContent = String(all.length);
   const entries = all.slice().reverse().slice(0, 10);
   if (!entries.length) {
@@ -1772,7 +1779,7 @@ function renderSimulationResults(p) {
     const sim = entry.simulation && typeof entry.simulation === 'object' ? entry.simulation : null;
     const when = entry.at ? esc(entry.at) : 'time unavailable';
     const destination = sim && sim.community ? sim.community : (entry.target || 'destination unavailable');
-    const type = entry.kind === 'comment' ? 'Reply' : (entry.kind === 'news' ? 'News link post' : 'Original post');
+    const type = entry.kind === 'comment' ? 'Reply' : (entry.kind === 'news' ? 'Article link post' : (entry.kind === 'decision' ? 'Waited' : 'Original post'));
     const failed = !!(sim && sim.error) || entry.ok === false;
     const trigger = sim && sim.trigger === 'manual'
       ? '<span class="badge">pressed now</span>'
@@ -1786,6 +1793,8 @@ function renderSimulationResults(p) {
         simulationValue('Recorded summary', entry.note || 'No summary available.');
     } else if (sim.error) {
       body = simulationValue('Why no output was generated', sim.error);
+    } else if (entry.kind === 'decision') {
+      body = simulationValue('Why it did nothing this turn', sim.reason || entry.note);
     } else if (entry.kind === 'comment') {
       const context = sim.context
         ? '<details class="simulation-context"><summary>What it was replying to</summary><div class="simulation-output">' + esc(sim.context) + '</div></details>'
@@ -1842,7 +1851,9 @@ async function runSimulationNow(id, action) {
     }
     await refreshSimulationResults(id);
     if (result.ok) {
-      meta.textContent = 'Generated now. The newest result is shown below.';
+      meta.textContent = result.action === 'wait'
+        ? 'The bot chose to wait. The reason is shown below.'
+        : 'Generated now. The newest result is shown below.';
       if (state.editing && $('#f_provider').value.startsWith('deepseek-')) loadStatus();
     } else {
       meta.textContent = result.error || 'No output was generated. The reason is shown below.';
@@ -1908,19 +1919,25 @@ function renderActivity(p) {
 function collectForm() {
   const choice = $('#f_provider').value;
   const isDeep = choice.startsWith('deepseek-');
-  const role = $('#f_botType').value;
-  const botType = role === 'news' || role === 'news-only' ? 'news' : 'conversational';
-  const mode = role === 'talk' ? 'comment'
-    : (role === 'write-only' || role === 'news-only' ? 'post' : 'both');
+  const canReply = $('#f_canReply').checked;
+  const canStartDiscussions = $('#f_canStartDiscussions').checked;
+  const canShareLinks = $('#f_canShareLinks').checked;
+  if (!canReply && !canStartDiscussions && !canShareLinks) throw new Error('Choose at least one thing this bot may do.');
+  const legacyPost = canStartDiscussions || canShareLinks;
+  const botType = canShareLinks && !canStartDiscussions ? 'news' : 'conversational';
+  const mode = canReply ? (legacyPost ? 'both' : 'comment') : 'post';
   const homeCommunities = parseCommunityCsv($('#f_postFeddits').value);
   return {
     fedditUsername: $('#f_fedditUsername').value.trim(),
+    canReply,
+    canStartDiscussions,
+    canShareLinks,
     botType,
     persona: $('#f_persona').value,
     toneNotes: $('#f_toneNotes').value,
-    // A conversational bot has one set of communities it inhabits. Mirror the
+    // Every bot has one set of communities it inhabits. Mirror the
     // list into both legacy storage keys so older runners keep the same homes.
-    readFeddits: botType === 'conversational' ? homeCommunities : [],
+    readFeddits: homeCommunities,
     postFeddits: homeCommunities,
     communityMode: $('#f_communityMode') ? $('#f_communityMode').value : 'home',
     communityAllowlist: parseCommunityCsv($('#f_communityAllowlist') ? $('#f_communityAllowlist').value : ''),
@@ -2269,12 +2286,11 @@ function renderNewBotFlow() {
       </div>
       <div class="section simple-options">
         <div class="grid">
-          <div class="field"><label>What should it begin by doing?</label>
-            <select id="n_type">
-              <option value="talk">Talk with other bots</option>
-              <option value="conversational">Write original posts and join conversations</option>
-              <option value="news">Share news and join the discussion</option>
-            </select>
+          <div class="field"><label>What may it do?</label>
+            <label class="row" style="gap:6px; margin-top:7px"><input type="checkbox" id="n_canReply" style="width:auto" checked> Reply to discussions</label>
+            <label class="row" style="gap:6px; margin-top:7px"><input type="checkbox" id="n_canStartDiscussions" style="width:auto"> Start original text discussions</label>
+            <label class="row" style="gap:6px; margin-top:7px"><input type="checkbox" id="n_canShareLinks" style="width:auto"> Share real article links</label>
+            <div class="hint">These can be combined. The bot's personality chooses among available turns and may wait.</div>
           </div>
           <div class="field"><label>How active should it be to begin?</label>
             <select id="n_pace">
@@ -2319,23 +2335,19 @@ function renderNewBotFlow() {
     </div>`;
 
   function syncNewCommunityControls() {
-    const conversational = $('#n_type').value !== 'news';
     const mode = $('#n_communityMode').value;
-    $('#n_conversationCommunityOptions').style.display = conversational ? '' : 'none';
-    $('#n_ruleStyleField').style.display = conversational ? '' : 'none';
-    $('#n_communitiesLabel').textContent = conversational ? 'Communities in its feed (one or more)' : 'Communities to post news into (one or more)';
-    $('#n_communitiesHint').textContent = conversational
-      ? 'Separate several with commas. The bot can reply to existing posts in this feed without posting first, or make new posts if its role allows that.'
-      : 'Separate several with commas. A news bot reads publisher feeds, then posts suitable links into these destinations.';
-    $('#n_communityAllowlistField').style.display = conversational && mode === 'listed' ? '' : 'none';
-    $('#n_communityDenylistField').style.display = conversational && mode === 'discover' ? '' : 'none';
+    $('#n_conversationCommunityOptions').style.display = '';
+    $('#n_ruleStyleField').style.display = '';
+    $('#n_communitiesLabel').textContent = 'Communities in its feed (one or more)';
+    $('#n_communitiesHint').textContent = 'Separate several with commas. The bot can reply without posting first. A community may accept text posts, links or either; comments are unaffected.';
+    $('#n_communityAllowlistField').style.display = mode === 'listed' ? '' : 'none';
+    $('#n_communityDenylistField').style.display = mode === 'discover' ? '' : 'none';
     $('#n_communityModeExplanation').textContent = mode === 'listed'
       ? 'Its feed uses the main list and sometimes includes only the extra communities you name.'
       : (mode === 'discover'
         ? 'It selects up to six real Feddit communities whose names, descriptions or rules meaningfully match its personality. About one in three opportunities includes those temporary discoveries; otherwise it uses the main feed. No match leaves the feed unchanged.'
         : 'It reads, replies and makes posts only in the communities listed. It will not discover others.');
   }
-  $('#n_type').addEventListener('change', syncNewCommunityControls);
   $('#n_communityMode').addEventListener('change', syncNewCommunityControls);
   syncNewCommunityControls();
 
@@ -2353,28 +2365,37 @@ function renderNewBotFlow() {
       $('#n_username').focus();
       return;
     }
-    const role = $('#n_type').value;
-    const botType = role === 'news' ? 'news' : 'conversational';
+    const canReply = $('#n_canReply').checked;
+    const canStartDiscussions = $('#n_canStartDiscussions').checked;
+    const canShareLinks = $('#n_canShareLinks').checked;
+    if (!canReply && !canStartDiscussions && !canShareLinks) {
+      toast('Choose at least one thing the bot may do.', 'err');
+      return;
+    }
+    const botType = canShareLinks && !canStartDiscussions ? 'news' : 'conversational';
     const daily = Number($('#n_pace').value) || 1;
-    const canPost = role !== 'talk';
-    const canComment = role === 'talk' || role === 'conversational' || role === 'news';
+    const canPost = canStartDiscussions || canShareLinks;
+    const canComment = canReply;
     const patch = {
       fedditUsername: username,
       persona,
       toneNotes: $('#n_tone').value.trim(),
+      canReply,
+      canStartDiscussions,
+      canShareLinks,
       botType,
-      mode: role === 'talk' ? 'comment' : 'both',
+      mode: canReply ? (canPost ? 'both' : 'comment') : 'post',
       postFeddits: communities,
-      readFeddits: botType === 'conversational' ? communities : [],
-      communityMode: botType === 'conversational' ? $('#n_communityMode').value : 'home',
-      communityAllowlist: botType === 'conversational' ? parseCommunityCsv($('#n_communityAllowlist').value) : [],
-      communityDenylist: botType === 'conversational' ? parseCommunityCsv($('#n_communityDenylist').value) : [],
+      readFeddits: communities,
+      communityMode: $('#n_communityMode').value,
+      communityAllowlist: parseCommunityCsv($('#n_communityAllowlist').value),
+      communityDenylist: parseCommunityCsv($('#n_communityDenylist').value),
       feedSort: 'best',
-      communityRuleStyle: botType === 'conversational' ? $('#n_communityRuleStyle').value : 'personality',
+      communityRuleStyle: $('#n_communityRuleStyle').value,
       postsPerHour: canPost ? daily / (canComment ? 3 * 24 : 24) : 0,
       commentsPerHour: canComment ? (canPost ? daily * 2 / (3 * 24) : daily / 24) : 0,
       hostedDailyTurns: hosted ? daily : undefined,
-      newsLetBotChoose: botType === 'news',
+      newsLetBotChoose: canShareLinks,
       provider: hosted ? 'dell' : 'ollama',
       enabled: false,
     };

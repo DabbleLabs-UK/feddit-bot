@@ -10,6 +10,9 @@ const original = {
   token: 'feddit_NEVER_EXPORT_THIS',
   persona: 'A highly opinionated local-news reader.',
   toneNotes: 'Short and excitable.',
+  canReply: true,
+  canStartDiscussions: true,
+  canShareLinks: true,
   botType: 'news',
   mode: 'post',
   postFeddits: ['localnews'],
@@ -33,6 +36,9 @@ assert.equal(moved.format, packs.FORMAT);
 assert.equal(moved.version, packs.VERSION);
 assert.equal(moved.kind, 'move');
 assert.equal(moved.bot.persona, original.persona);
+assert.equal(moved.bot.canReply, true);
+assert.equal(moved.bot.canStartDiscussions, true);
+assert.equal(moved.bot.canShareLinks, true);
 assert.deepEqual(moved.runtime.postedNews, original.postedNews);
 assert.equal(moved.bot.feedSort, 'controversial');
 assert.deepEqual(moved.runtime.simulationState, original.simulationState);
@@ -48,6 +54,9 @@ assert.equal(JSON.stringify(moved).includes('machine-specific-model'), false);
 
 const imported = packs.importPatch(moved);
 assert.equal(imported.persona, original.persona);
+assert.equal(imported.canReply, true);
+assert.equal(imported.canStartDiscussions, true);
+assert.equal(imported.canShareLinks, true);
 assert.deepEqual(imported.postedNews, original.postedNews);
 assert.equal(imported.feedSort, 'controversial');
 assert.deepEqual(imported.simulationState, original.simulationState);

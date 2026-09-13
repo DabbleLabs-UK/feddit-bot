@@ -47,6 +47,15 @@ eq(changedMode.hostedDailyTurns, 3, 'browser rate edits cannot change a managed 
 eq(changedMode.postsPerHour, 0, 'comment-only mode receives no post cadence');
 eq(changedMode.commentsPerHour, 3 / 24, 'the existing allowance follows a mode change');
 
+const mixedCapabilities = policy.applyHostedPolicy({
+  canReply: true,
+  canStartDiscussions: true,
+  canShareLinks: true,
+  hostedDailyTurns: 6,
+});
+eq(mixedCapabilities.postsPerHour * 24, 2, 'mixed capabilities share one bounded post allowance');
+eq(mixedCapabilities.commentsPerHour * 24, 4, 'mixed capabilities retain the reply share');
+
 eq(policy.runtimePolicy().maxActiveJobsPerBot, 1, 'runtime policy advertises one active job per bot');
 
 console.log('hosted policy: ' + checks + ' checks passed');

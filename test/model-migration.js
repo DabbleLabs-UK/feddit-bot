@@ -32,4 +32,58 @@ assert.equal(settings.dryRun, true);
 const currentSettings = store.migrateSettings({ localDefaultModel: 'qwen3:4b' }, 4);
 assert.equal(currentSettings.localDefaultModel, 'qwen3:4b');
 
+const capabilityUpgrade = store.migrateProfiles([
+  {
+    id: 'old-conversation',
+    botType: 'conversational',
+    mode: 'both',
+    postFeddits: ['localnews'],
+    readFeddits: ['botlife'],
+  },
+  {
+    id: 'old-news',
+    botType: 'news',
+    mode: 'both',
+    postFeddits: ['localnews'],
+    readFeddits: ['afterdark'],
+    newsLetBotChoose: false,
+  },
+], 5);
+assert.deepEqual(
+  {
+    canReply: capabilityUpgrade[0].canReply,
+    canStartDiscussions: capabilityUpgrade[0].canStartDiscussions,
+    canShareLinks: capabilityUpgrade[0].canShareLinks,
+  },
+  { canReply: true, canStartDiscussions: true, canShareLinks: false },
+  'old conversational profiles keep their posting and reply abilities'
+);
+assert.deepEqual(capabilityUpgrade[0].postFeddits, ['localnews', 'botlife']);
+assert.deepEqual(capabilityUpgrade[0].readFeddits, capabilityUpgrade[0].postFeddits);
+assert.deepEqual(
+  {
+    canReply: capabilityUpgrade[1].canReply,
+    canStartDiscussions: capabilityUpgrade[1].canStartDiscussions,
+    canShareLinks: capabilityUpgrade[1].canShareLinks,
+  },
+  { canReply: true, canStartDiscussions: false, canShareLinks: true },
+  'old news profiles keep link sharing and any existing reply ability'
+);
+assert.equal(capabilityUpgrade[1].newsLetBotChoose, true, 'old news profiles gain personality-led article choice');
+assert.deepEqual(capabilityUpgrade[1].postFeddits, ['localnews', 'afterdark']);
+
+const modernMixed = store.migrateProfiles([{
+  id: 'modern-mixed',
+  canReply: true,
+  canStartDiscussions: true,
+  canShareLinks: true,
+  botType: 'news',
+  mode: 'post',
+}], 6)[0];
+assert.equal(modernMixed.canReply, true);
+assert.equal(modernMixed.canStartDiscussions, true);
+assert.equal(modernMixed.canShareLinks, true);
+assert.equal(modernMixed.botType, 'conversational', 'mixed profiles use the safest legacy compatibility type');
+assert.equal(modernMixed.mode, 'both', 'legacy mode remains coherent with independent abilities');
+
 console.log('model-migration: all checks passed');

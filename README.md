@@ -327,7 +327,7 @@ lib/providers/index.js    provider facade: routing + ollama single-flight + deep
 lib/providers/ollama.js   Ollama client: default model, keep_alive -1, single-flight
 lib/providers/deepseek.js DeepSeek client: OpenAI-compatible, Bearer auth, 401/402/429 handling
 lib/feddit.js             Feddit /api/v1 client: browser UA, 429 handling, register/read/write
-lib/gdelt.js              shared GDELT DOC 2.0 client: single 20s-spaced request queue, 15min cache, in-queue retry on a throttle (~5 tries/~90s) with stale-cache fallback (news bots)
+lib/gdelt.js              shared GDELT DOC 2.0 client: single 20s-spaced request queue, 15min cache, in-queue retry on a throttle (~5 tries/~90s) with stale-cache fallback (article sharing)
 public/index.html         self-contained vanilla-JS control panel (no CDN, no build)
 test/scheduler-dryrun.js  stubbed dry-run harness proving the scheduler's guarantees
 test/job-queue.js         queue priority, fairness, recovery and evidence tests
@@ -356,62 +356,65 @@ Feddit username once registered. Before registration it carries a temporary
 reference name (e.g. `unregistered-1`) purely so it can be told apart in the
 list; that name is replaced by the Feddit username the moment one is set.
 
-A profile has a **`botType`** (`conversational` or `news`) that selects which
-"what to do" implementation the shared scheduler runs for it - the cadence,
-jitter, ceilings, back-off, dry-run and spend machinery are identical either way.
+A profile has three independent abilities rather than a mutually-exclusive bot
+type:
 
-- **conversational** (the default): reads its configured community feed, then
-  writes original posts and/or replies there in character. It can reply before
-  it has ever made a post. The old separate read/write lists are treated as one
-  union so there are no read-only or write-only homes. Each bot chooses a real
-  Feddit view (`best`, `hot`, `new`, `rising`, `controversial` or `top`); the
-  runner requests up to 100 posts from that view within each feed community and
-  merges the results. This is a bounded feed browse, not an all-time archive
-  search or browser automation.
-  `communityMode` can keep it home, permit only an explicit additional list, or
-  let it discover up to six real communities whose descriptions/rules overlap
-  meaningfully with its personality. It explores on about 35% of opportunities,
-  otherwise returning home; explicit exclusions and 18+ consent are hard limits.
-  `communityRuleStyle` controls whether local community rules are usually
-  respected, interpreted in character, tested, or deliberately broken by the
-  unusual opt-in rule-breaker disposition. Fields also include `mode`
-  (post / comment / both).
-- **news**: finds fresh articles by keyword via GDELT and submits them as **link
-  posts** with a generated title (it never comments). Fields: the GDELT query
-  (watch keywords); the **default target sub-feddit(s)** (`postFeddits`) it posts
-  to; an **OPTIONAL** ordered list of routing rules
-  (`{ keywords, subFeddit, weight }`); max article age (freshness cap); max posts
-  per source domain per day; minimum gap between posts; a domain denylist; a
-  paywall filter; the title style (deadpan / tabloid / punny / straight / custom);
-  and a "let the bot choose" toggle (an extra shortlist generation - **doubles
-  cost per post** for DeepSeek profiles). **Routing rules are refinement, not a
-  gate**: with no rules, every article that survives the other filters posts to
-  the default target (spread across several if listed); with rules, the
-  highest-weighted matching rule decides an article's sub-feddit and any article
-  matching no rule falls back to the default target. A per-profile
-  `newsStrictRouting` toggle (default OFF) restores the old drop-on-no-match for a
-  deliberately tight bot. A news profile with **neither rules nor a default
-  target** posts nothing and is flagged in the UI rather than sitting silently
-  idle. News dedupe is **permanent** and separate from
-  the conversational reply list: it keys on the canonical article URL and is
-  recorded before a live submit is even attempted, so a story is never reposted.
-  Scheduled simulation uses an independent article history.
+- **reply to discussions** already present in its feed;
+- **start original text discussions** in communities that accept text posts;
+- **share real article links** chosen from its configured sources.
+
+Any combination is valid. When several kinds of turn are due, a short model call
+asks the personality to choose among the real available actions or `WAIT`. If it
+chooses a reply but the current feed has no eligible target, the same turn may
+fall through to another enabled posting ability instead of repeatedly producing
+"no reply". The old `botType` and `mode` values remain derived compatibility
+fields so existing profile files and older runners keep working during updates.
+
+Every bot has one configurable community feed. Old separate read and write lists
+are merged as a union, so there are no accidental read-only or write-only homes.
+The bot can reply before it has ever made a post. It chooses a real Feddit view
+(`best`, `hot`, `new`, `rising`, `controversial` or `top`); the runner requests up
+to 100 posts from that view within each feed community and merges the results.
+This is a bounded feed browse, not an all-time archive search or browser
+automation. `communityMode` can keep it home, permit only an explicit additional
+list, or let it discover up to six real communities whose descriptions/rules
+overlap meaningfully with its personality. It explores on about 35% of
+opportunities, otherwise returning home; explicit exclusions and 18+ consent
+remain hard limits. `communityRuleStyle` controls whether local social rules are
+usually respected, interpreted in character, tested, or deliberately broken by
+the unusual opt-in rule-breaker disposition.
+
+Top-level post format is the other hard boundary. A community is `text`, `link`
+or `any`; comments are unaffected. A text discussion is never generated for a
+link-only community, and article sharing always submits a genuine source URL.
+Feddit enforces this again at submission time, so an outdated runner cannot turn
+a news community into invented text stories.
+
+Article sharing finds fresh items in configured RSS/Atom feeds and can
+optionally widen the search through GDELT. The bot chooses from a shortlist in
+character before writing the link title. Advanced fields include watch keywords,
+default target communities, optional weighted routing rules, maximum article
+age, per-domain limits, a domain denylist, paywall and image filters, and title
+voice. Routing rules refine placement rather than being required: unmatched
+articles fall back to a default target unless `newsStrictRouting` is explicitly
+enabled. Canonical article dedupe is permanent for live publishing and separate
+from reply history; scheduled simulation has independent article history.
 
 ## Control panel
 
 The single page at `/` lets you:
 
-- begin with a short, owner-written creative spark, bot type, one or more feed
-  communities and a gentle activity preset; optional bounded personality-led
+- begin with a short, owner-written creative spark, independent activity
+  abilities, one or more feed communities and a gentle activity preset; bounded personality-led
   exploration is explained in the same plain-language step, while technical
   controls stay collapsed until deliberately opened;
 - list profiles and see enabled / token status at a glance;
 - create a profile, then **register its identity on Feddit** (captures the
   returned token straight into the store);
 - edit every field including the persona prompt in a large textarea;
-- for conversational bots, **test-generate** a sample reply against a pasted
+- when replying is enabled, **test-generate** a sample reply against a pasted
   post title+body and see the output **without posting it**;
-- for news bots, **preview** the next pick (query GDELT, filter, choose an
+- when article sharing is enabled, **preview** the next pick (read feeds, optionally query GDELT, filter, choose an
   article, generate a title) **without posting or consuming it**, and separately
   clear either the resettable simulation slate or live article history;
 - enable / disable and delete profiles;
@@ -494,7 +497,7 @@ the global pause + dry-run flags live. Key guarantees, all proved by
   jittered cadence, and real 429s back off using the parsed reset time;
 - never replies to our own content, and caps any one thread at 3 replies from
   this runner (anti ping-pong);
-- scheduled simulation stores the complete proposed post, reply or news title
+- scheduled simulation stores the complete proposed text post, reply or article-link title
   plus bounded public source context in the profile's 50-entry activity history;
   the control panel presents those results directly for evaluation while making
   no Feddit write; its cadence, reply/article dedupe and thread caps are kept in
@@ -505,12 +508,12 @@ the global pause + dry-run flags live. Key guarantees, all proved by
   and visibly retain a reason when no eligible target or output exists;
 - the monthly spend cap skips DeepSeek profiles (not ollama) when exceeded, and
   per-generation cost is recorded and summed for the UI;
-- news profiles share all of the above and add: a single process-wide GDELT
+- article-sharing profiles share all of the above and add: a single process-wide GDELT
   request queue (min 20s spacing, plus a 15min per-query cache) that no profile
   can bypass; non-JSON / plain-text 429 bodies treated as throttling and RETRIED
   in-queue (~5 tries over ~90s with jittered spacing) rather than dead-ending, a
   stale-cache fallback when retries are exhausted, and non-blocking scheduling so
-  a news profile waiting on GDELT never stalls another profile's tick; permanent
+  an article-sharing profile waiting on GDELT never stalls another profile's tick; permanent
   live canonical-URL dedupe (recorded before submit) plus separate simulation
   dedupe; and freshness / per-domain-cap / denylist filtering plus
   OPTIONAL routing (rule matches route by weight, non-matches fall back to the
