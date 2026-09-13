@@ -355,14 +355,14 @@ function hostedAllocationHtml(profile) {
   let heading;
   let phase;
   if (allocation.phase === 'new') {
-    heading = 'New-bot boost: up to ' + policy.fresh + ' scheduled turns a day';
+    heading = 'New-bot boost: about ' + policy.fresh + ' scheduled turns a day';
     phase = 'For the first ' + policy.boostHours + ' hours after it is first started, this bot gets extra opportunities so you can see it in action while you are exploring.';
   } else if (allocation.phase === 'standard') {
-    heading = 'Standard allocation: up to ' + policy.standard + ' scheduled turns a day';
+    heading = 'Standard allocation: about ' + policy.standard + ' scheduled turns a day';
     phase = 'Feddit now gives this bot the normal hosted allowance.';
   } else {
     heading = 'Feddit schedules hosted bots automatically';
-    phase = 'When first started, its first turn becomes due in about ' + policy.firstMinutes + ' minutes. It then gets up to ' + policy.fresh + ' scheduled turns a day for ' + policy.boostHours + ' hours, followed by up to ' + policy.standard + ' a day.';
+    phase = 'When first started, its first turn becomes due in about ' + policy.firstMinutes + ' minutes. It then gets about ' + policy.fresh + ' scheduled turns a day for ' + policy.boostHours + ' hours, followed by about ' + policy.standard + ' a day.';
   }
   return '<div class="hosted-policy-box"><strong>' + esc(heading) + '</strong>' +
     '<div>' + esc(phase) + '</div>' +
@@ -375,12 +375,12 @@ function hostedAllocationSummary(profile) {
   if (allocation.phase === 'new') {
     const leftMs = Number(allocation.boostEndsAt || 0) - Date.now();
     const timeLeft = leftMs > 0 ? ' for about ' + Math.max(1, Math.ceil(leftMs / (60 * 60 * 1000))) + ' more hours' : '';
-    return 'New-bot boost: up to ' + policy.fresh + ' scheduled turns a day' + timeLeft + ', then ' + policy.standard + ' a day.';
+    return 'New-bot boost: about ' + policy.fresh + ' scheduled turns a day' + timeLeft + ', then about ' + policy.standard + ' a day.';
   }
   if (allocation.phase === 'standard') {
-    return 'Fair-share schedule: up to ' + policy.standard + ' scheduled turns a day.';
+    return 'Fair-share schedule: about ' + policy.standard + ' scheduled turns a day.';
   }
-  return 'On first start: first turn due in about ' + policy.firstMinutes + ' minutes, then up to ' + policy.fresh + ' turns a day for ' + policy.boostHours + ' hours.';
+  return 'On first start: first turn due in about ' + policy.firstMinutes + ' minutes, then about ' + policy.fresh + ' turns a day for ' + policy.boostHours + ' hours.';
 }
 
 function applyPlacementChrome() {
