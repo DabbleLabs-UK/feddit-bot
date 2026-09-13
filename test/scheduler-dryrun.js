@@ -16,6 +16,7 @@ const gdelt = require('../lib/gdelt');
 const feeds = require('../lib/feeds');
 const cost = require('../lib/cost');
 const store = require('../lib/store'); // migrateProfiles/referenceName are pure - no disk touched
+const hostedPolicy = require('../lib/hosted-policy');
 const deepseek = require('../lib/providers/deepseek'); // generate() drivable with an injected fetch stub - no network
 
 // ---- tiny assert framework --------------------------------------------------
@@ -145,7 +146,7 @@ function profile(over) {
   return {
     id: over.id,
     fedditUsername: over.fedditUsername || over.id,
-    token: over.token || 'feddit_stub',
+    token: over.token != null ? over.token : 'feddit_stub',
     persona: over.persona != null ? over.persona : 'a terse forum poster',
     toneNotes: over.toneNotes != null ? over.toneNotes : '',
     readFeddits: over.readFeddits || [],
@@ -351,7 +352,13 @@ function makeProviders(opts) {
     generate: async (gopts) => {
       prompts.push(gopts.prompt || '');
       const n = o.calls + d.calls; // 0-based index of THIS call, before it runs
-      genCalls.push({ prompt: gopts.prompt || '', temperature: gopts.temperature, provider: gopts.provider });
+      genCalls.push({
+        prompt: gopts.prompt || '',
+        temperature: gopts.temperature,
+        provider: gopts.provider,
+        profileId: gopts.profileId,
+        kind: gopts.kind,
+      });
       const prov = gopts.provider === 'deepseek' ? 'deepseek' : 'ollama';
       const s = prov === 'deepseek' ? d : o;
       s.inFlight++; s.max = Math.max(s.max, s.inFlight); s.calls++;
@@ -918,6 +925,225 @@ async function scenarioProviderGate() {
     eq(providers.stats().ollama.maxConcurrent, 1, 'ollama gate admitted only ONE generation at a time');
     ok(providers.stats().ollama.calls >= 1, 'at least one ollama generation ran');
     eq(providers.stats().deepseek.calls, 1, 'the deepseek profile generated concurrently');
+  }
+}
+
+// ============================================================================
+// Scenario 6c: hosted eligibility and the current synchronous DELL lifecycle.
+// This intentionally records the blocking behaviour that a later durable-turn
+// change is expected to remove.
+// ============================================================================
+async function scenarioHostedEligibilityAndBlocking() {
+  console.log('\n[6c] hosted eligibility + current synchronous DELL wait');
+  const flush = async (count = 40) => {
+    for (let i = 0; i < count; i++) await Promise.resolve();
+  };
+
+  // A managed hosted profile is not due before the server-seeded first-turn
+  // time. At that time only the enabled, registered, non-backed-off profile is
+  // allowed through; the other profiles exercise the stable eligibility gates.
+  {
+    const clock = makeClock(10_000_000);
+    const managed = hostedPolicy.applyHostedPolicy({
+      enabled: true,
+      canReply: false,
+      canStartDiscussions: true,
+      canShareLinks: false,
+    }, {}, clock.now());
+    const dueAt = managed.sched.nextPostAt;
+    const due = profile({
+      ...managed,
+      id: 'hosted-due',
+      token: 'feddit_due',
+      provider: 'dell',
+      postFeddits: ['talk'],
+      probation: { onProbation: false, checkedAt: clock.now() },
+    });
+    const disabled = profile({
+      ...managed,
+      id: 'hosted-disabled',
+      enabled: false,
+      token: 'feddit_disabled',
+      provider: 'dell',
+      postFeddits: ['talk'],
+      sched: { ...managed.sched, nextPostAt: dueAt },
+    });
+    const unregistered = profile({
+      ...managed,
+      id: 'hosted-unregistered',
+      token: '',
+      provider: 'dell',
+      postFeddits: ['talk'],
+      sched: { ...managed.sched, nextPostAt: dueAt },
+    });
+    const backedOff = profile({
+      ...managed,
+      id: 'hosted-backed-off',
+      token: 'feddit_backoff',
+      provider: 'dell',
+      postFeddits: ['talk'],
+      sched: { ...managed.sched, nextPostAt: dueAt, backoffUntil: dueAt + 60_000 },
+    });
+    const future = profile({
+      ...managed,
+      id: 'hosted-future',
+      token: 'feddit_future',
+      provider: 'dell',
+      postFeddits: ['talk'],
+      sched: { ...managed.sched, nextPostAt: dueAt + 60_000 },
+    });
+    const providers = makeProviders();
+    const client = makeFeddit({
+      feddits: { talk: [] },
+      comments: {},
+      abouts: { talk: { post_format: 'text' } },
+    });
+    const sched = scheduler.createScheduler({
+      store: makeStore([due, disabled, unregistered, backedOff, future]),
+      providers,
+      feddit: client,
+      about: aboutLib.createAbout({ feddit: client, now: clock.now }),
+      gdelt: {},
+      feeds: EMPTY_FEEDS(),
+      now: clock.now,
+      random: () => 0,
+      getDeepseekKey: KEY,
+    });
+
+    const early = await sched.runTick();
+    eq(early.acted, 0, 'managed hosted first turn is not eligible before its seeded due time');
+    eq(providers.genCalls.length, 0, 'no hosted generation starts before the due time');
+
+    clock.set(dueAt);
+    const tick = await sched.runTick();
+    eq(tick.acted, 1, 'exactly one hosted profile passes the current eligibility gates');
+    eq(
+      JSON.stringify(providers.genCalls.map((call) => call.profileId)),
+      JSON.stringify(['hosted-due']),
+      'disabled, unregistered, backed-off and future-due hosted profiles do not generate',
+    );
+  }
+
+  // A press-now operation holds only its own profile busy. Another due hosted
+  // profile can still be discovered and completed by the scheduler pass.
+  {
+    const clock = makeClock(20_000_000);
+    const dueSched = () => ({
+      nextPostAt: clock.now(), nextCommentAt: null, backoffUntil: 0,
+      sentPosts: [], sentComments: [],
+    });
+    const held = profile({
+      id: 'hosted-held', provider: 'dell', mode: 'post', postsPerHour: 1,
+      postFeddits: ['talk'], sched: dueSched(),
+      probation: { onProbation: false, checkedAt: clock.now() },
+    });
+    const other = profile({
+      id: 'hosted-other', provider: 'dell', mode: 'post', postsPerHour: 1,
+      postFeddits: ['talk'], sched: dueSched(),
+      probation: { onProbation: false, checkedAt: clock.now() },
+    });
+    let releaseHeld;
+    let markHeldStarted;
+    const heldStarted = new Promise((resolve) => { markHeldStarted = resolve; });
+    const calls = [];
+    const providers = {
+      ollamaBusy: () => false,
+      generate: async (opts) => {
+        calls.push(opts.profileId);
+        if (opts.profileId === 'hosted-held') {
+          markHeldStarted();
+          await new Promise((resolve) => { releaseHeld = resolve; });
+        }
+        return {
+          provider: 'dell', model: opts.model, text: 'A title\n\nA body.', ms: 1,
+          usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 },
+        };
+      },
+    };
+    const client = makeFeddit({
+      feddits: { talk: [] }, comments: {},
+      abouts: { talk: { post_format: 'text' } },
+    });
+    const sched = scheduler.createScheduler({
+      store: makeStore([held, other]), providers, feddit: client,
+      about: aboutLib.createAbout({ feddit: client, now: clock.now }),
+      now: clock.now, random: () => 0, getDeepseekKey: KEY,
+    });
+
+    const manual = sched.simulateNow('hosted-held', 'post');
+    await heldStarted;
+    const tick = await sched.runTick();
+    ok(tick.results.some((result) => result && result.id === 'hosted-held' && result.skipped === 'profile-busy'),
+      'a hosted profile already generating is explicitly skipped');
+    ok(tick.results.some((result) => result && result.action === 'post' && result.acted),
+      'another due hosted profile still acts while that one profile is busy');
+    eq(JSON.stringify(calls), JSON.stringify(['hosted-held', 'hosted-other']),
+      'the busy profile is not started twice and the unrelated profile is discovered');
+    releaseHeld();
+    await manual;
+  }
+
+  // Two due DELL profiles begin their generations together, but runTick itself
+  // remains pending until every DELL generation returns. A second scheduler pass
+  // is rejected as reentrant during that wait.
+  {
+    const clock = makeClock(30_000_000);
+    const dueSched = () => ({
+      nextPostAt: clock.now(), nextCommentAt: null, backoffUntil: 0,
+      sentPosts: [], sentComments: [],
+    });
+    const first = profile({
+      id: 'dell-first', provider: 'dell', mode: 'post', postsPerHour: 1,
+      postFeddits: ['talk'], sched: dueSched(),
+      probation: { onProbation: false, checkedAt: clock.now() },
+    });
+    const second = profile({
+      id: 'dell-second', provider: 'dell', mode: 'post', postsPerHour: 1,
+      postFeddits: ['talk'], sched: dueSched(),
+      probation: { onProbation: false, checkedAt: clock.now() },
+    });
+    const releases = new Map();
+    const started = [];
+    const providers = {
+      ollamaBusy: () => false,
+      generate: (opts) => {
+        started.push(opts.profileId);
+        return new Promise((resolve) => {
+          releases.set(opts.profileId, () => resolve({
+            provider: 'dell', model: opts.model, text: 'A title\n\nA body.', ms: 1,
+            usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 },
+          }));
+        });
+      },
+    };
+    const client = makeFeddit({
+      feddits: { talk: [] }, comments: {},
+      abouts: { talk: { post_format: 'text' } },
+    });
+    const sched = scheduler.createScheduler({
+      store: makeStore([first, second]), providers, feddit: client,
+      about: aboutLib.createAbout({ feddit: client, now: clock.now }),
+      now: clock.now, random: () => 0, getDeepseekKey: KEY,
+    });
+
+    let tickResolved = false;
+    const pendingTick = sched.runTick().then((result) => {
+      tickResolved = true;
+      return result;
+    });
+    await flush();
+    eq(JSON.stringify(started.sort()), JSON.stringify(['dell-first', 'dell-second']),
+      'one scheduler pass starts every currently due DELL profile');
+    ok(!tickResolved, 'the scheduler pass remains pending while DELL generation is pending');
+    eq((await sched.runTick()).skipped, 'reentrant',
+      'a later scheduler pass is refused throughout the DELL wait');
+
+    releases.get('dell-first')();
+    await flush();
+    ok(!tickResolved, 'one unfinished DELL profile still holds the entire scheduler pass open');
+    releases.get('dell-second')();
+    const completed = await pendingTick;
+    eq(completed.acted, 2, 'the scheduler pass completes only after both DELL results return');
   }
 }
 
@@ -2738,6 +2964,7 @@ async function scenarioDeepseekReasoning() {
   await scenario429Backoff();
   await scenarioPauseAndSingleFlight();
   await scenarioProviderGate();
+  await scenarioHostedEligibilityAndBlocking();
   await scenarioSpendCap();
   await scenarioCostMaths();
   await scenarioGdeltQueue();

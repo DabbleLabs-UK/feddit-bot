@@ -24,16 +24,19 @@ function ok(value, message) {
 
 function fixture(options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'feddit-queue-'));
+  const file = path.join(dir, 'jobs.json');
   let current = Date.UTC(2026, 8, 12, 12, 0, 0);
   let sequence = 0;
   const queue = createQueue({
-    file: path.join(dir, 'jobs.json'),
+    file,
     now: () => current,
     random: () => (++sequence) / 1000,
     ...options,
   });
   return {
     queue,
+    file,
+    now: () => current,
     advance: (ms) => { current += ms; },
     cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
   };
@@ -54,6 +57,40 @@ function run() {
       const repeated = f.queue.enqueue({ ownerKey: 'same', dedupeKey: 'operation-1', payload: { prompt: 'two' } });
       eq(repeated.id, first.id, 'an active operation is not enqueued twice');
       eq(f.queue.capacity().queued, 1, 'active deduplication leaves one queued job');
+    } finally {
+      f.cleanup();
+    }
+  }
+
+  {
+    const f = fixture();
+    try {
+      const first = f.queue.enqueue({
+        ownerKey: 'restart-bot',
+        profileId: 'restart-bot',
+        dedupeKey: 'restart-operation',
+        payload: { prompt: 'durable prompt' },
+      });
+      f.queue.claim('dell-1');
+      f.queue.complete(first.id, 'dell-1', { text: 'durable result' });
+
+      const restarted = createQueue({
+        file: f.file,
+        now: f.now,
+        random: () => 0.987654,
+      });
+      const survived = restarted.get(first.id);
+      eq(survived.status, 'completed', 'a completed DELL job survives a public-runner restart');
+      eq(survived.result.text, 'durable result', 'the completed inference result remains durable');
+
+      const repeated = restarted.enqueue({
+        ownerKey: 'restart-bot',
+        profileId: 'restart-bot',
+        dedupeKey: 'restart-operation',
+        payload: { prompt: 'durable prompt' },
+      });
+      ok(repeated.id !== first.id, 'terminal queue history does not resume or deduplicate a lost scheduler continuation');
+      eq(repeated.status, 'queued', 'after restart the same operation can be queued again despite its orphanable completed result');
     } finally {
       f.cleanup();
     }
