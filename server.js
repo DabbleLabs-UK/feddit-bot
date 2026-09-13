@@ -58,8 +58,8 @@ function activeDefaultModel() {
   return String(settings.localDefaultModel || store.DEFAULT_MODEL);
 }
 
-function applyHostedProfilePolicy(patch, current = {}) {
-  Object.assign(patch, hostedPolicy.applyHostedPolicy(patch, current));
+function applyHostedProfilePolicy(patch, current = {}, at = Date.now()) {
+  Object.assign(patch, hostedPolicy.applyHostedPolicy(patch, current, at));
   patch.provider = 'dell';
   patch.model = store.DEFAULT_MODEL;
   return patch;
@@ -162,6 +162,7 @@ function safeProfile(p) {
     effProvider: scheduler.providerOf(p),
     effModel: scheduler.modelOf(p, store.DEFAULT_MODEL),
     hostedWork: PLACEMENT === 'hosted' ? hostedWorkForProfile(p) : null,
+    hostedAllocation: PLACEMENT === 'hosted' ? hostedPolicy.allocationFor(p, now) : null,
     spend,
   };
 }
@@ -658,6 +659,7 @@ async function handleApi(req, res, urlPath, query) {
             ? simulationState.repliedTo.length : 0,
           simulationArticleCount: simulationState && Array.isArray(simulationState.postedNews)
             ? simulationState.postedNews.length : 0,
+          hostedAllocation: PLACEMENT === 'hosted' ? hostedPolicy.allocationFor(existing) : null,
         },
       });
     }
@@ -691,6 +693,16 @@ async function handleApi(req, res, urlPath, query) {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
       const body = await readBody(req);
       delete body.ownerId;
+      if (existing.token && Object.prototype.hasOwnProperty.call(body, 'fedditUsername')) {
+        const currentUsername = String(existing.fedditUsername || '').trim().toLowerCase();
+        const requestedUsername = String(body.fedditUsername || '').trim().toLowerCase();
+        if (requestedUsername !== currentUsername) {
+          return sendJson(res, 409, {
+            error: 'A registered Feddit username is permanent. Create a different bot identity instead.',
+          });
+        }
+        body.fedditUsername = existing.fedditUsername;
+      }
       if (requestOwner) {
         delete body.token;
         applyHostedProfilePolicy(body, existing);
@@ -1125,21 +1137,17 @@ const server = http.createServer((req, res) => {
 // per-provider: ollama profiles are serialised so Cy's resident model is never
 // queued behind us or evicted, while deepseek profiles (remote) run concurrently
 // and independently, subject to the runner-wide monthly spend cap.
-if (PLACEMENT === 'hosted') {
+function reconcileHostedProfiles(at = Date.now()) {
+  if (PLACEMENT !== 'hosted') return;
   for (const profile of store.listProfiles()) {
     if (!profile.ownerId) continue;
-    const managed = hostedPolicy.applyHostedPolicy({}, profile);
-    if (
-      profile.hostedDailyTurns !== managed.hostedDailyTurns ||
-      profile.postsPerHour !== managed.postsPerHour ||
-      profile.commentsPerHour !== managed.commentsPerHour ||
-      profile.provider !== 'dell' ||
-      profile.model !== store.DEFAULT_MODEL
-    ) {
-      store.updateProfile(profile.id, applyHostedProfilePolicy(managed, profile));
-    }
+    const managed = applyHostedProfilePolicy({}, profile, at);
+    const changed = Object.keys(managed).some((key) =>
+      JSON.stringify(profile[key]) !== JSON.stringify(managed[key]));
+    if (changed) store.updateProfile(profile.id, managed);
   }
 }
+reconcileHostedProfiles();
 const schedulerHandle = scheduler.start({
   store,
   providers,
@@ -1148,6 +1156,10 @@ const schedulerHandle = scheduler.start({
   feeds,
   getDeepseekKey: () => secrets.getDeepseekKey(),
 });
+if (PLACEMENT === 'hosted') {
+  const hostedPolicyTimer = setInterval(reconcileHostedProfiles, hostedPolicy.RECONCILE_INTERVAL_MS);
+  hostedPolicyTimer.unref();
+}
 // -----------------------------------------------------------------------------
 
 function lanAddress() {

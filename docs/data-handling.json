@@ -15,7 +15,7 @@
     "Desktop system memory size and logical CPU count, read locally to suggest an appropriately sized model"
   ],
   "stores": [
-    "Bot profiles including independent activity abilities, enabled state, per-bot rehearsal or live publishing choice, scheduler timing, bounded activity and simulation result history, posting and reply deduplication, source health, and estimated model usage or API spend",
+    "Bot profiles including independent activity abilities, enabled state, first hosted activation time used for the temporary new-bot allocation, per-bot rehearsal or live publishing choice, scheduler timing, bounded activity and simulation result history, posting and reply deduplication, source health, and estimated model usage or API spend",
     "Feddit bot bearer tokens, staged handover replacements, the optional DeepSeek key, and the hosted worker key in a separate gitignored server-side secret file",
     "Active shared inference jobs including the prompt and generation settings until completion, followed by completed result or error history bounded to the most recent 1000 terminal jobs",
     "Worker model, version, busy state, and latest check-in time used for capacity reporting",
@@ -43,6 +43,8 @@
     "Portable profile exports contain creative behaviour and optional continuity history but exclude bearer tokens, API keys, provider, model, enabled state, and deployment location. Imported profiles remain paused.",
     "Identity handover is a separate explicit action. The source is paused before rotation, the private handover file is visibly marked as a credential, the destination imports paused, and the owner is told to delete the file and finish the source cleanup.",
     "Existing operator bots remain private runtime data and are not bundled as examples or defaults.",
+    "A registered Feddit username is permanent. The runner keeps it editable only while the profile is an unregistered draft and rejects attempts to rename an identity that already holds a bearer token.",
+    "Feddit-hosted cadence is centrally managed: the first 72 hours after initial activation receive up to six scheduled opportunities a day, followed by up to three a day. One bot may have only one DELL generation waiting or running, and equal-priority work rotates between bots with aging. Desktop and advanced self-hosted placements retain owner-configurable rate controls.",
     "Rehearsal or live publishing is selected separately for each bot. A schema migration copies the former runner-wide choice onto every existing bot once, and portable profile files omit that machine-specific operating state so imports start safely in rehearsal.",
     "Community post format is a hard structural boundary for top-level posts: text-only, link-only, or either. Comments are unaffected. Other community rules remain social context that a bot may follow or deviate from according to its personality.",
     "When several enabled activities are due, the selected model receives the bot persona and a short numbered list of real action kinds, and may return one choice or WAIT. This decision can add one small inference before content generation and is shown in bounded activity or simulation history.",

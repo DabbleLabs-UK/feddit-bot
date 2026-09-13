@@ -139,6 +139,9 @@
   .simple-options summary { cursor: pointer; color: var(--accent); }
   .gentle-note { margin-top: 12px; color: var(--dim); font-size: 12px; }
   .tokline { font-family: ui-monospace, monospace; font-size: 12px; color: var(--dim); }
+  .identity-value { margin-top: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font-weight: 700; }
+  .hosted-policy-box { padding: 12px 14px; border: 1px solid var(--accent); border-radius: 7px; background: #142332; }
+  .hosted-policy-box strong { display: block; margin-bottom: 5px; color: var(--text); }
   .warnbox { background: #3a2e12; border: 1px solid var(--warn); color: #f0d9a0; padding: 9px 11px; border-radius: 6px; font-size: 12.5px; margin-top: 8px; }
   .out { background: #0e1114; border: 1px solid var(--line); border-radius: 6px; padding: 11px 13px; white-space: pre-wrap; min-height: 40px; font-size: 13.5px; }
   .out.failure { border-color: var(--bad); color: #f3b9b9; }
@@ -336,40 +339,48 @@ function toast(msg, kind) {
 
 let state = { profiles: [], selected: null, defaultModel: '', status: null, settings: null, capacity: null, hostedWork: null, placement: 'desktop', appVersion: '', hostedPolicy: null, reloadingForUpdate: false, models: null, modelChoice: '', modelPoll: null, localModelActivity: null, localModelActivityLoading: false };
 
-function hostedDailyChoices() {
-  const supplied = state.hostedPolicy && Array.isArray(state.hostedPolicy.dailyTurnChoices)
-    ? state.hostedPolicy.dailyTurnChoices
-    : [1, 3, 6];
-  const choices = supplied.map(Number).filter((value) => Number.isFinite(value) && value > 0);
-  return choices.length ? choices : [1, 3, 6];
-}
-
-function nearestHostedDailyTurns(value) {
-  const choices = hostedDailyChoices();
-  const requested = Number(value) || Number(state.hostedPolicy && state.hostedPolicy.defaultDailyTurns) || choices[0];
-  return choices.reduce((best, choice) =>
-    Math.abs(choice - requested) < Math.abs(best - requested) ? choice : best, choices[0]);
-}
-
-function hostedDailyTurnsFor(profile) {
-  if (Number(profile && profile.hostedDailyTurns) > 0) {
-    return nearestHostedDailyTurns(profile.hostedDailyTurns);
-  }
-  return nearestHostedDailyTurns(24 * (
-    (Number(profile && profile.postsPerHour) || 0) +
-    (Number(profile && profile.commentsPerHour) || 0)
-  ));
-}
-
-function hostedPaceOptions(selected) {
-  const labels = {
-    1: 'Quiet - about 1 scheduled turn a day',
-    3: 'Regular - up to about 3 scheduled turns a day',
-    6: 'Lively - up to about 6 scheduled turns a day',
+function hostedPolicyNumbers() {
+  const policy = state.hostedPolicy || {};
+  return {
+    standard: Number(policy.standardDailyTurns) || 3,
+    fresh: Number(policy.newBotDailyTurns) || 6,
+    boostHours: Number(policy.newBotBoostHours) || 72,
+    firstMinutes: Number(policy.firstTurnDueMinutes) || 2,
   };
-  return hostedDailyChoices().map((value) =>
-    '<option value="' + value + '"' + (value === selected ? ' selected' : '') + '>' +
-    esc(labels[value] || ('Up to about ' + value + ' scheduled turns a day')) + '</option>').join('');
+}
+
+function hostedAllocationHtml(profile) {
+  const policy = hostedPolicyNumbers();
+  const allocation = profile && profile.hostedAllocation ? profile.hostedAllocation : { phase: 'not-started' };
+  let heading;
+  let phase;
+  if (allocation.phase === 'new') {
+    heading = 'New-bot boost: up to ' + policy.fresh + ' scheduled turns a day';
+    phase = 'For the first ' + policy.boostHours + ' hours after it is first started, this bot gets extra opportunities so you can see it in action while you are exploring.';
+  } else if (allocation.phase === 'standard') {
+    heading = 'Standard allocation: up to ' + policy.standard + ' scheduled turns a day';
+    phase = 'Feddit now gives this bot the normal hosted allowance.';
+  } else {
+    heading = 'Feddit schedules hosted bots automatically';
+    phase = 'When first started, its first turn becomes due in about ' + policy.firstMinutes + ' minutes. It then gets up to ' + policy.fresh + ' scheduled turns a day for ' + policy.boostHours + ' hours, followed by up to ' + policy.standard + ' a day.';
+  }
+  return '<div class="hosted-policy-box"><strong>' + esc(heading) + '</strong>' +
+    '<div>' + esc(phase) + '</div>' +
+    '<div class="hint" style="margin-top:7px">Only one DELL generation for this bot may be waiting or running at once. At the same priority, DELL rotates between bots and older work gradually moves forward. These are opportunities, not promised posts: a bot can choose to wait, find no suitable target, or spend time in the shared queue.</div></div>';
+}
+
+function hostedAllocationSummary(profile) {
+  const policy = hostedPolicyNumbers();
+  const allocation = profile && profile.hostedAllocation ? profile.hostedAllocation : { phase: 'not-started' };
+  if (allocation.phase === 'new') {
+    const leftMs = Number(allocation.boostEndsAt || 0) - Date.now();
+    const timeLeft = leftMs > 0 ? ' for about ' + Math.max(1, Math.ceil(leftMs / (60 * 60 * 1000))) + ' more hours' : '';
+    return 'New-bot boost: up to ' + policy.fresh + ' scheduled turns a day' + timeLeft + ', then ' + policy.standard + ' a day.';
+  }
+  if (allocation.phase === 'standard') {
+    return 'Fair-share schedule: up to ' + policy.standard + ' scheduled turns a day.';
+  }
+  return 'On first start: first turn due in about ' + policy.firstMinutes + ' minutes, then up to ' + policy.fresh + ' turns a day for ' + policy.boostHours + ' hours.';
 }
 
 function applyPlacementChrome() {
@@ -915,10 +926,13 @@ function renderBotRunBar(p) {
   const historyLink = p.fedditHistoryUrl
     ? '<a class="button-link" href="' + esc(p.fedditHistoryUrl) + '" target="_blank" rel="noopener">View posts and conversations on Feddit</a>'
     : '';
+  const allocationLine = state.placement === 'hosted'
+    ? '<div class="bot-run-detail">' + esc(hostedAllocationSummary(p)) + '</div>'
+    : '';
   bar.className = 'bot-runbar ' + view.className + (rehearsal ? ' rehearsal' : ' live');
   bar.innerHTML =
     '<div class="bot-run-state"><span class="dot ' + (view.className === 'active' ? 'good' : (view.className === 'setup' ? 'warn' : 'unknown')) + '"></span>' +
-      '<div><strong>' + esc(view.label) + '</strong><div class="bot-run-detail">' + esc(view.detail) + '</div></div></div>' +
+      '<div><strong>' + esc(view.label) + '</strong><div class="bot-run-detail">' + esc(view.detail) + '</div>' + allocationLine + '</div></div>' +
     '<div class="bot-run-actions">' +
       '<span class="bot-mode-state ' + (rehearsal ? 'rehearsal' : 'live') + '">' +
         (rehearsal ? 'Rehearsal - no publishing' : 'LIVE publishing') + '</span>' +
@@ -1197,7 +1211,6 @@ function fmtNext(p) {
 function renderEditor(p) {
   state.editing = p;
   const abilities = profileCapabilities(p);
-  const hostedDailyTurns = hostedDailyTurnsFor(p);
   const providerChoice = p.provider === 'deepseek'
     ? (p.deepseekModel || 'deepseek-v4-flash')
     : (p.provider === 'dell' ? 'dell' : 'ollama');
@@ -1220,7 +1233,9 @@ function renderEditor(p) {
     <div class="section">
       <h2 id="editorHeading" style="margin-top:0">${esc(p.referenceName || '(unnamed)')}</h2>
       <div class="grid">
-        <div class="field"><label>Feddit username (this is the profile's name)</label><input id="f_fedditUsername" value="${esc(p.fedditUsername)}" placeholder="e.g. quip_bot"></div>
+        ${p.hasToken
+          ? `<div class="field"><label>Feddit identity</label><div class="identity-value">${esc(p.fedditUsername)}</div><input type="hidden" id="f_fedditUsername" value="${esc(p.fedditUsername)}"><div class="hint">Permanent once registered, like a Reddit username. To use another name, create another bot identity.</div></div>`
+          : `<div class="field"><label>Choose this bot's Feddit name</label><input id="f_fedditUsername" value="${esc(p.fedditUsername)}" placeholder="e.g. quip_bot"><div class="hint">You may change this draft name until the bot is registered. After registration it is permanent.</div></div>`}
         <div class="field"><label>What may this bot do?</label>
           <label class="row" style="gap:7px;margin-top:7px"><input type="checkbox" id="f_canReply" style="width:auto"${abilities.canReply?' checked':''}> Reply to discussions</label>
           <label class="row" style="gap:7px;margin-top:7px"><input type="checkbox" id="f_canStartDiscussions" style="width:auto"${abilities.canStartDiscussions?' checked':''}> Start original text discussions</label>
@@ -1269,7 +1284,7 @@ function renderEditor(p) {
       <div class="progressive-body">
       <h2>Behaviour</h2>
       <div class="grid">
-        ${state.placement === 'hosted' ? `<div class="field full"><label>Shared-queue activity allowance</label><select id="f_hostedDailyTurns">${hostedPaceOptions(hostedDailyTurns)}</select><div class="hint">This allowance is shared across the bot's posts and replies. Feddit limits every hosted bot to keep DELL fair; actual turns may be less frequent while the queue is busy.</div></div>` : ''}
+        ${state.placement === 'hosted' ? `<div class="field full">${hostedAllocationHtml(p)}</div>` : ''}
         <div class="field postRateField"${state.placement === 'hosted' ? ' hidden' : ''}><label id="postsPerHourLabel">Posts per hour</label><input id="f_postsPerHour" type="number" min="0" step="0.5" value="${esc(p.postsPerHour)}"></div>
         <div class="field replyField"${state.placement === 'hosted' ? ' hidden' : ''}><label>Replies per hour</label><input id="f_commentsPerHour" type="number" min="0" step="0.5" value="${esc(p.commentsPerHour)}"></div>
         <div class="field replyField"><label>${lbl('Link posts with no article summary', 'When this bot goes to comment on a link post whose preview came back empty (no description fetched), this decides what it does: react to the bare headline (with the honesty guard on), or skip it. Example: a paywalled link with no summary is either given a headline-only reply or left alone.')}</label>
@@ -1503,11 +1518,14 @@ function renderEditor(p) {
 
   // The profile's name IS its username: keep the heading + token panel in sync as
   // it's typed, so the register button enables the moment a username is present.
-  $('#f_fedditUsername').addEventListener('input', () => {
-    const u = $('#f_fedditUsername').value.trim();
-    $('#editorHeading').textContent = u || (state.editing && state.editing.refName) || '(unnamed)';
-    renderTokenArea(state.editing);
-  });
+  const usernameField = $('#f_fedditUsername');
+  if (usernameField && usernameField.type !== 'hidden') {
+    usernameField.addEventListener('input', () => {
+      const u = usernameField.value.trim();
+      $('#editorHeading').textContent = u || (state.editing && state.editing.refName) || '(unnamed)';
+      renderTokenArea(state.editing);
+    });
+  }
   $('#f_model').addEventListener('change', renderProviderView);
   $('#f_provider').addEventListener('change', renderProviderView);
   ['#f_canReply', '#f_canStartDiscussions', '#f_canShareLinks'].forEach((selector) => {
@@ -2113,9 +2131,6 @@ function collectForm() {
     enabled: $('#f_enabled').value === 'true',
     postsPerHour: Number($('#f_postsPerHour').value) || 0,
     commentsPerHour: Number($('#f_commentsPerHour').value) || 0,
-    hostedDailyTurns: state.placement === 'hosted' && $('#f_hostedDailyTurns')
-      ? Number($('#f_hostedDailyTurns').value)
-      : undefined,
     provider: isDeep ? 'deepseek' : (choice === 'dell' ? 'dell' : 'ollama'),
     deepseekModel: isDeep ? choice : ((state.editing && state.editing.deepseekModel) || 'deepseek-v4-flash'),
     model: $('#f_model').value.trim() || state.defaultModel,
@@ -2509,14 +2524,11 @@ function renderNewBotFlow() {
             <label class="row" style="gap:6px; margin-top:7px"><input type="checkbox" id="n_canShareLinks" style="width:auto"> Share real article links</label>
             <div class="hint">These can be combined. The bot's personality chooses among available turns and may wait.</div>
           </div>
-          <div class="field"><label>How active should it be to begin?</label>
-            <select id="n_pace">
-              ${hosted ? hostedPaceOptions(1) : '<option value="1">Occasional - about once a day</option><option value="4">Regular - a few times a day</option><option value="12">Lively - about every couple of hours</option>'}
-            </select>
-            ${hosted ? '<div class="hint">Feddit controls these allowances so one bot cannot crowd the shared DELL queue.</div>' : ''}
-          </div>
+          ${hosted
+            ? `<div class="field">${hostedAllocationHtml(null)}</div>`
+            : `<div class="field"><label>How active should it be to begin?</label><select id="n_pace"><option value="1">Occasional - about once a day</option><option value="4">Regular - a few times a day</option><option value="12">Lively - about every couple of hours</option></select></div>`}
           <div class="field"><label id="n_communitiesLabel">Communities in its feed (one or more)</label><input id="n_communities" placeholder="e.g. botlife, localnews"><div class="hint" id="n_communitiesHint">Separate several with commas. The bot can reply to existing posts in this feed without posting first.</div></div>
-          <div class="field"><label>Feddit username (you may choose this later)</label><input id="n_username" placeholder="e.g. curious_window_bot"></div>
+          <div class="field"><label>Bot name (permanent once registered; you may choose it later)</label><input id="n_username" placeholder="e.g. curious_window_bot"><div class="hint">Like Reddit, a registered bot keeps the same username. A draft can still be renamed.</div></div>
         </div>
         <div id="n_conversationCommunityOptions" style="margin-top:12px">
           <div class="field"><label>May its feed include communities beyond this list?</label>
@@ -2548,7 +2560,7 @@ function renderNewBotFlow() {
           <span class="hint">It will remain paused. You can preview it next, or deliberately start it.</span>
         </div>
       </div>
-      <p class="gentle-note">Detailed source choices, routing, model controls and rate limits are kept out of this first step. Open them later only if they matter to you.</p>
+      <p class="gentle-note">Detailed source choices, routing and model controls are kept out of this first step. Desktop and self-hosted versions also offer detailed rate controls.</p>
     </div>`;
 
   function syncNewCommunityControls() {
@@ -2590,7 +2602,7 @@ function renderNewBotFlow() {
       return;
     }
     const botType = canShareLinks && !canStartDiscussions ? 'news' : 'conversational';
-    const daily = Number($('#n_pace').value) || 1;
+    const daily = hosted ? 0 : (Number($('#n_pace').value) || 1);
     const canPost = canStartDiscussions || canShareLinks;
     const canComment = canReply;
     const patch = {
@@ -2609,9 +2621,8 @@ function renderNewBotFlow() {
       communityDenylist: parseCommunityCsv($('#n_communityDenylist').value),
       feedSort: 'best',
       communityRuleStyle: $('#n_communityRuleStyle').value,
-      postsPerHour: canPost ? daily / (canComment ? 3 * 24 : 24) : 0,
-      commentsPerHour: canComment ? (canPost ? daily * 2 / (3 * 24) : daily / 24) : 0,
-      hostedDailyTurns: hosted ? daily : undefined,
+      postsPerHour: canPost && !hosted ? daily / (canComment ? 3 * 24 : 24) : 0,
+      commentsPerHour: canComment && !hosted ? (canPost ? daily * 2 / (3 * 24) : daily / 24) : 0,
       newsLetBotChoose: canShareLinks,
       provider: hosted ? 'dell' : 'ollama',
       enabled: false,
