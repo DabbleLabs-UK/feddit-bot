@@ -110,6 +110,10 @@
   .bot-runbar.live { box-shadow: 0 5px 16px rgba(0,0,0,.45), inset 0 0 0 1px rgba(224,168,58,.35); }
   .bot-run-state { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .bot-run-state strong { display: block; font-size: 17px; }
+  .bot-run-heading { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .bot-origin-state { display: inline-flex; align-items: center; padding: 3px 7px; border: 1px solid; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .bot-origin-state.user { color: #b9dcff; border-color: #4b95d1; background: rgba(75,149,209,.13); }
+  .bot-origin-state.system { color: #d0c4e7; border-color: #8067a8; background: rgba(128,103,168,.13); }
   .bot-run-detail { color: var(--dim); font-size: 12px; }
   .bot-run-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
   .bot-mode-state { font-size: 12px; font-weight: 700; padding: 5px 8px; border: 1px solid; border-radius: 5px; }
@@ -949,10 +953,14 @@ function renderBotRunBar(p) {
   const allocationLine = state.placement === 'hosted'
     ? '<div class="bot-run-detail">' + esc(hostedAllocationSummary(p)) + '</div>'
     : '';
+  const originBadge = state.placement === 'hosted'
+    ? '<span class="bot-origin-state ' + (p.botOrigin === 'system' ? 'system' : 'user') + '">' +
+        (p.botOrigin === 'system' ? 'System-population bot' : 'User-created bot') + '</span>'
+    : '';
   bar.className = 'bot-runbar ' + view.className + (rehearsal ? ' rehearsal' : ' live');
   bar.innerHTML =
     '<div class="bot-run-state"><span class="dot ' + (view.className === 'active' ? 'good' : (view.className === 'setup' ? 'warn' : 'unknown')) + '"></span>' +
-      '<div><strong>' + esc(view.label) + '</strong><div class="bot-run-detail">' + esc(view.detail) + '</div>' + allocationLine + '</div></div>' +
+      '<div><div class="bot-run-heading"><strong>' + esc(view.label) + '</strong>' + originBadge + '</div><div class="bot-run-detail">' + esc(view.detail) + '</div>' + allocationLine + '</div></div>' +
     '<div class="bot-run-actions">' +
       '<span class="bot-mode-state ' + (rehearsal ? 'rehearsal' : 'live') + '">' +
         (rehearsal ? 'Rehearsal - no publishing' : 'LIVE publishing') + '</span>' +
@@ -2469,7 +2477,8 @@ function renderCapacity() {
   const cap = state.capacity;
   bar.style.display = '';
   if (!cap) {
-    bar.textContent = 'Hosted capacity is not available right now. A desktop bot skips the shared queue.';
+    bar.innerHTML = '<div class="capacity-detail"><b>Hosted capacity is not available right now. A desktop bot skips the shared queue.</b> ' +
+      '<a href="https://feddit.dabblelabs.uk/docs#windows-desktop" target="_blank" rel="noopener">Get the Windows app and instructions</a></div>';
     return;
   }
   const queue = Number(cap.queued || 0);
@@ -2497,7 +2506,8 @@ function renderCapacity() {
       '<span class="dot ' + (cap.online ? 'good' : 'warn') + '"></span>') +
     '<strong>' + esc(capacityOperationalSentence(cap)) + '</strong>' + chips + '</div>' +
     (detail ? '<div class="capacity-detail">' + esc(detail) + '</div>' : '') + evidence +
-    '<div class="capacity-detail"><b>' + esc(cap.desktopAlternative || 'A desktop bot skips the shared queue.') + '</b></div>';
+    '<div class="capacity-detail"><b>' + esc(cap.desktopAlternative || 'A desktop bot skips the shared queue.') + '</b> ' +
+      '<a href="https://feddit.dabblelabs.uk/docs#windows-desktop" target="_blank" rel="noopener">Get the Windows app and instructions</a></div>';
 }
 
 function capacityOperationalSentence(cap) {

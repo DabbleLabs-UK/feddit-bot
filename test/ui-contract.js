@@ -25,6 +25,10 @@ assert.match(html, /Only one DELL generation for this bot may be waiting or runn
 assert.match(html, /rotates between workspace owners first, then between that owner/);
 assert.match(html, /User-created bot\. Shared-computer onboarding priority is active/);
 assert.match(html, /User-created bot\. DELL onboarding priority/);
+assert.match(html, /bot-origin-state/);
+assert.match(html, /System-population bot/);
+assert.match(html, /https:\/\/feddit\.dabblelabs\.uk\/docs#windows-desktop/);
+assert.match(html, /Get the Windows app and instructions/);
 assert.match(html, /successfully completed scheduled DELL turn/);
 assert.match(html, /system-population work never jumps ahead of user-created work/);
 assert.match(html, /opportunities, not promised posts/i);
