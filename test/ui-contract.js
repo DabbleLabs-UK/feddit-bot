@@ -8,6 +8,15 @@ const vm = require('node:vm');
 const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 
 assert.match(html, /What would make this bot worth encountering\?/);
+assert.match(html, /Talk with other bots/);
+assert.match(html, /Write original posts and join conversations/);
+assert.match(html, /Share news and join the discussion/);
+assert.match(html, /newsLetBotChoose: botType === 'news'/);
+assert.match(html, /prioritises replies from other bots on its own threads/);
+assert.match(html, /Shared-queue activity allowance/);
+assert.match(html, /at most 6 scheduled DELL generations a day per bot/);
+assert.match(html, /only one generation waiting or running/);
+assert.match(html, /hostedDailyTurns/);
 assert.match(html, /Give the bot at least one distinctive sentence first/);
 assert.match(html, /Create my bot draft/);
 assert.match(html, /Home communities \(one or more\)/);

@@ -63,6 +63,7 @@ function makeStore(profiles) {
 
   return {
     DEFAULT_MODEL: 'stub-model',
+    referenceName: (p) => (p && (p.fedditUsername || p.refName)) || '',
     schedDefaults,
     listProfiles: () => [...byId.values()],
     getProfile: (id) => byId.get(id) || null,
@@ -381,6 +382,48 @@ async function scenarioTargetingDedupe() {
   eq(simulations[0].simulation.community, 'f/botlife', 'simulated reply records its community');
   ok(simulations[0].simulation.context.includes('newest by other1'), 'simulated reply retains the live post context it answered');
   ok(simulations[0].simulation.reply.includes('\n\nGenerated body text'), 'simulated reply retains the COMPLETE generated text, including newlines');
+}
+
+// ============================================================================
+// Scenario 1aa: a news-and-discussion bot can reply, and prioritises a reaction
+// on its own link thread over an unrelated newer post.
+// ============================================================================
+async function scenarioNewsDiscussion() {
+  console.log('\n[1aa] news bot shares links and joins its own discussion');
+  const clock = makeClock(1_700_000);
+  const world = {
+    feddits: {
+      newsroom: [
+        {
+          id: 900, feddit: 'newsroom', title: 'Our shared story', author: 'newsbot',
+          link: true, url: 'https://example.com/story', og_status: 'ready',
+          og_title: 'Our shared story', og_description: 'A useful summary of the story.',
+        },
+        { id: 999, feddit: 'newsroom', title: 'Newer unrelated post', author: 'another_bot' },
+      ],
+    },
+    comments: {
+      900: [{ id: 901, postId: 900, author: 'curious_bot', body: 'What do you make of this?' }],
+    },
+  };
+  const p = profile({
+    id: 'newsbot', fedditUsername: 'newsbot', botType: 'news', mode: 'both',
+    postsPerHour: 0, commentsPerHour: 1, postFeddits: ['newsroom'],
+  });
+  p.sched.nextCommentAt = clock.now();
+  const store = makeStore([p]);
+  const providers = makeProviders();
+  const feddit = makeFeddit(world);
+  const sched = scheduler.createScheduler({
+    store, providers, feddit, now: clock.now, random: () => 0, getDeepseekKey: KEY,
+  });
+
+  const result = await sched.runTick();
+  eq(result.results[0].target, 't1_901', 'news bot answers a reply on its own news thread first');
+  const simulation = p.activity.find((entry) => entry.dryRun && entry.kind === 'comment');
+  ok(simulation.simulation.context.includes('What do you make of this?'), 'the reply includes the other bot reaction');
+  ok(simulation.simulation.context.includes('A useful summary of the story.'), 'the reply includes available article context');
+  eq(feddit.calls.comment.length, 0, 'news discussion dry-run makes no live write');
 }
 
 // ============================================================================
@@ -2519,6 +2562,7 @@ async function scenarioDeepseekReasoning() {
   scenarioProfileMigration();
   await scenarioTargetingDedupe();
   await scenarioImmediateSimulation();
+  await scenarioNewsDiscussion();
   await scenarioCommunityMovement();
   await scenarioCadenceCeiling();
   await scenarioThreadCap();

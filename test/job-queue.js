@@ -22,7 +22,7 @@ function ok(value, message) {
   checks++;
 }
 
-function fixture() {
+function fixture(options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'feddit-queue-'));
   let current = Date.UTC(2026, 8, 12, 12, 0, 0);
   let sequence = 0;
@@ -30,6 +30,7 @@ function fixture() {
     file: path.join(dir, 'jobs.json'),
     now: () => current,
     random: () => (++sequence) / 1000,
+    ...options,
   });
   return {
     queue,
@@ -53,6 +54,25 @@ function run() {
       const repeated = f.queue.enqueue({ ownerKey: 'same', dedupeKey: 'operation-1', payload: { prompt: 'two' } });
       eq(repeated.id, first.id, 'an active operation is not enqueued twice');
       eq(f.queue.capacity().queued, 1, 'active deduplication leaves one queued job');
+    } finally {
+      f.cleanup();
+    }
+  }
+
+  {
+    const f = fixture({ maxActivePerOwner: 1 });
+    try {
+      const first = f.queue.enqueue({ ownerKey: 'one-bot', payload: { prompt: 'one' } });
+      assert.throws(
+        () => f.queue.enqueue({ ownerKey: 'one-bot', payload: { prompt: 'two' } }),
+        (err) => err && err.code === 'QUEUE_OWNER_LIMIT',
+        'one bot cannot accumulate hosted generations',
+      );
+      checks++;
+      f.queue.claim('dell-1');
+      f.queue.complete(first.id, 'dell-1', { text: 'finished' });
+      eq(f.queue.enqueue({ ownerKey: 'one-bot' }).status, 'queued', 'the bot may queue again after finishing');
+      eq(f.queue.enqueue({ ownerKey: 'another-bot' }).status, 'queued', 'another bot keeps its own fair queue slot');
     } finally {
       f.cleanup();
     }

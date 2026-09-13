@@ -22,6 +22,7 @@ const feeds = require('./lib/feeds');
 const scheduler = require('./lib/scheduler');
 const profilePack = require('./lib/profile-pack');
 const { createQueue } = require('./lib/job-queue');
+const hostedPolicy = require('./lib/hosted-policy');
 const workerAuth = require('./lib/worker-auth');
 const { createOwnerStore } = require('./lib/owners');
 const modelCatalog = require('./lib/model-catalog');
@@ -39,7 +40,10 @@ const PLACEMENT = ['desktop', 'hosted', 'advanced'].includes(requestedPlacement)
   ? requestedPlacement
   : 'desktop';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const jobQueue = createQueue({ file: path.join(store.DATA_DIR, 'jobs.json') });
+const jobQueue = createQueue({
+  file: path.join(store.DATA_DIR, 'jobs.json'),
+  maxActivePerOwner: PLACEMENT === 'hosted' ? hostedPolicy.MAX_ACTIVE_JOBS_PER_BOT : 0,
+});
 providers.configureDellQueue(jobQueue);
 const hostedPreviewTasks = new Map();
 const hostedSimulationTasks = new Map();
@@ -52,6 +56,13 @@ const modelInstaller = createModelInstaller({
 function activeDefaultModel() {
   const settings = store.getSettings();
   return String(settings.localDefaultModel || store.DEFAULT_MODEL);
+}
+
+function applyHostedProfilePolicy(patch, current = {}) {
+  Object.assign(patch, hostedPolicy.applyHostedPolicy(patch, current));
+  patch.provider = 'dell';
+  patch.model = store.DEFAULT_MODEL;
+  return patch;
 }
 
 // ---- helpers ----------------------------------------------------------------
@@ -190,6 +201,7 @@ async function handleApi(req, res, urlPath, query) {
       placement: PLACEMENT,
       appVersion: String(process.env.FEDDIT_APP_VERSION || 'development'),
       ownerSessionRequired: PLACEMENT === 'hosted',
+      hostedPolicy: PLACEMENT === 'hosted' ? hostedPolicy.runtimePolicy() : null,
     });
   }
 
@@ -475,8 +487,7 @@ async function handleApi(req, res, urlPath, query) {
     delete body.ownerId;
     if (requestOwner) {
       body.ownerId = requestOwner.id;
-      body.provider = 'dell';
-      body.model = store.DEFAULT_MODEL;
+      applyHostedProfilePolicy(body);
     } else if (!body.model) {
       body.model = activeDefaultModel();
     }
@@ -496,8 +507,7 @@ async function handleApi(req, res, urlPath, query) {
     const patch = profilePack.importPatch(pack);
     if (requestOwner) {
       patch.ownerId = requestOwner.id;
-      patch.provider = 'dell';
-      patch.model = store.DEFAULT_MODEL;
+      applyHostedProfilePolicy(patch);
     } else {
       patch.model = activeDefaultModel();
     }
@@ -521,8 +531,7 @@ async function handleApi(req, res, urlPath, query) {
     const patch = profilePack.importHandoverPatch(pack);
     if (requestOwner) {
       patch.ownerId = requestOwner.id;
-      patch.provider = 'dell';
-      patch.model = store.DEFAULT_MODEL;
+      applyHostedProfilePolicy(patch);
     } else {
       patch.model = activeDefaultModel();
     }
@@ -582,8 +591,7 @@ async function handleApi(req, res, urlPath, query) {
       delete body.ownerId;
       if (requestOwner) {
         delete body.token;
-        body.provider = 'dell';
-        body.model = store.DEFAULT_MODEL;
+        applyHostedProfilePolicy(body, existing);
       }
       const pendingHandover = secrets.getFedditHandover(id);
       if (pendingHandover && (body.enabled === true || Object.prototype.hasOwnProperty.call(body, 'token'))) {
@@ -819,6 +827,7 @@ async function handleApi(req, res, urlPath, query) {
           : (err.code === 'BAD_KEY' || err.code === 'NO_KEY') ? 400
           : (err.code === 'INSUFFICIENT_BALANCE') ? 402
           : (err.code === 'RATE_LIMITED') ? 429
+          : (err.code === 'QUEUE_OWNER_LIMIT') ? 429
           : 500;
         return sendJson(res, code, { error: err.message });
       }
@@ -995,6 +1004,21 @@ const server = http.createServer((req, res) => {
 // per-provider: ollama profiles are serialised so Cy's resident model is never
 // queued behind us or evicted, while deepseek profiles (remote) run concurrently
 // and independently, subject to the runner-wide monthly spend cap.
+if (PLACEMENT === 'hosted') {
+  for (const profile of store.listProfiles()) {
+    if (!profile.ownerId) continue;
+    const managed = hostedPolicy.applyHostedPolicy({}, profile);
+    if (
+      profile.hostedDailyTurns !== managed.hostedDailyTurns ||
+      profile.postsPerHour !== managed.postsPerHour ||
+      profile.commentsPerHour !== managed.commentsPerHour ||
+      profile.provider !== 'dell' ||
+      profile.model !== store.DEFAULT_MODEL
+    ) {
+      store.updateProfile(profile.id, applyHostedProfilePolicy(managed, profile));
+    }
+  }
+}
 const schedulerHandle = scheduler.start({
   store,
   providers,

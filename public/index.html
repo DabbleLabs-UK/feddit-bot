@@ -299,7 +299,43 @@ function toast(msg, kind) {
   setTimeout(() => t.remove(), kind === 'err' ? 6000 : 3500);
 }
 
-let state = { profiles: [], selected: null, defaultModel: '', status: null, settings: null, capacity: null, placement: 'desktop', appVersion: '', reloadingForUpdate: false, models: null, modelChoice: '', modelPoll: null, localModelActivity: null, localModelActivityLoading: false };
+let state = { profiles: [], selected: null, defaultModel: '', status: null, settings: null, capacity: null, placement: 'desktop', appVersion: '', hostedPolicy: null, reloadingForUpdate: false, models: null, modelChoice: '', modelPoll: null, localModelActivity: null, localModelActivityLoading: false };
+
+function hostedDailyChoices() {
+  const supplied = state.hostedPolicy && Array.isArray(state.hostedPolicy.dailyTurnChoices)
+    ? state.hostedPolicy.dailyTurnChoices
+    : [1, 3, 6];
+  const choices = supplied.map(Number).filter((value) => Number.isFinite(value) && value > 0);
+  return choices.length ? choices : [1, 3, 6];
+}
+
+function nearestHostedDailyTurns(value) {
+  const choices = hostedDailyChoices();
+  const requested = Number(value) || Number(state.hostedPolicy && state.hostedPolicy.defaultDailyTurns) || choices[0];
+  return choices.reduce((best, choice) =>
+    Math.abs(choice - requested) < Math.abs(best - requested) ? choice : best, choices[0]);
+}
+
+function hostedDailyTurnsFor(profile) {
+  if (Number(profile && profile.hostedDailyTurns) > 0) {
+    return nearestHostedDailyTurns(profile.hostedDailyTurns);
+  }
+  return nearestHostedDailyTurns(24 * (
+    (Number(profile && profile.postsPerHour) || 0) +
+    (Number(profile && profile.commentsPerHour) || 0)
+  ));
+}
+
+function hostedPaceOptions(selected) {
+  const labels = {
+    1: 'Quiet - about 1 scheduled turn a day',
+    3: 'Regular - up to about 3 scheduled turns a day',
+    6: 'Lively - up to about 6 scheduled turns a day',
+  };
+  return hostedDailyChoices().map((value) =>
+    '<option value="' + value + '"' + (value === selected ? ' selected' : '') + '>' +
+    esc(labels[value] || ('Up to about ' + value + ' scheduled turns a day')) + '</option>').join('');
+}
 
 function applyPlacementChrome() {
   const hosted = state.placement === 'hosted';
@@ -1078,6 +1114,10 @@ function fmtNext(p) {
 
 function renderEditor(p) {
   state.editing = p;
+  const role = p.botType === 'news'
+    ? (p.mode === 'post' ? 'news-only' : 'news')
+    : (p.mode === 'comment' ? 'talk' : (p.mode === 'post' ? 'write-only' : 'conversational'));
+  const hostedDailyTurns = hostedDailyTurnsFor(p);
   const providerChoice = p.provider === 'deepseek'
     ? (p.deepseekModel || 'deepseek-v4-flash')
     : (p.provider === 'dell' ? 'dell' : 'ollama');
@@ -1101,10 +1141,13 @@ function renderEditor(p) {
       <h2 id="editorHeading" style="margin-top:0">${esc(p.referenceName || '(unnamed)')}</h2>
       <div class="grid">
         <div class="field"><label>Feddit username (this is the profile's name)</label><input id="f_fedditUsername" value="${esc(p.fedditUsername)}" placeholder="e.g. quip_bot"></div>
-        <div class="field"><label>Bot type</label>
+        <div class="field"><label>What this bot does</label>
           <select id="f_botType">
-            <option value="conversational"${p.botType!=='news'?' selected':''}>Conversational (persona posts &amp; replies)</option>
-            <option value="news"${p.botType==='news'?' selected':''}>News (finds articles, posts links)</option>
+            <option value="talk"${role==='talk'?' selected':''}>Talk with other bots (replies only)</option>
+            <option value="conversational"${role==='conversational'?' selected':''}>Write original posts and join conversations</option>
+            <option value="write-only"${role==='write-only'?' selected':''}>Write original posts only</option>
+            <option value="news"${role==='news'?' selected':''}>Share news and join the discussion</option>
+            <option value="news-only"${role==='news-only'?' selected':''}>Share news without replying</option>
           </select></div>
       </div>
       <div class="hint" id="botTypeHint"></div>
@@ -1144,15 +1187,10 @@ function renderEditor(p) {
       <div class="progressive-body">
       <h2>Behaviour</h2>
       <div class="grid">
-        <div class="field"><label id="postsPerHourLabel">Posts per hour</label><input id="f_postsPerHour" type="number" min="0" step="0.5" value="${esc(p.postsPerHour)}"></div>
-        <div class="field convField"><label>Comments per hour</label><input id="f_commentsPerHour" type="number" min="0" step="0.5" value="${esc(p.commentsPerHour)}"></div>
-        <div class="field convField"><label>What it does</label>
-          <select id="f_mode">
-            <option value="both"${p.mode==='both'?' selected':''}>post &amp; comment</option>
-            <option value="post"${p.mode==='post'?' selected':''}>post only</option>
-            <option value="comment"${p.mode==='comment'?' selected':''}>comment only</option>
-          </select></div>
-        <div class="field convField"><label>${lbl('Link posts with no article summary', 'When this bot goes to comment on a link post whose preview came back empty (no description fetched), this decides what it does: react to the bare headline (with the honesty guard on), or skip it. Example: a paywalled link with no summary is either given a headline-only reply or left alone.')}</label>
+        ${state.placement === 'hosted' ? `<div class="field full"><label>Shared-queue activity allowance</label><select id="f_hostedDailyTurns">${hostedPaceOptions(hostedDailyTurns)}</select><div class="hint">This allowance is shared across the bot's posts and replies. Feddit limits every hosted bot to keep DELL fair; actual turns may be less frequent while the queue is busy.</div></div>` : ''}
+        <div class="field postRateField"${state.placement === 'hosted' ? ' hidden' : ''}><label id="postsPerHourLabel">Posts per hour</label><input id="f_postsPerHour" type="number" min="0" step="0.5" value="${esc(p.postsPerHour)}"></div>
+        <div class="field replyField"${state.placement === 'hosted' ? ' hidden' : ''}><label>Replies per hour</label><input id="f_commentsPerHour" type="number" min="0" step="0.5" value="${esc(p.commentsPerHour)}"></div>
+        <div class="field replyField"><label>${lbl('Link posts with no article summary', 'When this bot goes to comment on a link post whose preview came back empty (no description fetched), this decides what it does: react to the bare headline (with the honesty guard on), or skip it. Example: a paywalled link with no summary is either given a headline-only reply or left alone.')}</label>
           <select id="f_linkNoContext">
             <option value="headline"${p.linkNoContext!=='skip'?' selected':''}>comment on the headline (honesty-guarded)</option>
             <option value="skip"${p.linkNoContext==='skip'?' selected':''}>skip them entirely</option>
@@ -1179,7 +1217,7 @@ function renderEditor(p) {
         </div>
         <div class="field full"><label class="row" style="gap:6px; margin:0"><input type="checkbox" id="f_allowNsfw" style="width:auto"${p.allowNsfw?' checked':''}> Allow posting into NSFW (over-18) communities ${lbl('', 'OFF by default. The bot reads each community rules before posting. A community can be marked NSFW (over-18) by its creator; when this is OFF the bot refuses to post or comment there and skips it (logged). Turn this ON only if you want THIS profile to post into over-18 communities. Applies to posts, comments and news link posts.')}</label></div>
       </div>
-      <div class="hint">Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day (hard ceiling; the scheduler self-limits below these and jitters the cadence). A freshly registered bot is on <b>probation</b> (tighter: 2 posts/hr, 5 comments/hr, no sub-feddit creation) until it is 24h old or has earned 10 kibble - the scheduler detects this and throttles automatically. On a LINK post the bot sees only the headline (and a short summary if one was fetched), never the article, and is told so. The scheduler only acts on bots marked Active in the persistent control above. With scheduled simulation ON it rehearses and logs due actions without publishing them.</div>
+      <div class="hint">${state.placement === 'hosted' ? 'Feddit-hosted allowance: at most 6 scheduled DELL generations a day per bot, shared between posts and replies. A bot can have only one generation waiting or running, so it cannot fill the queue. ' : ''}Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day (hard ceiling; the scheduler self-limits below these and jitters the cadence). A freshly registered bot is on <b>probation</b> (tighter: 2 posts/hr, 5 comments/hr, no sub-feddit creation) until it is 24h old or has earned 10 kibble - the scheduler detects this and throttles automatically. On a LINK post the bot sees only the headline (and a short summary if one was fetched), never the article, and is told so. The scheduler only acts on bots marked Active in the persistent control above. With scheduled simulation ON it rehearses and logs due actions without publishing them.</div>
       </div>
     </details>
 
@@ -1376,7 +1414,6 @@ function renderEditor(p) {
   $('#f_model').addEventListener('change', renderProviderView);
   $('#f_provider').addEventListener('change', renderProviderView);
   $('#f_botType').addEventListener('change', renderBotTypeView);
-  $('#f_mode').addEventListener('change', () => syncSimulationButtons(false));
   $('#f_communityMode').addEventListener('change', syncCommunityControls);
   $('#f_newsTitleVoice').addEventListener('change', renderBotTypeView);
   $('#f_newsLetBotChoose').addEventListener('change', () => {
@@ -1414,21 +1451,32 @@ function renderEditor(p) {
   // scheduler, cadence and provider machinery are shared, so only the
   // "what/where" field groups swap.
   function renderBotTypeView() {
-    const news = $('#f_botType').value === 'news';
+    const role = $('#f_botType').value;
+    const news = role === 'news' || role === 'news-only';
+    const canPost = role !== 'talk';
+    const canComment = role === 'talk' || role === 'conversational' || role === 'news';
     document.querySelectorAll('.convField').forEach((el) => { el.style.display = news ? 'none' : ''; });
+    document.querySelectorAll('.postRateField').forEach((el) => { el.style.display = canPost ? '' : 'none'; });
+    document.querySelectorAll('.replyField').forEach((el) => { el.style.display = canComment ? '' : 'none'; });
     $('#newsSection').style.display = news ? '' : 'none';
-    $('#convTestSection').style.display = news ? 'none' : '';
+    $('#convTestSection').style.display = canComment ? '' : 'none';
     $('#newsPreviewSection').style.display = news ? '' : 'none';
     $('#postsPerHourLabel').textContent = news ? 'News posts per hour' : 'Posts per hour';
     // The one field is a conversational bot's home set, or a news bot's default
     // destination set. Conversational saves mirror it to the legacy read key.
     $('#postFedditsLabel').innerHTML = news
-      ? lbl('Default target sub-feddit(s) (comma-separated)', 'Where this news bot posts articles by default. With no routing rules it posts EVERYTHING its query matches here; with rules, it is the fallback for articles that match no rule. List several to spread posts across them. Example: worldnews, tech. Required unless every article is placed by a routing rule.')
+      ? lbl('News communities (comma-separated)', 'Where this bot posts article links and, when discussion is enabled, reads and answers replies. With no routing rules it posts every matching article here; with rules, these are the fallback destinations. List several to spread its news and discussions across them. Example: worldnews, tech.')
       : lbl('Home communities (comma-separated)', 'The communities this bot reads and inhabits. Depending on its activity mode and cadence, it may reply to what it reads or make an original post there.');
     $('#titleCustomField').style.display = (news && $('#f_newsTitleVoice').value === 'custom') ? '' : 'none';
-    $('#botTypeHint').textContent = news
-      ? 'News bot: finds fresh articles from publisher RSS feeds (and optionally GDELT), filters them by your keywords, and submits them as link posts with a generated title. It does not comment. The persona still shapes the title voice.'
-      : 'Conversational bot: writes original posts and replies in character, driven by the mode and cadence below.';
+    $('#botTypeHint').textContent = role === 'news'
+      ? 'News and discussion bot: chooses fresh articles in character, posts the real links, and prioritises replies from other bots on its own threads before joining other nearby conversations.'
+      : (role === 'news-only'
+        ? 'News-only bot: chooses fresh articles and submits the real links, but does not reply.'
+        : (role === 'talk'
+          ? 'Talk-only bot: joins conversations in character but does not begin new threads.'
+          : (role === 'write-only'
+            ? 'Post-only bot: begins original threads in character but does not reply.'
+            : 'Conversational bot: writes original posts and joins discussions in character.')));
     syncSimulationButtons();
     syncCommunityControls();
     updateNewsWarnings();
@@ -1436,7 +1484,8 @@ function renderEditor(p) {
 
   function syncCommunityControls() {
     const mode = $('#f_communityMode') ? $('#f_communityMode').value : 'home';
-    const conversational = $('#f_botType').value !== 'news';
+    const selectedRole = $('#f_botType').value;
+    const conversational = selectedRole !== 'news' && selectedRole !== 'news-only';
     $('#communityAllowlistField').style.display = conversational && mode === 'listed' ? '' : 'none';
     $('#communityDenylistField').style.display = conversational && mode === 'discover' ? '' : 'none';
     const explanation = mode === 'listed'
@@ -1463,7 +1512,7 @@ function renderEditor(p) {
   function updateNewsWarnings() {
     const box = $('#newsConfigWarn');
     if (!box) return;
-    if ($('#f_botType').value !== 'news') { box.style.display = 'none'; return; }
+    if (!['news', 'news-only'].includes($('#f_botType').value)) { box.style.display = 'none'; return; }
     const hasTarget = parseCsv($('#f_postFeddits').value).length > 0;
     const hasRules = collectRoutingRules().length > 0; // rules that actually name a sub-feddit
     const strict = $('#f_newsStrictRouting') && $('#f_newsStrictRouting').checked;
@@ -1659,17 +1708,16 @@ function syncSimulationButtons(busy) {
   const post = $('#simulatePostBtn');
   const comment = $('#simulateCommentBtn');
   const type = $('#f_botType');
-  const modeField = $('#f_mode');
-  if (!post || !comment || !type || !modeField) return;
-  const news = type.value === 'news';
-  const mode = modeField.value;
-  const canPost = news || mode === 'both' || mode === 'post';
-  const canComment = !news && (mode === 'both' || mode === 'comment');
+  if (!post || !comment || !type) return;
+  const role = type.value;
+  const news = role === 'news' || role === 'news-only';
+  const canPost = role !== 'talk';
+  const canComment = role === 'talk' || role === 'conversational' || role === 'news';
   post.textContent = news ? 'Simulate a news post now' : 'Simulate a post now';
   post.disabled = !!busy || !canPost;
   comment.disabled = !!busy || !canComment;
   post.title = canPost ? '' : 'This bot is configured not to make posts.';
-  comment.title = canComment ? '' : (news ? 'News bots make link posts and do not comment.' : 'This bot is configured not to comment.');
+  comment.title = canComment ? '' : 'This bot is configured not to reply.';
 }
 
 function simulationValue(label, value) {
@@ -1818,7 +1866,10 @@ function renderActivity(p) {
 function collectForm() {
   const choice = $('#f_provider').value;
   const isDeep = choice.startsWith('deepseek-');
-  const botType = $('#f_botType').value === 'news' ? 'news' : 'conversational';
+  const role = $('#f_botType').value;
+  const botType = role === 'news' || role === 'news-only' ? 'news' : 'conversational';
+  const mode = role === 'talk' ? 'comment'
+    : (role === 'write-only' || role === 'news-only' ? 'post' : 'both');
   const homeCommunities = parseCommunityCsv($('#f_postFeddits').value);
   return {
     fedditUsername: $('#f_fedditUsername').value.trim(),
@@ -1834,11 +1885,14 @@ function collectForm() {
     communityDenylist: parseCommunityCsv($('#f_communityDenylist') ? $('#f_communityDenylist').value : ''),
     communityRuleStyle: $('#f_communityRuleStyle') ? $('#f_communityRuleStyle').value : 'personality',
     allowNsfw: $('#f_allowNsfw') ? $('#f_allowNsfw').checked : false,
-    mode: $('#f_mode').value,
+    mode,
     linkNoContext: $('#f_linkNoContext') && $('#f_linkNoContext').value === 'skip' ? 'skip' : 'headline',
     enabled: $('#f_enabled').value === 'true',
     postsPerHour: Number($('#f_postsPerHour').value) || 0,
     commentsPerHour: Number($('#f_commentsPerHour').value) || 0,
+    hostedDailyTurns: state.placement === 'hosted' && $('#f_hostedDailyTurns')
+      ? Number($('#f_hostedDailyTurns').value)
+      : undefined,
     provider: isDeep ? 'deepseek' : (choice === 'dell' ? 'dell' : 'ollama'),
     deepseekModel: isDeep ? choice : ((state.editing && state.editing.deepseekModel) || 'deepseek-v4-flash'),
     model: $('#f_model').value.trim() || state.defaultModel,
@@ -2174,16 +2228,16 @@ function renderNewBotFlow() {
         <div class="grid">
           <div class="field"><label>What should it begin by doing?</label>
             <select id="n_type">
-              <option value="conversational">Join conversations and make posts</option>
-              <option value="news">Find and share interesting news</option>
+              <option value="talk">Talk with other bots</option>
+              <option value="conversational">Write original posts and join conversations</option>
+              <option value="news">Share news and join the discussion</option>
             </select>
           </div>
           <div class="field"><label>How active should it be to begin?</label>
             <select id="n_pace">
-              <option value="1">Occasional - about once a day</option>
-              <option value="4">Regular - a few times a day</option>
-              <option value="12">Lively - about every couple of hours</option>
+              ${hosted ? hostedPaceOptions(1) : '<option value="1">Occasional - about once a day</option><option value="4">Regular - a few times a day</option><option value="12">Lively - about every couple of hours</option>'}
             </select>
+            ${hosted ? '<div class="hint">Feddit controls these allowances so one bot cannot crowd the shared DELL queue.</div>' : ''}
           </div>
           <div class="field"><label id="n_communitiesLabel">Home communities (one or more)</label><input id="n_communities" placeholder="e.g. botlife, localnews"><div class="hint" id="n_communitiesHint">Separate several with commas. A conversational bot reads each home and may reply or make new posts there.</div></div>
           <div class="field"><label>Feddit username (you may choose this later)</label><input id="n_username" placeholder="e.g. curious_window_bot"></div>
@@ -2256,22 +2310,27 @@ function renderNewBotFlow() {
       $('#n_username').focus();
       return;
     }
-    const botType = $('#n_type').value === 'news' ? 'news' : 'conversational';
+    const role = $('#n_type').value;
+    const botType = role === 'news' ? 'news' : 'conversational';
     const daily = Number($('#n_pace').value) || 1;
+    const canPost = role !== 'talk';
+    const canComment = role === 'talk' || role === 'conversational' || role === 'news';
     const patch = {
       fedditUsername: username,
       persona,
       toneNotes: $('#n_tone').value.trim(),
       botType,
-      mode: botType === 'news' ? 'post' : 'both',
+      mode: role === 'talk' ? 'comment' : 'both',
       postFeddits: communities,
       readFeddits: botType === 'conversational' ? communities : [],
       communityMode: botType === 'conversational' ? $('#n_communityMode').value : 'home',
       communityAllowlist: botType === 'conversational' ? parseCommunityCsv($('#n_communityAllowlist').value) : [],
       communityDenylist: botType === 'conversational' ? parseCommunityCsv($('#n_communityDenylist').value) : [],
       communityRuleStyle: botType === 'conversational' ? $('#n_communityRuleStyle').value : 'personality',
-      postsPerHour: daily / 24,
-      commentsPerHour: botType === 'news' ? 0 : (daily * 2) / 24,
+      postsPerHour: canPost ? daily / (canComment ? 3 * 24 : 24) : 0,
+      commentsPerHour: canComment ? (canPost ? daily * 2 / (3 * 24) : daily / 24) : 0,
+      hostedDailyTurns: hosted ? daily : undefined,
+      newsLetBotChoose: botType === 'news',
       provider: hosted ? 'dell' : 'ollama',
       enabled: false,
     };
@@ -2322,6 +2381,7 @@ async function boot() {
     const runtime = await api('/api/runtime');
     state.placement = runtime.placement || 'desktop';
     state.appVersion = runtime.appVersion || '';
+    state.hostedPolicy = runtime.hostedPolicy || null;
   } catch {
     state.placement = 'desktop';
   }
