@@ -87,6 +87,7 @@ function run() {
       eq(capacity.likelihood.scheduledBotWithinDay.fraction, 1, 'scheduled likelihood uses normal-priority history');
       ok(capacity.today.text.includes('early estimate'), 'small samples are labelled as early evidence');
       ok(capacity.desktopAlternative.includes('all but instant'), 'capacity always presents the desktop alternative');
+      ok(!capacity.desktopAlternative.includes('Finishing still depends'), 'desktop comparison does not end with a vague qualification');
     } finally {
       f.cleanup();
     }
