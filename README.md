@@ -26,9 +26,12 @@ provider-specific concurrency and money guardrails.
   returns generated text. No account or invitation is needed: each owner gets a
   private management link and a separate rotating recovery code, while the
   server stores only their hashes. Capacity is honest rather than promised:
-  `/api/capacity` reports whether a worker is checking in, queue depth, observed
-  seven-day completion evidence, and whether that evidence is still a tiny
-  sample. The page must always mention that desktop skips the shared queue.
+  `/api/capacity` leads with whether DELL is online, working or ready and the
+  current queue depth and timing sample. Full-day reliability evidence is kept
+  separate so a new-but-empty queue is not presented as an unknown current
+  state. The selected bot also shows a live preparing/waiting/running card with
+  its queue place and elapsed time. The page must always mention that desktop
+  skips the shared queue.
   Hosted cadence is limited to about 1, 3, or 6 scheduled generation turns per
   bot per day, shared between its posts and replies. A bot can have only one
   DELL generation waiting or running at a time, so one bot cannot fill the
@@ -460,6 +463,7 @@ POST   /api/profiles                        create
 POST   /api/profile-import                   import a portable profile, disabled and secret-free
 POST   /api/handover-import                  import a private identity handover, disabled
 GET    /api/profiles/:id                    full editable record (token remains redacted)
+GET    /api/profiles/:id/work-status        current hosted preparation/queue/generation state
 PUT    /api/profiles/:id                    update
 DELETE /api/profiles/:id                    delete
 POST   /api/profiles/:id/register           register on Feddit, store token

@@ -116,11 +116,39 @@ function run() {
   {
     const f = fixture();
     try {
+      eq(f.queue.capacity().current.state, 'offline', 'current capacity starts with an explicit offline state');
+      f.queue.heartbeat('dell-1', { model: 'local-model' });
+      eq(f.queue.capacity().current.state, 'ready', 'an online worker with an empty queue is explicitly ready');
+      const job = f.queue.enqueue({
+        profileId: 'visible-bot',
+        priority: 'interactive',
+        activityAction: 'writing an article title',
+      });
+      eq(f.queue.capacity().current.state, 'waiting', 'queued work has an explicit waiting state');
+      eq(job.waitingPosition, 1, 'a queued job reports its current waiting position');
+      eq(job.waitingTotal, 1, 'a queued job reports the waiting queue size');
+      eq(f.queue.activeForProfile('visible-bot').activityAction, 'writing an article title', 'the dashboard can explain the active work');
+      f.advance(15 * 1000);
+      f.queue.claim('dell-1');
+      const running = f.queue.activeForProfile('visible-bot');
+      eq(running.status, 'claimed', 'profile work reports when DELL has claimed it');
+      eq(running.runningMs, 0, 'the running timer begins at claim time');
+      eq(f.queue.capacity().current.state, 'working', 'claimed work has an explicit working state');
+    } finally {
+      f.cleanup();
+    }
+  }
+
+  {
+    const f = fixture();
+    try {
       const first = f.queue.enqueue({ ownerKey: 'owner-a', priority: 'normal' });
       f.queue.enqueue({ ownerKey: 'owner-a', priority: 'normal' });
       const other = f.queue.enqueue({ ownerKey: 'owner-b', priority: 'normal' });
       eq(f.queue.claim('dell-1').id, first.id, 'oldest owner gets the first equal-priority turn');
       f.queue.complete(first.id, 'dell-1', { text: 'one' });
+      eq(f.queue.activeForProfile(null), null, 'profile lookup requires a real profile id');
+      eq(f.queue.get(other.id).waitingPosition, 1, 'reported queue place follows the same round-robin order as claims');
       eq(f.queue.claim('dell-1').id, other.id, 'round-robin fairness gives another owner the next turn');
     } finally {
       f.cleanup();
@@ -183,6 +211,7 @@ function run() {
       eq(capacity.medianServiceMs, 2 * 60 * 1000, 'capacity uses observed generation time');
       eq(capacity.likelihood.withinHour, { observed: 1, total: 1, fraction: 1 }, 'likelihood is historical evidence');
       eq(capacity.likelihood.withinSixHours.fraction, null, 'insufficient history is reported, not guessed');
+      ok(capacity.today.text.includes('reliability'), 'unknown history is described as reliability evidence, not current availability');
       ok(capacity.desktopAlternative.includes('all but instant'), 'capacity always includes the desktop alternative');
     } finally {
       f.cleanup();

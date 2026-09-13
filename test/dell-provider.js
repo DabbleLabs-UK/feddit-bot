@@ -24,6 +24,7 @@ async function run() {
     prompt: 'Say hello.',
     temperature: 0.7,
     numPredict: 50,
+    activityAction: 'writing a preview reply',
   };
   eq(hashRequest(request), hashRequest({ ...request }), 'identical generation has a stable dedupe hash');
   ok(hashRequest(request) !== hashRequest({ ...request, prompt: 'Say goodbye.' }), 'prompt changes the dedupe hash');
@@ -65,6 +66,7 @@ async function run() {
   eq(result.text, 'Hello.', 'worker text returned');
   eq(enqueued.priority, 'interactive', 'preview priority reaches the durable queue');
   eq(enqueued.profileId, 'p_one', 'profile ownership reaches the queue');
+  eq(enqueued.activityAction, 'writing a preview reply', 'human-readable work activity reaches the queue');
   eq(enqueued.payload.prompt, 'Say hello.', 'worker payload contains the task prompt');
   ok(!Object.prototype.hasOwnProperty.call(enqueued.payload, 'apiKey'), 'worker payload excludes remote API keys');
 

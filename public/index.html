@@ -43,6 +43,8 @@
   .plist .pmeta { font-size: 11.5px; color: var(--dim); }
   .badge { font-size: 10.5px; padding: 1px 6px; border-radius: 9px; border: 1px solid var(--line); color: var(--dim); }
   .badge.on { color: var(--good); border-color: var(--good); }
+  .badge.working { color: #c9e4ff; border-color: var(--accent); animation: badge-pulse 1.3s ease-in-out infinite alternate; }
+  @keyframes badge-pulse { from { opacity: .62; } to { opacity: 1; } }
   .badge.off { color: var(--dim); }
   .badge.notoken { color: var(--warn); border-color: var(--warn); }
   .main { overflow-y: auto; padding: 18px 22px; }
@@ -163,6 +165,14 @@
     color: #c9e4ff; font-size: 12.5px;
   }
   .capacitybar b { color: #fff; }
+  .capacity-now { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  .capacity-now strong { font-size: 13px; }
+  .capacity-chips { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+  .capacity-chip { padding: 2px 7px; border: 1px solid #4b6983; border-radius: 10px; color: #d8ecff; }
+  .capacity-detail { margin-top: 3px; color: #a9c7df; }
+  .capacity-evidence { margin-top: 4px; }
+  .capacity-evidence summary { cursor: pointer; color: #a9c7df; }
+  .capacity-evidence div { margin-top: 4px; }
   .local-model-activity {
     padding: 10px 16px; background: #18212a; border-bottom: 1px solid #38506a;
     color: #d7e8f7; font-size: 12.5px;
@@ -213,6 +223,21 @@
   .simulation-label { margin-top: 9px; color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
   .simulation-context { margin-top: 8px; color: var(--dim); }
   .simulation-context summary { cursor: pointer; color: var(--accent); }
+  .hosted-work {
+    display: flex; gap: 12px; align-items: flex-start; margin: 11px 0 12px;
+    padding: 12px 14px; border: 1px solid var(--warn); border-radius: 7px;
+    background: #30250e; color: #f4dfad;
+  }
+  .hosted-work.running { border-color: var(--accent); background: #152b3d; color: #d7ebff; }
+  .hosted-work-copy { flex: 1; min-width: 0; }
+  .hosted-work-copy strong { display: block; color: #fff; font-size: 14px; }
+  .hosted-work-detail { margin-top: 2px; font-size: 12.5px; overflow-wrap: anywhere; }
+  .hosted-work-track { height: 4px; margin-top: 8px; border-radius: 3px; overflow: hidden; background: rgba(255,255,255,.13); }
+  .hosted-work-track::after {
+    content: ""; display: block; width: 35%; height: 100%; background: currentColor;
+    border-radius: 3px; animation: queue-travel 1.5s ease-in-out infinite alternate;
+  }
+  @keyframes queue-travel { from { transform: translateX(-30%); } to { transform: translateX(215%); } }
   @media (max-width: 760px) {
     .layout { grid-template-columns: 1fr; height: auto; }
     .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -309,7 +334,7 @@ function toast(msg, kind) {
   setTimeout(() => t.remove(), kind === 'err' ? 6000 : 3500);
 }
 
-let state = { profiles: [], selected: null, defaultModel: '', status: null, settings: null, capacity: null, placement: 'desktop', appVersion: '', hostedPolicy: null, reloadingForUpdate: false, models: null, modelChoice: '', modelPoll: null, localModelActivity: null, localModelActivityLoading: false };
+let state = { profiles: [], selected: null, defaultModel: '', status: null, settings: null, capacity: null, hostedWork: null, placement: 'desktop', appVersion: '', hostedPolicy: null, reloadingForUpdate: false, models: null, modelChoice: '', modelPoll: null, localModelActivity: null, localModelActivityLoading: false };
 
 function hostedDailyChoices() {
   const supplied = state.hostedPolicy && Array.isArray(state.hostedPolicy.dailyTurnChoices)
@@ -825,6 +850,12 @@ function renderList() {
     const modeBadge = p.dryRun !== false
       ? '<span class="badge on" title="This bot rehearses scheduled turns without publishing">rehearsal</span>'
       : '<span class="badge notoken" title="This bot can publish when active and due">LIVE</span>';
+    const hostedWorkBadge = p.hostedWork
+      ? '<span class="badge working">' +
+        (p.hostedWork.status === 'claimed' ? 'DELL working' : (p.hostedWork.status === 'queued'
+          ? 'waiting ' + (Number(p.hostedWork.waitingPosition) || 1) + '/' + (Number(p.hostedWork.waitingTotal) || 1)
+          : 'preparing')) + '</span>'
+      : '';
     const canStart = p.hasToken && !p.handoverPending;
     const runLabel = p.enabled
       ? 'Active - pause bot'
@@ -835,7 +866,7 @@ function renderList() {
         '<div class="pmeta">' + esc(capabilitySummary(p)) +
           ' &middot; ' + esc(p.effProvider === 'deepseek' ? p.effModel : (p.effProvider === 'dell' ? 'Feddit hosted' : 'desktop')) + '</div>' +
         '<div class="pmeta">next: ' + esc(fmtNext(p)) + '</div></div>' +
-        '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + modeBadge + probBadge + handoverBadge + tokenBadge + '</div></div>' +
+        '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + hostedWorkBadge + modeBadge + probBadge + handoverBadge + tokenBadge + '</div></div>' +
       '<button type="button" class="profile-run-button ' + runClass + '"' + ((!p.enabled && !canStart) ? ' disabled' : '') +
         ' aria-label="' + esc(runLabel + ' ' + (p.referenceName || 'bot')) + '">' + esc(runLabel) + '</button>';
     li.onclick = () => selectProfile(p.id);
@@ -1214,6 +1245,7 @@ function renderEditor(p) {
       </div>
       <div class="hint" style="margin-bottom:8px"><b>Want it to reconsider posts or articles it already tried?</b> Reset simulation memory. This clears only the dry-run results, tried-target memory, thread limits and rehearsal timers, so the bot can begin a fresh simulation. Live Feddit activity and live publishing history are untouched.</div>
       <div class="hint"><b>Nothing is posted to a separate sandbox site.</b> Scheduled simulation results appear here automatically, including the complete text post, reply or article-link title and enough source context to evaluate it. To avoid waiting, the buttons below run the same live targeting and generation path immediately, but always stop before publishing.</div>
+      <div class="hosted-work" id="hostedWork" role="status" aria-live="polite" hidden></div>
       <div class="row" style="margin-top:10px">
         <button type="button" id="simulatePostBtn">Simulate a post now</button>
         <button type="button" id="simulateCommentBtn">Simulate a comment now</button>
@@ -1452,6 +1484,7 @@ function renderEditor(p) {
   renderBotRunBar(p);
   renderProviderView();
   renderSimulationResults(p);
+  renderHostedWork(p.hostedWork || null);
   renderActivity(p);
   renderSpendLine(p);
 
@@ -1632,7 +1665,7 @@ function renderEditor(p) {
     const hint = $('#providerHint');
     if (isHosted) {
       const cap = state.capacity || {};
-      hint.textContent = ((cap.today && cap.today.text) || 'Feddit-hosted work uses a shared queue.') + ' ' +
+      hint.textContent = capacityOperationalSentence(cap) + ' ' +
         (cap.desktopAlternative || 'A desktop bot skips the shared queue and normally gets its turn all but instantly.');
     } else if (isDeep) {
       hint.textContent = 'DeepSeek is a remote paid call. It costs money even during scheduled simulation because simulation skips the Feddit write, not the generation. Set the shared key in the top bar.';
@@ -1761,6 +1794,89 @@ async function renderFeedHealth(id) {
   if (meta) meta.textContent = ok + ' OK, ' + bad + ' failing' + (untried ? ', ' + untried + ' not tried yet' : '');
 }
 
+function ordinal(value) {
+  const n = Math.max(1, Number(value) || 1);
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 13) return n + 'th';
+  if (n % 10 === 1) return n + 'st';
+  if (n % 10 === 2) return n + 'nd';
+  if (n % 10 === 3) return n + 'rd';
+  return n + 'th';
+}
+
+function hostedWorkAction(work) {
+  const action = String((work && work.activityAction) || 'generating this bot\'s output').trim();
+  return action.charAt(0).toUpperCase() + action.slice(1);
+}
+
+function renderHostedWork(work) {
+  state.hostedWork = work || null;
+  const host = $('#hostedWork');
+  if (!host) return;
+  if (state.placement !== 'hosted' || !work) {
+    host.hidden = true;
+    host.innerHTML = '';
+    return;
+  }
+
+  const botName = work.botName || (state.editing && state.editing.referenceName) || 'this bot';
+  const createdAt = work.waitingMs != null
+    ? Date.now() - Number(work.waitingMs)
+    : Number(work.createdAt || Date.now());
+  const startedAt = work.runningMs != null
+    ? Date.now() - Number(work.runningMs)
+    : Number(work.startedAt || createdAt);
+  const action = hostedWorkAction(work) + (work.activityTarget ? ' - ' + work.activityTarget : '');
+  let title = 'Preparing ' + botName + '\'s turn';
+  let detail = action + '. This happens before DELL generation begins.';
+  let mode = 'preparing';
+
+  if (work.status === 'queued') {
+    title = botName + ' is waiting for DELL';
+    const position = Number(work.waitingPosition) || 1;
+    const waiting = Number(work.waitingTotal) || 1;
+    const running = Number(work.runningTotal) || 0;
+    detail = action + '. It is ' + ordinal(position) + ' of ' + waiting + ' in the waiting queue' +
+      (running ? '; ' + running + ' other turn' + (running === 1 ? ' is' : 's are') + ' being generated now' : '') +
+      '. Waiting ' + activityDuration(Date.now() - createdAt) + '.';
+  } else if (work.status === 'claimed') {
+    title = 'DELL is working for ' + botName;
+    detail = action + '. Running for ' + activityDuration(Date.now() - startedAt) + '.';
+    const sample = Number(state.capacity && state.capacity.current && state.capacity.current.completedSampleSize) || 0;
+    if (state.capacity && state.capacity.medianServiceMs != null) {
+      detail += ' Recent typical generation time: ' + humanDuration(state.capacity.medianServiceMs) +
+        (sample ? ' (' + sample + ' completed sample' + (sample === 1 ? '' : 's') + ')' : '') + '.';
+    }
+    mode = 'running';
+  }
+
+  host.hidden = false;
+  host.className = 'hosted-work ' + mode;
+  host.innerHTML = '<span class="working-pulse" aria-hidden="true"></span>' +
+    '<div class="hosted-work-copy"><strong>' + esc(title) + '</strong>' +
+    '<div class="hosted-work-detail">' + esc(detail) + '</div><div class="hosted-work-track" aria-hidden="true"></div></div>';
+}
+
+async function loadHostedWorkStatus() {
+  if (state.placement !== 'hosted' || !state.selected || !ownerAccessToken()) return;
+  const id = state.selected;
+  try {
+    const response = await api('/api/profiles/' + encodeURIComponent(id) + '/work-status');
+    if (state.selected !== id) return;
+    if (response.capacity) {
+      state.capacity = response.capacity;
+      renderCapacity();
+      if (state.status) renderStatus(state.status);
+    }
+    state.profiles = state.profiles.map((profile) => profile.id === id
+      ? { ...profile, hostedWork: response.work || null }
+      : profile);
+    renderList();
+    renderHostedWork(response.work || null);
+    syncSimulationButtons(false);
+  } catch { /* a transient refresh failure must not interrupt the current action */ }
+}
+
 function syncSimulationButtons(busy) {
   const post = $('#simulatePostBtn');
   const comment = $('#simulateCommentBtn');
@@ -1772,9 +1888,10 @@ function syncSimulationButtons(busy) {
   const canComment = $('#f_canReply').checked;
   post.textContent = canDiscuss && canShare ? 'Simulate a new post choice now'
     : (canShare ? 'Simulate an article link now' : 'Simulate a text discussion now');
-  post.disabled = !!busy || !canPost;
-  comment.disabled = !!busy || !canComment;
-  if (reset) reset.disabled = !!busy;
+  const working = !!busy || !!state.hostedWork;
+  post.disabled = working || !canPost;
+  comment.disabled = working || !canComment;
+  if (reset) reset.disabled = working;
   post.title = canPost ? '' : 'This bot is configured not to make posts.';
   comment.title = canComment ? '' : 'This bot is configured not to reply.';
 }
@@ -1857,6 +1974,7 @@ async function waitForHostedSimulation(id, outputElement) {
       state.capacity = status.capacity;
       renderCapacity();
     }
+    renderHostedWork(status.work || null);
     if (status.done) {
       if (status.error) throw new Error(status.error);
       return status.result || { ok: false, error: 'The hosted simulation returned no result.' };
@@ -1872,6 +1990,16 @@ async function runSimulationNow(id, action) {
   meta.textContent = action === 'comment'
     ? 'Reading live Feddit and choosing something to reply to...'
     : 'Choosing a community and generating a post...';
+  if (state.placement === 'hosted') {
+    renderHostedWork({
+      status: 'preparing',
+      botName: (state.editing && state.editing.referenceName) || 'this bot',
+      activityAction: action === 'comment'
+        ? 'reading Feddit and choosing a reply target'
+        : 'choosing what kind of post to make',
+      createdAt: Date.now(),
+    });
+  }
   try {
     // Use every unsaved field currently on screen, just as the user sees it.
     await api('/api/profiles/' + encodeURIComponent(id), { method: 'PUT', body: collectForm() });
@@ -1896,6 +2024,7 @@ async function runSimulationNow(id, action) {
     meta.textContent = '';
     toast('Simulation failed: ' + e.message, 'err');
   } finally {
+    if (state.placement === 'hosted') await loadHostedWorkStatus();
     syncSimulationButtons(false);
   }
 }
@@ -2054,6 +2183,10 @@ async function waitForHostedJob(jobId, outputElement) {
       renderCapacity();
     }
     const job = response.job || {};
+    renderHostedWork(job.status === 'completed' || job.status === 'failed' ? null : {
+      ...job,
+      botName: (state.editing && state.editing.referenceName) || 'this bot',
+    });
     if (job.status === 'completed') {
       const result = job.result || {};
       return {
@@ -2066,10 +2199,10 @@ async function waitForHostedJob(jobId, outputElement) {
       };
     }
     if (job.status === 'failed') throw new Error(job.error || 'Hosted generation failed.');
-    const cap = response.capacity || {};
-    const today = cap.today && cap.today.text ? cap.today.text + ' ' : '';
-    outputElement.textContent = today + 'Your preview is ' +
-      (job.status === 'claimed' ? 'being generated now.' : 'waiting in the interactive queue.');
+    outputElement.textContent = job.status === 'claimed'
+      ? 'DELL is writing this preview now.'
+      : 'This preview is ' + ordinal(job.waitingPosition) + ' of ' +
+        (Number(job.waitingTotal) || 1) + ' in the waiting queue.';
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 }
@@ -2119,6 +2252,7 @@ async function waitForHostedNewsPreview(id, outputElement) {
       state.capacity = status.capacity;
       renderCapacity();
     }
+    renderHostedWork(status.work || null);
     if (status.done) {
       if (status.error) throw new Error(status.error);
       return status.result || { ok: false, error: 'The hosted preview returned no result.' };
@@ -2135,6 +2269,14 @@ async function previewNews(id) {
   // Save the current form first so the preview uses what's on screen.
   try { await api('/api/profiles/' + encodeURIComponent(id), { method: 'PUT', body: collectForm() }); } catch (e) {}
   btn.disabled = true; out.classList.remove('failure'); out.textContent = 'Querying GDELT (shared 20s queue; may retry a throttled response for up to ~90s)...'; meta.textContent = '';
+  if (state.placement === 'hosted') {
+    renderHostedWork({
+      status: 'preparing',
+      botName: (state.editing && state.editing.referenceName) || 'this bot',
+      activityAction: 'finding an article before asking DELL to write its title',
+      createdAt: Date.now(),
+    });
+  }
   // Poll the server for live retry progress so the button never looks frozen.
   const poll = setInterval(async () => {
     try {
@@ -2174,7 +2316,11 @@ async function previewNews(id) {
     out.textContent = 'Preview failed\n' + e.message;
     meta.textContent = 'No post was generated.';
     toast('Preview failed: ' + e.message, 'err');
-  } finally { clearInterval(poll); btn.disabled = false; }
+  } finally {
+    clearInterval(poll);
+    if (state.placement === 'hosted') await loadHostedWorkStatus();
+    btn.disabled = false;
+  }
 }
 
 async function clearPosted(id) {
@@ -2261,15 +2407,52 @@ function renderCapacity() {
     bar.textContent = 'Hosted capacity is not available right now. A desktop bot skips the shared queue.';
     return;
   }
-  const today = cap.today || {};
   const queue = Number(cap.queued || 0);
   const running = Number(cap.running || 0);
-  const wait = cap.estimatedWaitMs == null
-    ? 'not enough evidence for a wait estimate'
-    : 'rough wait ' + humanDuration(cap.estimatedWaitMs);
-  bar.innerHTML = '<b>Feddit-hosted:</b> ' + esc(today.text || 'Capacity is still being measured.') +
-    ' ' + queue + ' waiting, ' + running + ' running; ' + esc(wait) + '. ' +
-    '<b>' + esc(cap.desktopAlternative || 'A desktop bot skips the shared queue.') + '</b>';
+  const sample = Number(cap.current && cap.current.completedSampleSize) || 0;
+  const chips = '<span class="capacity-chips"><span class="capacity-chip">' + queue + ' waiting</span>' +
+    '<span class="capacity-chip">' + running + ' running</span></span>';
+  let detail = '';
+  if (cap.medianServiceMs != null) {
+    detail = 'Recent typical generation: ' + humanDuration(cap.medianServiceMs) +
+      (sample ? ', based on ' + sample + ' completed turn' + (sample === 1 ? '' : 's') : '') + '.';
+    if ((queue || running) && cap.estimatedWaitMs != null) {
+      detail += ' At that rate, the work currently shown could take about ' + humanDuration(cap.estimatedWaitMs) + ' to clear.';
+    }
+  } else if (cap.online && (queue || running)) {
+    detail = 'Timing will appear after DELL completes its first measured turn.';
+  }
+  const today = cap.today || {};
+  const evidence = '<details class="capacity-evidence"><summary>Reliability evidence</summary><div>' +
+    esc(today.text || 'Full-day reliability has not been measured yet.') + ' ' +
+    esc(String(Number(cap.completedLastSevenDays) || 0)) + ' turn' +
+    ((Number(cap.completedLastSevenDays) || 0) === 1 ? '' : 's') + ' completed in the last 7 days.</div></details>';
+  bar.innerHTML = '<div class="capacity-now">' +
+    (cap.online && (queue || running) ? '<span class="working-pulse" aria-hidden="true"></span>' :
+      '<span class="dot ' + (cap.online ? 'good' : 'warn') + '"></span>') +
+    '<strong>' + esc(capacityOperationalSentence(cap)) + '</strong>' + chips + '</div>' +
+    (detail ? '<div class="capacity-detail">' + esc(detail) + '</div>' : '') + evidence +
+    '<div class="capacity-detail"><b>' + esc(cap.desktopAlternative || 'A desktop bot skips the shared queue.') + '</b></div>';
+}
+
+function capacityOperationalSentence(cap) {
+  const queue = Number(cap && cap.queued) || 0;
+  const running = Number(cap && cap.running) || 0;
+  const current = cap && cap.current && cap.current.state;
+  if (!cap || cap.online !== true || current === 'offline') {
+    const lastSeen = Number(cap && cap.lastWorkerSeenAt) || 0;
+    return 'DELL is not checking in right now' +
+      (lastSeen ? ' (last seen ' + activityDuration(Date.now() - lastSeen) + ' ago)' : '') +
+      '. Waiting work stays in the queue.';
+  }
+  if (running) {
+    return 'DELL is generating ' + running + ' bot turn' + (running === 1 ? '' : 's') + ' now' +
+      (queue ? '; ' + queue + ' more ' + (queue === 1 ? 'is' : 'are') + ' waiting.' : '; nothing else is waiting.');
+  }
+  if (queue) {
+    return 'DELL is online; ' + queue + ' bot turn' + (queue === 1 ? ' is' : 's are') + ' waiting to be collected.';
+  }
+  return 'DELL is online and the queue is empty right now.';
 }
 
 function humanDuration(ms) {
@@ -2539,6 +2722,13 @@ setInterval(async () => {
 // time moving without making an HTTP request every second.
 setInterval(loadLocalModelActivity, 3000);
 setInterval(renderLocalModelActivity, 1000);
+// Hosted work changes quickly enough that a 20-second dashboard refresh feels
+// broken. Poll only the selected bot's small operational endpoint, while a
+// one-second redraw keeps its elapsed time moving without extra requests.
+setInterval(loadHostedWorkStatus, 3000);
+setInterval(() => {
+  if (state.hostedWork) renderHostedWork(state.hostedWork);
+}, 1000);
 </script>
 </body>
 </html>

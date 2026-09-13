@@ -161,6 +161,7 @@ function safeProfile(p) {
     nextAction: scheduler.nextAction(p, simulation),
     effProvider: scheduler.providerOf(p),
     effModel: scheduler.modelOf(p, store.DEFAULT_MODEL),
+    hostedWork: PLACEMENT === 'hosted' ? hostedWorkForProfile(p) : null,
     spend,
   };
 }
@@ -171,9 +172,18 @@ function safeHostedJob(job) {
     id: job.id,
     status: job.status,
     priority: job.priority,
+    kind: job.kind,
+    activityAction: job.activityAction,
+    activityTrigger: job.activityTrigger,
+    activityTarget: job.activityTarget,
     createdAt: job.createdAt,
     startedAt: job.startedAt,
     finishedAt: job.finishedAt,
+    waitingPosition: job.waitingPosition,
+    waitingTotal: job.waitingTotal,
+    runningTotal: job.runningTotal,
+    waitingMs: job.waitingMs,
+    runningMs: job.runningMs,
     attempts: job.attempts,
     error: job.status === 'failed' ? job.lastError : null,
     result: job.status === 'completed' ? {
@@ -183,6 +193,63 @@ function safeHostedJob(job) {
       usage: result.usage && typeof result.usage === 'object' ? result.usage : {},
     } : null,
   };
+}
+
+function hostedWorkForProfile(profile) {
+  if (!profile || PLACEMENT !== 'hosted') return null;
+  const activeJob = jobQueue.activeForProfile(profile.id);
+  if (activeJob) {
+    return {
+      ...safeHostedJob(activeJob),
+      botName: store.referenceName(profile),
+    };
+  }
+
+  const simulationTask = hostedSimulationTasks.get(profile.id);
+  if (simulationTask && simulationTask.status === 'running') {
+    return {
+      status: 'preparing',
+      botName: store.referenceName(profile),
+      activityAction: simulationTask.action === 'comment'
+        ? 'reading Feddit and choosing a reply target'
+        : 'choosing what kind of post to make',
+      activityTrigger: 'pressed-now simulation',
+      createdAt: simulationTask.startedAt,
+    };
+  }
+
+  const previewTask = hostedPreviewTasks.get(profile.id);
+  if (previewTask && previewTask.status === 'running') {
+    return {
+      status: 'preparing',
+      botName: store.referenceName(profile),
+      activityAction: 'finding an article before asking DELL to write its title',
+      activityTrigger: 'manual article preview',
+      createdAt: previewTask.startedAt,
+    };
+  }
+
+  if (schedulerHandle.isProfileBusy(profile.id)) {
+    return {
+      status: 'preparing',
+      botName: store.referenceName(profile),
+      activityAction: 'reading sources and preparing its next turn',
+      activityTrigger: 'scheduled activity',
+      createdAt: Date.now(),
+    };
+  }
+  return null;
+}
+
+function hostedWorkMessage(work) {
+  if (!work) return 'No hosted work is waiting or running for this bot.';
+  if (work.status === 'claimed') return 'DELL is now ' + (work.activityAction || 'generating this bot\'s output') + '.';
+  if (work.status === 'queued') {
+    const place = Number(work.waitingPosition) || 1;
+    const total = Number(work.waitingTotal) || 1;
+    return 'Waiting for DELL: this bot is ' + place + ' of ' + total + ' in the waiting queue.';
+  }
+  return 'Preparing the turn before it enters DELL\'s generation queue.';
 }
 
 function safeLocalGenerationActivity() {
@@ -595,6 +662,20 @@ async function handleApi(req, res, urlPath, query) {
       });
     }
 
+    // GET /api/profiles/:id/work-status - current hosted work for this bot.
+    // This deliberately reports operational facts (preparing, queue place,
+    // claimed by DELL and elapsed time) separately from long-term reliability.
+    if (method === 'GET' && sub === '/work-status') {
+      if (!existing) return sendJson(res, 404, { error: 'No such profile' });
+      const capacity = jobQueue.capacity();
+      const work = hostedWorkForProfile(existing);
+      return sendJson(res, 200, {
+        work,
+        message: hostedWorkMessage(work),
+        capacity,
+      });
+    }
+
     // GET /api/profiles/:id/export - a portable move pack containing creative
     // configuration and dedupe/runtime continuity, but never secrets or model
     // placement. /template strips the registered identity and runtime too.
@@ -774,16 +855,19 @@ async function handleApi(req, res, urlPath, query) {
       const task = hostedSimulationTasks.get(id);
       if (!task) return sendJson(res, 200, { done: true, error: 'No immediate simulation is running.' });
       if (task.status === 'completed') {
-        return sendJson(res, 200, { done: true, result: task.result, capacity: jobQueue.capacity() });
+        return sendJson(res, 200, { done: true, result: task.result, work: null, capacity: jobQueue.capacity() });
       }
       if (task.status === 'failed') {
-        return sendJson(res, 200, { done: true, error: task.error, capacity: jobQueue.capacity() });
+        return sendJson(res, 200, { done: true, error: task.error, work: null, capacity: jobQueue.capacity() });
       }
+      const capacity = jobQueue.capacity();
+      const work = hostedWorkForProfile(existing);
       return sendJson(res, 200, {
         done: false,
         action: task.action,
-        message: (jobQueue.capacity().today && jobQueue.capacity().today.text) || 'Waiting for the hosted DELL worker.',
-        capacity: jobQueue.capacity(),
+        work,
+        message: hostedWorkMessage(work),
+        capacity,
       });
     }
 
@@ -909,18 +993,20 @@ async function handleApi(req, res, urlPath, query) {
       const hosted = hostedPreviewTasks.get(id);
       if (hosted) {
         if (hosted.status === 'completed') {
-          return sendJson(res, 200, { done: true, result: hosted.result, capacity: jobQueue.capacity() });
+          return sendJson(res, 200, { done: true, result: hosted.result, work: null, capacity: jobQueue.capacity() });
         }
         if (hosted.status === 'failed') {
-          return sendJson(res, 200, { done: true, error: hosted.error, capacity: jobQueue.capacity() });
+          return sendJson(res, 200, { done: true, error: hosted.error, work: null, capacity: jobQueue.capacity() });
         }
         const activeProgress = schedulerHandle.getPreviewProgress(id);
         const cap = jobQueue.capacity();
+        const work = hostedWorkForProfile(existing);
         return sendJson(res, 200, {
           done: false,
+          work,
           message: activeProgress
             ? activeProgress.message
-            : ((cap.today && cap.today.text) || 'Waiting for the hosted DELL worker.'),
+            : hostedWorkMessage(work),
           capacity: cap,
         });
       }
