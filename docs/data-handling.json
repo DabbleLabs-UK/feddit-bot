@@ -12,12 +12,14 @@
     "A random private workspace capability and separate recovery code for anonymous hosted management",
     "DeepSeek API credentials when the operator deliberately selects that paid provider",
     "Inference job purpose, priority, timestamps, attempts, errors, and worker availability needed to operate and explain the shared queue",
+    "For each scheduled hosted turn, its frozen rehearsal or live choice, secret-free bot configuration snapshot, selected target or article checkpoints, generation requests and results, queue job links, publication state, and lifecycle events needed to resume safely after interruption",
     "Desktop system memory size and logical CPU count, read locally to suggest an appropriately sized model"
   ],
   "stores": [
     "Bot profiles including independent activity abilities, enabled state, first hosted activation time used for the temporary new-bot allocation, per-bot rehearsal or live publishing choice, scheduler timing, bounded activity and simulation result history, posting and reply deduplication, source health, and estimated model usage or API spend",
     "Feddit bot bearer tokens, staged handover replacements, the optional DeepSeek key, and the hosted worker key in a separate gitignored server-side secret file",
     "Active shared inference jobs including the prompt and generation settings until completion, followed by completed result or error history bounded to the most recent 1000 terminal jobs",
+    "Active durable hosted turns until they reach a terminal state, followed by terminal turn history retained for up to 30 days and bounded to the most recent 1000 terminal turns; active turns are never removed by retention cleanup",
     "Worker model, version, busy state, and latest check-in time used for capacity reporting",
     "One-way hashes of hosted workspace management capabilities and rotating recovery codes; plaintext values are returned only when issued",
     "Secret-free portable bot profile files only when an owner explicitly downloads or imports one",
@@ -48,9 +50,11 @@
     "Rehearsal or live publishing is selected separately for each bot. A schema migration copies the former runner-wide choice onto every existing bot once, and portable profile files omit that machine-specific operating state so imports start safely in rehearsal.",
     "Community post format is a hard structural boundary for top-level posts: text-only, link-only, or either. Comments are unaffected. Other community rules remain social context that a bot may follow or deviate from according to its personality.",
     "When several enabled activities are due, the selected model receives the bot persona and a short numbered list of real action kinds, and may return one choice or WAIT. This decision can add one small inference before content generation and is shown in bounded activity or simulation history.",
+    "A scheduled Feddit-hosted turn is stored separately from its DELL queue jobs. The scheduler can hand the turn off, continue serving other bots, and resume the same frozen turn from stored checkpoints and completed generation results after a process restart without asking DELL to generate the same step again.",
+    "Feddit's current write API does not accept an idempotency key. Before a live write the runner records that publication is being attempted. If the process stops before it records Feddit's response, the turn is marked publication uncertain and is not retried automatically. This favours preventing a duplicate over guaranteeing that one ambiguous output is published.",
     "Scheduled and press-now simulation send no post or comment to Feddit, but retain complete simulated outputs, failure reasons, trigger type, and bounded selected public context locally in the profile's last 50 activity records so the owner can evaluate them. Simulation cadence, handled-target and article deduplication, and thread caps are separate from live publishing continuity; the owner can reset the simulation slate without erasing live history. Continuity exports and identity handover include the activity records; reusable templates do not.",
     "Desktop application updates preserve bot data and model files, wait for an idle runner, verify both signature and digest, health-check the candidate, and restore the previous app version on failure.",
-    "Runtime data remains until the operator removes a profile. Terminal inference history is count-bounded rather than currently time-expired.",
+    "Profile runtime data remains until the operator removes a profile. Raw terminal inference-job history is count-bounded. Terminal durable hosted turns are both time-bounded to 30 days and count-bounded to 1000; unfinished turns remain until they can be recovered or deliberately resolved.",
     "Policy wording generated from this manifest requires human review before release."
   ]
 }

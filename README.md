@@ -333,6 +333,7 @@ worker.js                 outbound-only DELL queue worker; opens no listening po
 lib/store.js              load/save data/profiles.json, atomic write, profile CRUD, spend tracking
 lib/secrets.js            data/secrets.json: provider, worker and per-profile secrets
 lib/job-queue.js          durable priority queue, leases, fairness and capacity evidence
+lib/turn-store.js         restart-safe scheduled hosted turns, checkpoints and publication state
 lib/worker-auth.js        constant-time bearer authentication for worker requests
 lib/cost.js               price table + per-generation USD cost maths + day/month keys
 lib/profile-pack.js       secret-free WHAT profile + explicit private one-time handover format
@@ -345,6 +346,8 @@ lib/feddit.js             Feddit /api/v1 client: browser UA, 429 handling, regis
 lib/gdelt.js              shared GDELT DOC 2.0 client: single 20s-spaced request queue, 15min cache, in-queue retry on a throttle (~5 tries/~90s) with stale-cache fallback (article sharing)
 public/index.html         self-contained vanilla-JS control panel (no CDN, no build)
 test/scheduler-dryrun.js  stubbed dry-run harness proving the scheduler's guarantees
+test/durable-scheduler.js fresh-process hosted turn recovery and publication-boundary tests
+test/turn-store.js        atomic turn persistence, lifecycle and bounded retention tests
 test/job-queue.js         queue priority, fairness, recovery and evidence tests
 test/worker.js            worker authentication, URL, model and transport tests
 docs/data-handling.json   collection, storage and transmission source of truth
@@ -508,12 +511,26 @@ guidance (create it from the panel) and stops; it never creates one.
 `lib/scheduler` is wired in at the `SCHEDULER SEAM` in `server.js` via
 `start({ store, providers, feddit, getDeepseekKey })`. Each 20s tick walks the
 ENABLED profiles and performs at most one action each (post or reply), honouring
-the global pause and each profile's own rehearsal/live mode. Key guarantees, all proved by
-`test/scheduler-dryrun.js` (stubbed - no live calls):
+the global pause and each profile's own rehearsal/live mode. Key guarantees,
+proved by the stubbed scheduler harnesses listed below (no live calls):
 
 - the ollama single-flight gate is **per-provider**: ollama profiles are
   serialised (never queued behind Cy) while DeepSeek profiles run concurrently
   and are never blocked by a busy ollama;
+- scheduled Feddit-hosted turns are handed off to a separate durable turn
+  lifecycle, so waiting for DELL does not hold the scheduler tick; only the same
+  profile is kept busy while other due bots can start their own fair queue work;
+- each hosted turn freezes its rehearsal/live choice and creative configuration,
+  checkpoints target selection, and links every generation step to one durable
+  queue job. After a restart the runner consumes an already-completed result or
+  safely requeues a missing job from its stored request instead of regenerating
+  a completed step;
+- a live Feddit write is recorded as attempting before the request is sent and
+  its response is stored before finalising the turn. Because Feddit currently
+  has no write idempotency key, a restart in the narrow gap between those two
+  records is shown as publication uncertain and is not automatically retried;
+  this prevents a possible duplicate at the cost of possibly missing one post
+  or comment;
 - per-bot server ceilings (10 posts/hr, 60 comments/hr) are self-limited with
   jittered cadence, and real 429s back off using the parsed reset time;
 - never replies to our own content, and caps any one thread at 3 replies from
@@ -543,4 +560,6 @@ the global pause and each profile's own rehearsal/live mode. Key guarantees, all
   model used only to write the title (guardrailed to invent no fact not in the
   headline).
 
-Run the harness with `node test/scheduler-dryrun.js`.
+Run the principal harnesses with `node test/scheduler-dryrun.js`,
+`node test/durable-scheduler.js`, `node test/turn-store.js`, and
+`node test/job-queue.js`.

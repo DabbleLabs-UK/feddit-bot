@@ -22,6 +22,7 @@ const feeds = require('./lib/feeds');
 const scheduler = require('./lib/scheduler');
 const profilePack = require('./lib/profile-pack');
 const { createQueue } = require('./lib/job-queue');
+const { createTurnStore } = require('./lib/turn-store');
 const hostedPolicy = require('./lib/hosted-policy');
 const workerAuth = require('./lib/worker-auth');
 const { createOwnerStore } = require('./lib/owners');
@@ -44,6 +45,7 @@ const jobQueue = createQueue({
   file: path.join(store.DATA_DIR, 'jobs.json'),
   maxActivePerOwner: PLACEMENT === 'hosted' ? hostedPolicy.MAX_ACTIVE_JOBS_PER_BOT : 0,
 });
+const turnStore = createTurnStore({ file: path.join(store.DATA_DIR, 'turns.json') });
 providers.configureDellQueue(jobQueue);
 const hostedPreviewTasks = new Map();
 const hostedSimulationTasks = new Map();
@@ -186,7 +188,9 @@ function safeHostedJob(job) {
     waitingMs: job.waitingMs,
     runningMs: job.runningMs,
     attempts: job.attempts,
-    error: job.status === 'failed' ? job.lastError : null,
+    maxAttempts: job.maxAttempts,
+    retrying: job.status === 'queued' && Number(job.attempts || 0) > 0,
+    error: job.status === 'failed' || Number(job.attempts || 0) > 0 ? job.lastError : null,
     result: job.status === 'completed' ? {
       text: String(result.text || ''),
       model: String(result.model || ''),
@@ -198,11 +202,32 @@ function safeHostedJob(job) {
 
 function hostedWorkForProfile(profile) {
   if (!profile || PLACEMENT !== 'hosted') return null;
+  const activeTurn = schedulerHandle.activeTurnForProfile(profile.id);
   const activeJob = jobQueue.activeForProfile(profile.id);
   if (activeJob) {
     return {
       ...safeHostedJob(activeJob),
       botName: store.referenceName(profile),
+      turnId: activeTurn && activeTurn.id,
+      turnStatus: activeTurn && activeTurn.status,
+      turnStage: activeTurn && activeTurn.stage,
+    };
+  }
+
+  if (activeTurn) {
+    return {
+      id: activeTurn.id,
+      turnId: activeTurn.id,
+      status: activeTurn.status,
+      turnStatus: activeTurn.status,
+      turnStage: activeTurn.stage,
+      botName: store.referenceName(profile),
+      activityAction: activeTurn.stage === 'publishing'
+        ? 'publishing its completed output to Feddit'
+        : 'finishing its durable hosted turn',
+      activityTrigger: activeTurn.trigger || 'scheduled activity',
+      createdAt: activeTurn.createdAt,
+      startedAt: activeTurn.updatedAt,
     };
   }
 
@@ -248,8 +273,12 @@ function hostedWorkMessage(work) {
   if (work.status === 'queued') {
     const place = Number(work.waitingPosition) || 1;
     const total = Number(work.waitingTotal) || 1;
-    return 'Waiting for DELL: this bot is ' + place + ' of ' + total + ' in the waiting queue.';
+    const retry = work.retrying ? ' A previous attempt failed and the job is waiting for a safe retry.' : '';
+    return 'Waiting for DELL: this bot is ' + place + ' of ' + total + ' in the waiting queue.' + retry;
   }
+  if (work.status === 'generating') return 'DELL is generating this bot\'s output.';
+  if (work.status === 'result-received') return 'DELL finished; the runner is applying the result to this bot\'s turn.';
+  if (work.status === 'finalising') return 'The generated output is ready and the runner is finalising the Feddit action.';
   return 'Preparing the turn before it enters DELL\'s generation queue.';
 }
 
@@ -400,9 +429,11 @@ async function handleApi(req, res, urlPath, query) {
         }
         if (action === 'complete') {
           const job = jobQueue.complete(jobId, workerId, body.result);
+          schedulerHandle.reconcileDurableTurns();
           return sendJson(res, 200, { ok: true, job });
         }
         const job = jobQueue.fail(jobId, workerId, body.error, body.retryable !== false);
+        schedulerHandle.reconcileDurableTurns();
         return sendJson(res, 200, { ok: true, job });
       }
     } catch (err) {
@@ -1151,10 +1182,13 @@ reconcileHostedProfiles();
 const schedulerHandle = scheduler.start({
   store,
   providers,
+  jobQueue,
+  turnStore,
   feddit,
   gdelt,
   feeds,
   getDeepseekKey: () => secrets.getDeepseekKey(),
+  log: (message) => console.log('[scheduler] ' + message),
 });
 if (PLACEMENT === 'hosted') {
   const hostedPolicyTimer = setInterval(reconcileHostedProfiles, hostedPolicy.RECONCILE_INTERVAL_MS);

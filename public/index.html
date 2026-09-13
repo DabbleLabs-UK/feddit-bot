@@ -862,10 +862,7 @@ function renderList() {
       ? '<span class="badge on" title="This bot rehearses scheduled turns without publishing">rehearsal</span>'
       : '<span class="badge notoken" title="This bot can publish when active and due">LIVE</span>';
     const hostedWorkBadge = p.hostedWork
-      ? '<span class="badge working">' +
-        (p.hostedWork.status === 'claimed' ? 'DELL working' : (p.hostedWork.status === 'queued'
-          ? 'waiting ' + (Number(p.hostedWork.waitingPosition) || 1) + '/' + (Number(p.hostedWork.waitingTotal) || 1)
-          : 'preparing')) + '</span>'
+      ? '<span class="badge working">' + esc(hostedWorkBadgeText(p.hostedWork)) + '</span>'
       : '';
     const canStart = p.hasToken && !p.handoverPending;
     const runLabel = p.enabled
@@ -1827,6 +1824,18 @@ function hostedWorkAction(work) {
   return action.charAt(0).toUpperCase() + action.slice(1);
 }
 
+function hostedWorkBadgeText(work) {
+  if (!work) return '';
+  if (work.status === 'claimed' || work.status === 'generating') return 'DELL working';
+  if (work.status === 'queued') {
+    const place = (Number(work.waitingPosition) || 1) + '/' + (Number(work.waitingTotal) || 1);
+    return (work.retrying ? 'retrying ' : 'waiting ') + place;
+  }
+  if (work.status === 'result-received') return 'result received';
+  if (work.status === 'finalising') return 'finalising';
+  return 'preparing';
+}
+
 function renderHostedWork(work) {
   state.hostedWork = work || null;
   const host = $('#hostedWork');
@@ -1857,6 +1866,10 @@ function renderHostedWork(work) {
     detail = action + '. It is ' + ordinal(position) + ' of ' + waiting + ' in the waiting queue' +
       (running ? '; ' + running + ' other turn' + (running === 1 ? ' is' : 's are') + ' being generated now' : '') +
       '. Waiting ' + activityDuration(Date.now() - createdAt) + '.';
+    if (work.retrying) {
+      detail += ' A previous DELL attempt failed; the same durable job is waiting for retry' +
+        (work.attempts ? ' after ' + work.attempts + ' attempt' + (Number(work.attempts) === 1 ? '' : 's') : '') + '.';
+    }
   } else if (work.status === 'claimed') {
     title = 'DELL is working for ' + botName;
     detail = action + '. Running for ' + activityDuration(Date.now() - startedAt) + '.';
@@ -1865,6 +1878,20 @@ function renderHostedWork(work) {
       detail += ' Recent typical generation time: ' + humanDuration(state.capacity.medianServiceMs) +
         (sample ? ' (' + sample + ' completed sample' + (sample === 1 ? '' : 's') + ')' : '') + '.';
     }
+    mode = 'running';
+  } else if (work.status === 'generating') {
+    title = 'DELL is working for ' + botName;
+    detail = action + '. The durable turn is linked to the running DELL generation.';
+    mode = 'running';
+  } else if (work.status === 'result-received') {
+    title = 'DELL finished for ' + botName;
+    detail = 'The result is safely stored. The runner is resuming the same turn and applying its remaining rehearsal or live steps.';
+    mode = 'running';
+  } else if (work.status === 'finalising') {
+    title = 'Finalising ' + botName + '\'s turn';
+    detail = work.turnStage === 'publishing'
+      ? 'The generated output is ready and the runner is making its protected Feddit publication attempt.'
+      : 'The generated output is ready and the runner is recording the completed turn.';
     mode = 'running';
   }
 

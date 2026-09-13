@@ -929,15 +929,10 @@ async function scenarioProviderGate() {
 }
 
 // ============================================================================
-// Scenario 6c: hosted eligibility and the current synchronous DELL lifecycle.
-// This intentionally records the blocking behaviour that a later durable-turn
-// change is expected to remove.
+// Scenario 6c: hosted eligibility and profile-specific busy protection.
 // ============================================================================
-async function scenarioHostedEligibilityAndBlocking() {
-  console.log('\n[6c] hosted eligibility + current synchronous DELL wait');
-  const flush = async (count = 40) => {
-    for (let i = 0; i < count; i++) await Promise.resolve();
-  };
+async function scenarioHostedEligibility() {
+  console.log('\n[6c] hosted eligibility + profile-specific busy protection');
 
   // A managed hosted profile is not due before the server-seeded first-turn
   // time. At that time only the enabled, registered, non-backed-off profile is
@@ -1083,68 +1078,6 @@ async function scenarioHostedEligibilityAndBlocking() {
     await manual;
   }
 
-  // Two due DELL profiles begin their generations together, but runTick itself
-  // remains pending until every DELL generation returns. A second scheduler pass
-  // is rejected as reentrant during that wait.
-  {
-    const clock = makeClock(30_000_000);
-    const dueSched = () => ({
-      nextPostAt: clock.now(), nextCommentAt: null, backoffUntil: 0,
-      sentPosts: [], sentComments: [],
-    });
-    const first = profile({
-      id: 'dell-first', provider: 'dell', mode: 'post', postsPerHour: 1,
-      postFeddits: ['talk'], sched: dueSched(),
-      probation: { onProbation: false, checkedAt: clock.now() },
-    });
-    const second = profile({
-      id: 'dell-second', provider: 'dell', mode: 'post', postsPerHour: 1,
-      postFeddits: ['talk'], sched: dueSched(),
-      probation: { onProbation: false, checkedAt: clock.now() },
-    });
-    const releases = new Map();
-    const started = [];
-    const providers = {
-      ollamaBusy: () => false,
-      generate: (opts) => {
-        started.push(opts.profileId);
-        return new Promise((resolve) => {
-          releases.set(opts.profileId, () => resolve({
-            provider: 'dell', model: opts.model, text: 'A title\n\nA body.', ms: 1,
-            usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 },
-          }));
-        });
-      },
-    };
-    const client = makeFeddit({
-      feddits: { talk: [] }, comments: {},
-      abouts: { talk: { post_format: 'text' } },
-    });
-    const sched = scheduler.createScheduler({
-      store: makeStore([first, second]), providers, feddit: client,
-      about: aboutLib.createAbout({ feddit: client, now: clock.now }),
-      now: clock.now, random: () => 0, getDeepseekKey: KEY,
-    });
-
-    let tickResolved = false;
-    const pendingTick = sched.runTick().then((result) => {
-      tickResolved = true;
-      return result;
-    });
-    await flush();
-    eq(JSON.stringify(started.sort()), JSON.stringify(['dell-first', 'dell-second']),
-      'one scheduler pass starts every currently due DELL profile');
-    ok(!tickResolved, 'the scheduler pass remains pending while DELL generation is pending');
-    eq((await sched.runTick()).skipped, 'reentrant',
-      'a later scheduler pass is refused throughout the DELL wait');
-
-    releases.get('dell-first')();
-    await flush();
-    ok(!tickResolved, 'one unfinished DELL profile still holds the entire scheduler pass open');
-    releases.get('dell-second')();
-    const completed = await pendingTick;
-    eq(completed.acted, 2, 'the scheduler pass completes only after both DELL results return');
-  }
 }
 
 // ============================================================================
@@ -2964,7 +2897,7 @@ async function scenarioDeepseekReasoning() {
   await scenario429Backoff();
   await scenarioPauseAndSingleFlight();
   await scenarioProviderGate();
-  await scenarioHostedEligibilityAndBlocking();
+  await scenarioHostedEligibility();
   await scenarioSpendCap();
   await scenarioCostMaths();
   await scenarioGdeltQueue();

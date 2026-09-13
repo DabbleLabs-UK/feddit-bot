@@ -89,8 +89,8 @@ function run() {
         dedupeKey: 'restart-operation',
         payload: { prompt: 'durable prompt' },
       });
-      ok(repeated.id !== first.id, 'terminal queue history does not resume or deduplicate a lost scheduler continuation');
-      eq(repeated.status, 'queued', 'after restart the same operation can be queued again despite its orphanable completed result');
+      ok(repeated.id !== first.id, 'raw queue deduplication remains limited to active jobs; logical turns own terminal result reuse');
+      eq(repeated.status, 'queued', 'a direct raw-queue enqueue is a new job once the prior job is terminal');
     } finally {
       f.cleanup();
     }
