@@ -29,6 +29,7 @@ const original = {
   deployment: { target: 'hosted' },
   postedNews: ['https://example.com/already-posted'],
   repliedTo: ['t3_12'],
+  attentionState: { cursor: { comments: 44, posts: 9 }, seenEventIds: ['t1_43'] },
   sched: { nextPostAt: 1234 },
   activity: [{ at: '2026-09-12T12:00:00Z', kind: 'post', ok: true }],
   simulationState: { sched: { nextPostAt: 5678 }, repliedTo: ['t3_simulated'] },
@@ -43,6 +44,7 @@ assert.equal(moved.bot.canReply, true);
 assert.equal(moved.bot.canStartDiscussions, true);
 assert.equal(moved.bot.canShareLinks, true);
 assert.deepEqual(moved.runtime.postedNews, original.postedNews);
+assert.deepEqual(moved.runtime.attentionState, original.attentionState);
 assert.equal(moved.bot.feedSort, 'controversial');
 assert.deepEqual(moved.runtime.simulationState, original.simulationState);
 assert.equal('token' in moved.bot, false);
@@ -65,6 +67,7 @@ assert.equal(imported.canReply, true);
 assert.equal(imported.canStartDiscussions, true);
 assert.equal(imported.canShareLinks, true);
 assert.deepEqual(imported.postedNews, original.postedNews);
+assert.deepEqual(imported.attentionState, original.attentionState);
 assert.equal(imported.feedSort, 'controversial');
 assert.deepEqual(imported.simulationState, original.simulationState);
 assert.equal(imported.enabled, false);

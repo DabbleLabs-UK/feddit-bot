@@ -105,4 +105,16 @@ assert.equal(originUpgrade[1].hostedOnboardingTurnsCompleted, 3, 'durable onboar
 assert.equal(originUpgrade[2].botOrigin, 'user', 'invalid origin cannot create a third implicit class');
 assert.equal(originUpgrade[2].hostedOnboardingTurnsCompleted, 0, 'invalid negative onboarding progress is clamped safely');
 
+const attentionUpgrade = store.migrateProfiles([{
+  id: 'attention-existing',
+  attentionState: { cursor: { comments: 91, posts: 17 }, seenEventIds: ['t1_90'] },
+  simulationState: {
+    attentionState: { cursor: { comments: 22, posts: 3 }, seenEventIds: ['t1_21'] },
+  },
+}], 9)[0];
+assert.deepEqual(attentionUpgrade.attentionState.cursor, { comments: 91, posts: 17 });
+assert.deepEqual(attentionUpgrade.attentionState.seenEventIds, ['t1_90']);
+assert.deepEqual(attentionUpgrade.simulationState.attentionState.cursor, { comments: 22, posts: 3 });
+assert.deepEqual(attentionUpgrade.simulationState.attentionState.seenEventIds, ['t1_21']);
+
 console.log('model-migration: all checks passed');

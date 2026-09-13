@@ -70,16 +70,43 @@ function makeStore(profiles) {
     getProfile: (id) => byId.get(id) || null,
     getSettings: () => settings,
     updateSettings: (patch) => Object.assign(settings, patch || {}),
-    updateSched: (id, patch) => {
+    updateSched: (id, patch, options = {}) => {
       const p = byId.get(id); if (!p) return null;
-      p.sched = { ...schedDefaults(), ...(p.sched || {}), ...(patch || {}) };
-      return p.sched;
+      const parent = options.simulation && p.simulationState ? p.simulationState : p;
+      parent.sched = { ...schedDefaults(), ...(parent.sched || {}), ...(patch || {}) };
+      return parent.sched;
     },
-    hasReplied: (id, key) => { const p = byId.get(id); return !!(p && p.repliedTo && p.repliedTo.includes(key)); },
-    recordReplied: (id, key) => {
+    hasReplied: (id, key, options = {}) => {
+      const p = byId.get(id);
+      const parent = options.simulation && p && p.simulationState ? p.simulationState : p;
+      return !!(parent && parent.repliedTo && parent.repliedTo.includes(key));
+    },
+    recordReplied: (id, key, options = {}) => {
       const p = byId.get(id); if (!p) return;
-      p.repliedTo = p.repliedTo || [];
-      if (!p.repliedTo.includes(key)) p.repliedTo.push(key);
+      const parent = options.simulation && p.simulationState ? p.simulationState : p;
+      parent.repliedTo = parent.repliedTo || [];
+      if (!parent.repliedTo.includes(key)) parent.repliedTo.push(key);
+    },
+    getAttentionState: (id, options = {}) => {
+      const p = byId.get(id);
+      const parent = options.simulation ? (p && p.simulationState) : p;
+      const state = parent && parent.attentionState;
+      return structuredClone(state || { cursor: { comments: 0, posts: 0 }, seenEventIds: [] });
+    },
+    recordAttentionScan: (id, scan, options = {}) => {
+      const p = byId.get(id); if (!p) return null;
+      const parent = options.simulation && p.simulationState ? p.simulationState : p;
+      const current = parent.attentionState || { cursor: { comments: 0, posts: 0 }, seenEventIds: [] };
+      const next = (scan && scan.cursor) || {};
+      current.cursor = {
+        comments: Math.max(Number(current.cursor && current.cursor.comments) || 0, Number(next.comments) || 0),
+        posts: Math.max(Number(current.cursor && current.cursor.posts) || 0, Number(next.posts) || 0),
+      };
+      for (const eventId of ((scan && scan.seenEventIds) || [])) {
+        if (!current.seenEventIds.includes(eventId)) current.seenEventIds.push(eventId);
+      }
+      parent.attentionState = current;
+      return structuredClone(current);
     },
     hasPostedNews: (id, key) => { const p = byId.get(id); return !!(p && p.postedNews && p.postedNews.includes(key)); },
     recordPostedNews: (id, key) => {
@@ -172,6 +199,7 @@ function profile(over) {
     activity: [],
     sched: over.sched || { nextPostAt: null, nextCommentAt: null, backoffUntil: 0, sentPosts: [], sentComments: [] },
     repliedTo: [],
+    attentionState: over.attentionState || { cursor: { comments: 0, posts: 0 }, seenEventIds: [] },
     // ---- news config + state ----
     botType: over.botType || 'conversational',
     ...(over.canReply !== undefined ? { canReply: over.canReply } : {}),
@@ -280,7 +308,7 @@ function commentChild(c) {
 }
 
 function makeFeddit(world) {
-  world.calls = { submit: [], comment: [], createFeddit: [], botInfo: [], about: [], feddit: [], feddits: 0 };
+  world.calls = { submit: [], comment: [], createFeddit: [], botInfo: [], about: [], attention: [], feddit: [], feddits: 0 };
   const client = {
     feddits: async () => {
       world.calls.feddits++;
@@ -326,6 +354,12 @@ function makeFeddit(world) {
     // assert the scheduler must NEVER call it (e.g. on probation, where it is blocked).
     createFeddit: async (args) => { world.calls.createFeddit.push(args); return world.onCreateFeddit ? world.onCreateFeddit(args) : { ok: true, status: 201, data: { feddit: {} } }; },
   };
+  if (world.onAttention) {
+    client.attention = async (token, cursor) => {
+      world.calls.attention.push({ token, cursor });
+      return world.onAttention(token, cursor);
+    };
+  }
   client.calls = world.calls; // expose call log on the client too
   return client;
 }
@@ -358,6 +392,7 @@ function makeProviders(opts) {
         provider: gopts.provider,
         profileId: gopts.profileId,
         kind: gopts.kind,
+        priority: gopts.priority,
       });
       const prov = gopts.provider === 'deepseek' ? 'deepseek' : 'ollama';
       const s = prov === 'deepseek' ? d : o;
@@ -455,6 +490,89 @@ async function scenarioTargetingDedupe() {
   });
   const deepResult = await deepScheduler.simulateNow('deepbot', 'comment');
   ok(deepResult.ok && deepResult.result.target === 't3_100', 'an eligible post beyond Feddit\'s default first 25 is still found');
+}
+
+// ============================================================================
+// Scenario 1a0: reliable attention events outrank an ordinary feed candidate,
+// use normal scheduled compute, and keep seen continuity separate from replies.
+// ============================================================================
+async function scenarioReliableAttention() {
+  console.log('\n[1a0] reliable attention preference + durable seen state');
+  const clock = makeClock(Date.parse('2026-09-14T12:00:00Z'));
+  const attentionEvent = (overrides) => ({
+    source: 'feddit_attention',
+    source_type: 'comment',
+    type: 'mention_in_comment',
+    event_id: 't1_78',
+    post_id: 70,
+    comment_id: 78,
+    parent_comment_id: null,
+    author: 'mentioner',
+    community: 'botlife',
+    created_utc: Math.floor(clock.now() / 1000) - 30,
+    directness: 'mention',
+    directly_addresses_bot: true,
+    mentioned: true,
+    seen: false,
+    reason: 'This comment explicitly mentions @alpha.',
+    body: '@alpha might care about this.',
+    context: {
+      post: { post_id: 70, author: 'someone', community: 'botlife', title: 'A thread', kind: 'text', body: 'Opening.' },
+      parent_chain: [],
+    },
+    ...(overrides || {}),
+  });
+  const world = {
+    feddits: { botlife: [{ id: 99, feddit: 'botlife', title: 'new ordinary feed post', author: 'feed_bot' }] },
+    comments: {},
+    onAttention: async () => ({
+      ok: true,
+      status: 200,
+      data: {
+        cursor: { comments: 78, posts: 0 },
+        has_more: false,
+        events: [
+          attentionEvent({
+            type: 'reply_to_own_comment', event_id: 't1_77', comment_id: 77,
+            author: 'direct_replier', directly_addresses_bot: true, mentioned: false,
+            directness: 'direct', reason: 'Direct reply to this bot\'s comment.', body: 'A direct answer.',
+          }),
+          attentionEvent(),
+        ],
+      },
+    }),
+  };
+  const p = profile({
+    id: 'alpha', fedditUsername: 'alpha', mode: 'comment', commentsPerHour: 6,
+    readFeddits: ['botlife'], postFeddits: ['botlife'], dryRun: true,
+  });
+  p.simulationState = {
+    sched: { nextPostAt: null, nextCommentAt: null, backoffUntil: 0, sentPosts: [], sentComments: [] },
+    repliedTo: [], attentionState: { cursor: { comments: 0, posts: 0 }, seenEventIds: [] },
+    postedNews: [], newsDomainDaily: {}, newsDomainDays: [], threadReplies: {}, threadOrder: [],
+  };
+  p.simulationState.sched.nextCommentAt = clock.now();
+  const store = makeStore([p]);
+  const providers = makeProviders();
+  const feddit = makeFeddit(world);
+  const sched = scheduler.createScheduler({
+    store, providers, feddit, now: clock.now, random: () => 0, getDeepseekKey: KEY,
+  });
+
+  const result = await sched.runTick();
+  eq(result.results[0].target, 't1_77', 'a direct reply to the bot outranks the newer ordinary feed post');
+  eq(world.calls.attention.length, 1, 'the authenticated attention cursor is read once during the scheduled turn');
+  eq(providers.genCalls[0].priority, 'normal', 'attention uses normal scheduled compute rather than interactive queue priority');
+  eq(providers.genCalls[0].kind, 'scheduled-generation', 'attention remains an ordinary scheduled generation');
+  ok(p.simulationState.repliedTo.includes('t1_77'), 'the selected event is recorded as replied to in rehearsal continuity');
+  ok(!p.simulationState.repliedTo.includes('t1_78'), 'an unselected event is not falsely recorded as replied to');
+  ok(p.simulationState.attentionState.seenEventIds.includes('t1_77') &&
+    p.simulationState.attentionState.seenEventIds.includes('t1_78'),
+  'all delivered events are acknowledged as seen without conflating seen with replied');
+  eq(p.attentionState.cursor.comments, 0, 'rehearsal attention does not advance live attention continuity');
+  const simulation = p.activity.find((entry) => entry.simulation && entry.simulation.attention);
+  eq(simulation.simulation.attention.type, 'reply_to_own_comment', 'the result records the structural reason for selection');
+  ok(simulation.simulation.context.includes('A direct answer.'), 'the generated reply receives bounded event context');
 }
 
 // ============================================================================
@@ -2887,6 +3005,7 @@ async function scenarioDeepseekReasoning() {
 (async () => {
   scenarioProfileMigration();
   await scenarioTargetingDedupe();
+  await scenarioReliableAttention();
   await scenarioPerProfileMode();
   await scenarioImmediateSimulation();
   await scenarioNewsDiscussion();

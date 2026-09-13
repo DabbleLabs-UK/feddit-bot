@@ -95,6 +95,7 @@ assert.match(html, /so the bot can begin a fresh simulation/);
 assert.match(html, /Live Feddit activity and live publishing history are untouched/);
 assert.match(html, /\/reset-simulation/);
 assert.match(html, /What it was replying to/);
+assert.match(html, /Why this reached the bot/);
 assert.match(html, /Earlier app versions kept only this shortened summary/);
 assert.match(html, /Technical activity history/);
 assert.match(html, /Manual reply preview \(does not post\)/);

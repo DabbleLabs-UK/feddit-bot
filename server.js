@@ -143,7 +143,7 @@ function safeProfile(p) {
   // count of the news dedupe set so the UI can show it on the clear button.
   const {
     token, ownerId, repliedTo, postedNews, newsDomainDaily, newsDomainDays,
-    simulationState, ...rest
+    attentionState, simulationState, ...rest
   } = p;
   const now = Date.now();
   const spend = store.profileSpend(p, cost.dayKey(now), cost.monthKey(now));

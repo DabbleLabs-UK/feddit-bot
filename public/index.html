@@ -2023,10 +2023,13 @@ function renderSimulationResults(p) {
     } else if (entry.kind === 'decision') {
       body = simulationValue('Why it did nothing this turn', sim.reason || entry.note);
     } else if (entry.kind === 'comment') {
+      const attentionReason = sim.attention && sim.attention.reason
+        ? simulationValue('Why this reached the bot', sim.attention.reason)
+        : '';
       const context = sim.context
         ? '<details class="simulation-context"><summary>What it was replying to</summary><div class="simulation-output">' + esc(sim.context) + '</div></details>'
         : '';
-      body = context + simulationValue('Complete reply it would publish', sim.reply);
+      body = attentionReason + context + simulationValue('Complete reply it would publish', sim.reply);
     } else if (entry.kind === 'news') {
       body = simulationValue('Publisher headline', sim.sourceTitle) +
         simulationValue('Source URL', sim.sourceUrl) +

@@ -18,6 +18,8 @@ try {
   store.updateSched(id, { nextPostAt: 222, sentPosts: [202] }, options);
   store.recordReplied(id, 't3_live');
   store.recordReplied(id, 't3_simulation', options);
+  store.recordAttentionScan(id, { cursor: { comments: 12, posts: 3 }, seenEventIds: ['t1_live'] });
+  store.recordAttentionScan(id, { cursor: { comments: 22, posts: 5 }, seenEventIds: ['t1_simulation'] }, options);
   store.recordPostedNews(id, 'https://example.com/live');
   store.recordPostedNews(id, 'https://example.com/simulation', options);
   store.recordNewsDomain(id, '2026-09-13', 'example.com');
@@ -32,6 +34,10 @@ try {
   assert.equal(store.hasReplied(id, 't3_live'), true);
   assert.equal(store.hasReplied(id, 't3_simulation'), false);
   assert.equal(store.hasReplied(id, 't3_simulation', options), true);
+  assert.deepEqual(store.getAttentionState(id).cursor, { comments: 12, posts: 3 });
+  assert.deepEqual(store.getAttentionState(id, options).cursor, { comments: 22, posts: 5 });
+  assert.deepEqual(store.getAttentionState(id).seenEventIds, ['t1_live']);
+  assert.deepEqual(store.getAttentionState(id, options).seenEventIds, ['t1_simulation']);
   assert.equal(store.hasPostedNews(id, 'https://example.com/live'), true);
   assert.equal(store.hasPostedNews(id, 'https://example.com/simulation'), false);
   assert.equal(store.hasPostedNews(id, 'https://example.com/simulation', options), true);
@@ -42,10 +48,13 @@ try {
   const reset = store.getProfile(id);
   assert.equal(reset.sched.nextPostAt, 111, 'live cadence is preserved');
   assert.deepEqual(reset.repliedTo, ['t3_live'], 'live reply dedupe is preserved');
+  assert.deepEqual(reset.attentionState.cursor, { comments: 12, posts: 3 }, 'live attention cursor is preserved');
+  assert.deepEqual(reset.attentionState.seenEventIds, ['t1_live'], 'live seen events are preserved');
   assert.deepEqual(reset.postedNews, ['https://example.com/live'], 'live article dedupe is preserved');
   assert.equal(store.getThreadReplyCount(10), 1, 'live thread cap is preserved');
   assert.equal(reset.simulationState.sched.nextPostAt, null, 'simulation cadence is reset');
   assert.deepEqual(reset.simulationState.repliedTo, [], 'simulation reply dedupe is reset');
+  assert.deepEqual(reset.simulationState.attentionState, store.attentionDefaults(), 'simulation attention is reset');
   assert.deepEqual(reset.simulationState.postedNews, [], 'simulation article dedupe is reset');
   assert.equal(store.getThreadReplyCount(20, options), 0, 'simulation thread cap is reset');
   assert.deepEqual(reset.activity.map((entry) => entry.note), ['live history'], 'only simulation cards are removed');
