@@ -143,7 +143,7 @@ function safeProfile(p) {
   // count of the news dedupe set so the UI can show it on the clear button.
   const {
     token, ownerId, repliedTo, postedNews, newsDomainDaily, newsDomainDays,
-    attentionState, simulationState, ...rest
+    attentionState, socialState, simulationState, ...rest
   } = p;
   const now = Date.now();
   const spend = store.profileSpend(p, cost.dayKey(now), cost.monthKey(now));
@@ -160,6 +160,10 @@ function safeProfile(p) {
       ? simulationState.repliedTo.length : 0,
     simulationArticleCount: simulationState && Array.isArray(simulationState.postedNews)
       ? simulationState.postedNews.length : 0,
+    relationshipCount: socialState && socialState.relationships
+      ? Object.keys(socialState.relationships).length : 0,
+    simulationRelationshipCount: simulationState && simulationState.socialState && simulationState.socialState.relationships
+      ? Object.keys(simulationState.socialState.relationships).length : 0,
     nextAction: scheduler.nextAction(p, simulation),
     effProvider: scheduler.providerOf(p),
     effModel: scheduler.modelOf(p, store.DEFAULT_MODEL),
@@ -885,7 +889,7 @@ async function handleApi(req, res, urlPath, query) {
       const biography = await currentFedditBiography(existing);
       const {
         token, ownerId, postedNews, newsDomainDaily, newsDomainDays,
-        simulationState, ...rest
+        socialState, simulationState, ...rest
       } = existing;
       const simulation = scheduler.isDryRun(existing, store.getSettings());
       return sendJson(res, 200, {
@@ -904,6 +908,10 @@ async function handleApi(req, res, urlPath, query) {
             ? simulationState.repliedTo.length : 0,
           simulationArticleCount: simulationState && Array.isArray(simulationState.postedNews)
             ? simulationState.postedNews.length : 0,
+          relationshipCount: socialState && socialState.relationships
+            ? Object.keys(socialState.relationships).length : 0,
+          simulationRelationshipCount: simulationState && simulationState.socialState && simulationState.socialState.relationships
+            ? Object.keys(simulationState.socialState.relationships).length : 0,
           hostedAllocation: PLACEMENT === 'hosted' ? hostedPolicy.allocationFor(existing) : null,
         },
       });

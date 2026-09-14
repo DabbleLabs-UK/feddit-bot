@@ -1388,7 +1388,7 @@ function renderEditor(p) {
           <button type="button" id="refreshSimulationBtn">Refresh results</button>
         </div>
       </div>
-      <div class="hint" style="margin-bottom:8px"><b>Want it to reconsider posts or articles it already tried?</b> Reset simulation memory. This clears only the dry-run results, tried-target memory, thread limits and rehearsal timers, so the bot can begin a fresh simulation. Live Feddit activity and live publishing history are untouched.</div>
+      <div class="hint" style="margin-bottom:8px"><b>Want it to reconsider posts, people or articles it already encountered?</b> Reset simulation memory. This clears only the dry-run results, tried-target memory, rehearsal social continuity, thread limits and rehearsal timers, so the bot can begin a fresh simulation. Live Feddit activity, relationships and publishing history are untouched.</div>
       <div class="hint"><b>Nothing is posted to a separate sandbox site.</b> Scheduled simulation results appear here automatically, including the complete text post, reply or article-link title and enough source context to evaluate it. Each normal opportunity starts with a bounded menu of real Feddit items, available articles and possible new discussions; the bot chooses one or WAIT. The result shows that short decision without exposing private reasoning. To avoid waiting, the buttons below run the same live targeting and generation path immediately, but always stop before publishing.</div>
       <div class="hosted-work" id="hostedWork" role="status" aria-live="polite" hidden></div>
       <div class="row" style="margin-top:10px">
@@ -2086,6 +2086,8 @@ function simulationDecision(decision) {
   return '<div class="simulation-decision">' +
     simulationValue('Opportunity decision', selected) +
     simulationValue(reasonLabel, decision.reason || 'No short decision reason was recorded.') +
+    simulationValue('Social context used', decision.selectedSocial && decision.selectedSocial.summary) +
+    simulationValue('Conversation outcome', decision.socialDecisionContext) +
     (considered ? '<details class="simulation-context"><summary>' + esc(considered + ' real candidate' + (considered === 1 ? '' : 's') + ' considered') +
       '</summary><div class="simulation-output">' + esc(types.length ? types.join(', ') : 'Candidate types unavailable.') + '</div></details>' : '') +
     '</div>';
@@ -2099,8 +2101,10 @@ function renderSimulationResults(p) {
   if (slate) {
     const replies = Number(p.simulationHandledCount) || 0;
     const articles = Number(p.simulationArticleCount) || 0;
+    const relationships = Number(p.simulationRelationshipCount) || 0;
     slate.textContent = 'Current rehearsal memory: ' + replies + ' reply target' + (replies === 1 ? '' : 's') +
-      ' and ' + articles + ' news article' + (articles === 1 ? '' : 's') + '. Use Reset simulation memory when you want to try those candidates again.';
+      ', ' + articles + ' news article' + (articles === 1 ? '' : 's') + ' and ' + relationships +
+      ' conversation counterpart' + (relationships === 1 ? '' : 's') + '. Use Reset simulation memory when you want to try those candidates or conversations again.';
   }
   const all = (p.activity || []).filter((a) => a && a.dryRun && ['post', 'comment', 'news', 'decision'].includes(a.kind));
   count.textContent = String(all.length);
@@ -2243,7 +2247,7 @@ async function refreshSimulationResults(id) {
 }
 
 async function resetSimulation(id) {
-  if (!confirm('Reset this bot\'s simulation memory?\n\nThis removes dry-run result cards and forgets only targets and articles tried during simulation. It also resets simulation timers and simulated thread limits so the bot can begin a fresh rehearsal. It does not delete Feddit posts or comments, and it does not erase live publishing history.')) return;
+  if (!confirm('Reset this bot\'s simulation memory?\n\nThis removes dry-run result cards and forgets only targets, articles and social continuity from rehearsal. It also resets simulation timers and simulated thread limits so the bot can begin a fresh rehearsal. It does not delete Feddit posts or comments, and it does not erase live relationships or publishing history.')) return;
   const btn = $('#resetSimulationBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Resetting...'; }
   try {

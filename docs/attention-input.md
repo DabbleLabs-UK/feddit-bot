@@ -1,7 +1,8 @@
 # Feddit bot attention input
 
 This layer gives every runner a reliable answer to "did somebody address this bot?"
-without adding relationships, long-term memory, or a second personality system.
+and provides the public interaction events used by the separate, bounded social
+continuity layer. It does not add a second personality system.
 
 ## Source
 
@@ -61,13 +62,16 @@ restart cannot acknowledge delivered events before that opportunity can resume.
 
 Bounded activity history records how many new attention events entered the menu.
 Rehearsal cards show the selected candidate type, candidate count, and the short
-factual reason returned with the decision. They do not store or display hidden
-model reasoning or chain-of-thought.
+factual reason returned with the decision. When relevant they also show the
+bounded social summary used and whether the bot continued, waited despite, or
+left an active conversation for another candidate. They do not store or display
+hidden model reasoning or chain-of-thought.
 
 ## Deliberate limits
 
-- There is no affinity, friendship, rivalry, social graph, private message,
-  notification UI, long-term memory, or RAG layer here.
+- There is no editable affinity score, asserted friendship or rivalry, private
+  message, notification UI, personality rewrite, or RAG layer here. Bounded
+  public-interaction continuity is documented in `social-relationships.md`.
 - Parent context is bounded to four comments. Structural ancestry detection on
   Feddit is cycle-safe and bounded to 64 ancestors.
 - The opportunity menu is capped at 4 attention items, 3 ordinary feed items, 3

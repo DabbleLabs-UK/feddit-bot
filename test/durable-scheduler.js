@@ -10,6 +10,7 @@ const { createDellProvider } = require('../lib/providers/dell');
 const { createScheduler } = require('../lib/scheduler');
 const { createTurnStore } = require('../lib/turn-store');
 const hostedPolicy = require('../lib/hosted-policy');
+const socialRelationships = require('../lib/social-relationships');
 
 let checks = 0;
 function ok(value, message) {
@@ -64,6 +65,9 @@ function makeProfile(id, dryRun) {
       backoffUntil: 0,
     },
     activity: [],
+    repliedTo: [],
+    attentionState: { cursor: { comments: 0, posts: 0 }, seenEventIds: [] },
+    socialState: socialRelationships.defaults(),
     spendDaily: {},
     spendDays: [],
   };
@@ -91,6 +95,63 @@ function makeStore(profiles, now) {
     getSettings: () => settings,
     getProfile: (id) => byId.get(id) || null,
     listProfiles: () => [...byId.values()],
+    hasReplied(id, key, options = {}) {
+      const profile = byId.get(id);
+      const parent = options.simulation && profile && profile.simulationState ? profile.simulationState : profile;
+      return !!(parent && Array.isArray(parent.repliedTo) && parent.repliedTo.includes(key));
+    },
+    recordReplied(id, key, options = {}) {
+      const profile = byId.get(id);
+      const parent = options.simulation && profile && profile.simulationState ? profile.simulationState : profile;
+      if (!parent) return null;
+      parent.repliedTo = Array.isArray(parent.repliedTo) ? parent.repliedTo : [];
+      if (!parent.repliedTo.includes(key)) parent.repliedTo.push(key);
+      return parent.repliedTo;
+    },
+    getAttentionState(id, options = {}) {
+      const profile = byId.get(id);
+      const parent = options.simulation && profile && profile.simulationState ? profile.simulationState : profile;
+      return structuredClone(parent && parent.attentionState || { cursor: { comments: 0, posts: 0 }, seenEventIds: [] });
+    },
+    recordAttentionScan(id, scan, options = {}) {
+      const profile = byId.get(id);
+      const parent = options.simulation && profile && profile.simulationState ? profile.simulationState : profile;
+      if (!parent) return null;
+      parent.attentionState = structuredClone(scan || { cursor: { comments: 0, posts: 0 }, seenEventIds: [] });
+      return parent.attentionState;
+    },
+    getSocialState(id, options = {}) {
+      const profile = byId.get(id);
+      const parent = options.simulation && profile && profile.simulationState ? profile.simulationState : profile;
+      return socialRelationships.normalize(parent && parent.socialState, now());
+    },
+    recordSocialEvent(id, event, options = {}) {
+      const profile = byId.get(id);
+      const parent = options.simulation && profile && profile.simulationState ? profile.simulationState : profile;
+      if (!parent) return null;
+      const result = socialRelationships.recordEvent(parent.socialState, event, Number(options.nowMs) || now());
+      parent.socialState = result.state;
+      return { counted: result.counted, relationship: result.relationship };
+    },
+    getThreadReplyCount(postId, options = {}) {
+      const profileId = options.profileId;
+      const profile = profileId ? byId.get(profileId) : null;
+      const threadState = options.simulation && profile && profile.simulationState
+        ? profile.simulationState
+        : settings;
+      return Number(threadState.threadReplies && threadState.threadReplies[String(postId)]) || 0;
+    },
+    bumpThreadReply(postId, options = {}) {
+      const profileId = options.profileId;
+      const profile = profileId ? byId.get(profileId) : null;
+      const threadState = options.simulation && profile && profile.simulationState
+        ? profile.simulationState
+        : settings;
+      threadState.threadReplies = threadState.threadReplies || {};
+      const key = String(postId);
+      threadState.threadReplies[key] = (Number(threadState.threadReplies[key]) || 0) + 1;
+      return threadState.threadReplies[key];
+    },
     updateSched(id, patch, options = {}) {
       const profile = byId.get(id);
       if (!profile) return null;
@@ -195,8 +256,18 @@ function harness(options = {}) {
     },
     comment: async (request) => {
       writes.push({ type: 'comment', request });
-      return { ok: true, status: 200, data: {} };
+      if (options.commentResponse) return options.commentResponse(request);
+      return { ok: true, status: 200, data: { comment: { data: { id: 1000 + writes.length } } } };
     },
+    attention: async () => ({
+      ok: true, status: 200,
+      data: { cursor: { comments: 0, posts: 0 }, has_more: false, events: [] },
+    }),
+    feddit: async () => ({
+      ok: true, status: 200,
+      data: { data: { children: Array.isArray(options.feedPosts) ? options.feedPosts.map((post) => ({ data: post })) : [] } },
+    }),
+    comments: async () => ({ ok: true, status: 200, data: { comments: [] } }),
   };
   const about = {
     fetchAbout: async () => ({ name: 'general', over_18: false, post_format: 'any', rules: [] }),
@@ -509,6 +580,79 @@ async function run() {
       eq(h.writes.length, 0, 'a stored successful publication response is reused without another Feddit write');
       eq(afterResponseRestart.turnStore.get(turn.id).status, 'completed', 'post-publication finalisation resumes after restart');
       eq(h.profiles[0].activity.filter((entry) => entry.postId === 777).length, 1, 'the stored publication result is applied to local history once');
+    } finally {
+      h.cleanup();
+    }
+  }
+
+  {
+    const social = makeProfile('social-live-bot', false);
+    social.canReply = true;
+    social.canStartDiscussions = false;
+    social.postsPerHour = 0;
+    social.commentsPerHour = 1;
+    social.sched.nextPostAt = null;
+    social.sched.nextCommentAt = 0;
+    const h = harness({
+      profiles: [social],
+      feedPosts: [{
+        id: 42, feddit: 'general', author: 'alice', title: 'A real discussion',
+        selftext: 'A public message worth answering.', created_utc: 9,
+      }],
+    });
+    try {
+      const initial = h.scheduler();
+      await initial.runTick();
+      await settle();
+      const turn = h.turnStore.activeForProfile('social-live-bot');
+      chooseFirstCandidate(h.queue, turn);
+      const restarted = h.restartRuntime();
+      const content = await queueContentGeneration(restarted, turn.id);
+      completeJob(restarted.queue, content.jobId, 'A successful public reply.');
+      restarted.scheduler.reconcileDurableTurns();
+      await settle();
+      eq(h.writes.filter((write) => write.type === 'comment').length, 1,
+        'the live social test publishes exactly one reply');
+      eq(social.socialState.relationships.alice.outgoingCount, 1,
+        'a successful public reply records one asymmetric outgoing interaction');
+
+      h.restartRuntime().scheduler.reconcileDurableTurns();
+      await settle();
+      eq(social.socialState.relationships.alice.outgoingCount, 1,
+        'durable restart finalisation cannot count the same relationship event twice');
+    } finally {
+      h.cleanup();
+    }
+  }
+
+  {
+    const failedSocial = makeProfile('social-failed-bot', false);
+    failedSocial.canReply = true;
+    failedSocial.canStartDiscussions = false;
+    failedSocial.postsPerHour = 0;
+    failedSocial.commentsPerHour = 1;
+    failedSocial.sched.nextPostAt = null;
+    failedSocial.sched.nextCommentAt = 0;
+    const h = harness({
+      profiles: [failedSocial],
+      feedPosts: [{
+        id: 52, feddit: 'general', author: 'bob', title: 'Another real discussion',
+        selftext: 'A public message whose reply will fail.', created_utc: 9,
+      }],
+      commentResponse: async () => ({ ok: false, status: 500, error: 'deliberate write failure' }),
+    });
+    try {
+      await h.scheduler().runTick();
+      await settle();
+      const turn = h.turnStore.activeForProfile('social-failed-bot');
+      chooseFirstCandidate(h.queue, turn);
+      const restarted = h.restartRuntime();
+      const content = await queueContentGeneration(restarted, turn.id);
+      completeJob(restarted.queue, content.jobId, 'A reply that will not be published.');
+      restarted.scheduler.reconcileDurableTurns();
+      await settle();
+      eq(Object.keys(failedSocial.socialState.relationships).length, 0,
+        'a failed public write creates no outgoing relationship event');
     } finally {
       h.cleanup();
     }

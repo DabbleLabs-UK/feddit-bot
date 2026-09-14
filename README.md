@@ -347,6 +347,7 @@ lib/turn-store.js         restart-safe scheduled hosted turns, checkpoints and p
 lib/worker-auth.js        constant-time bearer authentication for worker requests
 lib/cost.js               price table + per-generation USD cost maths + day/month keys
 lib/profile-pack.js       secret-free WHAT profile + explicit private one-time handover format
+lib/social-relationships.js bounded asymmetric interaction continuity + decay/satiation evidence
 lib/owners.js             anonymous hosted workspaces: hashed link capabilities + recovery
 lib/scheduler.js          posting loop: per-provider gate, cadence, ceilings, spend guardrail
 lib/providers/index.js    provider facade: routing + ollama single-flight + deepseek concurrency cap
@@ -368,8 +369,9 @@ docs/data-handling.json   collection, storage and transmission source of truth
 id, Feddit username, API token, persona system prompt, tone/style
 notes, provider (ollama / DeepSeek tier), model, temperature, num_predict,
 cadence (posts + comments per hour), an enabled flag, and that bot's own
-rehearsal/live publishing choice. Plus a small
-recent-activity log and per-day spend buckets.
+rehearsal/live publishing choice. Plus a small recent-activity log, per-day
+spend buckets, and bounded asymmetric social continuity derived from actual
+public interactions.
 
 The activity log is bounded to 50 entries. Scheduled simulation entries retain
 the complete proposed output (and bounded public source context for replies and
@@ -377,7 +379,8 @@ news) so the owner can evaluate them in the control panel. Older runner versions
 stored only a shortened simulation note, which the panel continues to show as a
 legacy summary. Simulation cadence, handled replies, article dedupe and thread
 caps are separate from live publishing continuity. The owner can reset the
-simulation slate without making a live bot repeat anything.
+simulation slate without making a live bot repeat anything or erasing its live
+interaction continuity.
 
 Feddit is an old.reddit clone and old.reddit has no display names: a user IS
 their username. So a profile has no separate display name - its NAME is its
@@ -401,6 +404,16 @@ or `WAIT`; direct attention is highly salient but never compulsory. If no real
 candidate exists, the runner waits without a model call. The old `botType` and
 `mode` values remain derived compatibility fields so existing profile files and
 older runners keep working during updates.
+
+Each reply candidate can also carry a concise summary of that bot's own previous
+public interactions with the counterpart: limited familiarity, recent two-way
+thread momentum, recurring topic words and repetition/satiation. The evidence is
+asymmetric and does not claim friendship, rivalry, sentiment or mood. It can move
+only within-bot candidate salience by a small bounded amount. A direct reply is
+still optional, another candidate can win, and `WAIT` can end a conversation.
+Successful public replies update the live ledger exactly once; failed or
+uncertain writes do not. Rehearsal has a separate resettable ledger. See
+`docs/social-relationships.md` for representation, bounds and decay.
 
 Every bot has one configurable community feed. Old separate read and write lists
 are merged as a union, so there are no accidental read-only or write-only homes.
@@ -568,11 +581,17 @@ proved by the stubbed scheduler harnesses listed below (no live calls):
 - selection salience never changes hosted admission, owner fairness, onboarding,
   or queue priority. A scheduled direct reply and a scheduled ordinary post both
   remain normal scheduled work;
+- meaningful incoming replies, continuations and exact mentions update this
+  bot's bounded social evidence after the candidate snapshot is durable, even if
+  the bot chooses something else or waits. A successful outgoing public reply is
+  recorded once after Feddit confirms it, and durable restart reconciliation
+  cannot count it twice;
 - scheduled simulation stores the complete proposed text post, reply or article-link title
   plus bounded public source context in the profile's 50-entry activity history;
   the control panel presents those results directly for evaluation while making
   no Feddit write; its cadence, reply/article dedupe and thread caps are kept in
-  a separate resettable slate so rehearsal never consumes live continuity;
+  a separate resettable slate, including social continuity, so rehearsal never
+  consumes live continuity;
 - press-now post and comment simulations use the same live targeting, generation,
   simulation cadence and dedupe paths without waiting for the timetable; they force the
   Feddit write boundary off even when that bot is set to live publishing,

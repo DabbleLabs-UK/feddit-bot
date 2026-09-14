@@ -18,6 +18,7 @@ const cost = require('../lib/cost');
 const store = require('../lib/store'); // migrateProfiles/referenceName are pure - no disk touched
 const hostedPolicy = require('../lib/hosted-policy');
 const deepseek = require('../lib/providers/deepseek'); // generate() drivable with an injected fetch stub - no network
+const socialRelationships = require('../lib/social-relationships');
 
 // ---- tiny assert framework --------------------------------------------------
 
@@ -50,7 +51,6 @@ function makeStore(profiles) {
   };
   const byId = new Map(profiles.map((p) => [p.id, p]));
   const schedDefaults = () => ({ nextPostAt: null, nextCommentAt: null, backoffUntil: 0, sentPosts: [], sentComments: [] });
-
   function profileSpend(profile, dayKey, monthKey) {
     const daily = (profile && profile.spendDaily) || {};
     let todayUsd = 0, todayGens = 0, monthUsd = 0, monthGens = 0;
@@ -107,6 +107,18 @@ function makeStore(profiles) {
       }
       parent.attentionState = current;
       return structuredClone(current);
+    },
+    getSocialState: (id, options = {}) => {
+      const p = byId.get(id);
+      const parent = options.simulation && p && p.simulationState ? p.simulationState : p;
+      return socialRelationships.normalize(parent && parent.socialState);
+    },
+    recordSocialEvent: (id, event, options = {}) => {
+      const p = byId.get(id); if (!p) return null;
+      const parent = options.simulation && p.simulationState ? p.simulationState : p;
+      const result = socialRelationships.recordEvent(parent.socialState, event, Number(options.nowMs) || Date.now());
+      parent.socialState = result.state;
+      return { counted: result.counted, relationship: result.relationship };
     },
     hasPostedNews: (id, key) => { const p = byId.get(id); return !!(p && p.postedNews && p.postedNews.includes(key)); },
     recordPostedNews: (id, key) => {
@@ -200,6 +212,7 @@ function profile(over) {
     sched: over.sched || { nextPostAt: null, nextCommentAt: null, backoffUntil: 0, sentPosts: [], sentComments: [] },
     repliedTo: [],
     attentionState: over.attentionState || { cursor: { comments: 0, posts: 0 }, seenEventIds: [] },
+    socialState: over.socialState || socialRelationships.defaults(),
     // ---- news config + state ----
     botType: over.botType || 'conversational',
     ...(over.canReply !== undefined ? { canReply: over.canReply } : {}),
@@ -673,6 +686,11 @@ async function scenarioRealCandidateCompetition() {
     postFeddits: ['botlife'], readFeddits: ['botlife'],
     canReply: true, canStartDiscussions: true, canShareLinks: false,
   });
+  p.socialState = socialRelationships.recordEvent(p.socialState, {
+    id: 'live:outgoing:seed-70', account: 'attention_bot', direction: 'outgoing',
+    kind: 'reply', threadKey: 't3_70', at: clock.now() - 60_000,
+    text: 'A previous exchange about the garden.',
+  }, clock.now()).state;
   p.sched.nextPostAt = clock.now();
   p.sched.nextCommentAt = clock.now();
   const store = makeStore([p]);
@@ -705,9 +723,16 @@ async function scenarioRealCandidateCompetition() {
     providers.prompts[0].includes('Ordinary Feddit post you could reply to') &&
     providers.prompts[0].includes('Community where you could start a discussion'),
   'one bounded prompt contains direct, mention, ordinary-feed and new-discussion candidates');
+  ok(providers.prompts[0].includes('BOUNDED SOCIAL CONTEXT') &&
+    providers.prompts[0].includes('two-way conversation in this thread is currently active'),
+  'the bounded candidate prompt exposes active conversation momentum without inventing friendship');
   const simulation = p.activity.find((entry) => entry.simulation && entry.simulation.action === 'comment');
   eq(simulation.simulation.decision.selectedType, 'ordinary_post', 'simulation retains the selected candidate type');
   ok(/garden post fits/.test(simulation.simulation.decision.reason), 'simulation retains the short decision reason');
+  ok(/another candidate won/i.test(simulation.simulation.decision.socialDecisionContext),
+    'the rehearsal evidence explains when another candidate beats an active conversation');
+  eq(p.socialState.relationships.attention_bot.incomingCount, 2,
+    'each newly observed direct event updates social continuity even when neither one is selected');
   ok(p.attentionState.seenEventIds.includes('t1_81') && p.attentionState.seenEventIds.includes('t1_82'),
     'unselected direct attention is acknowledged as seen without being marked replied');
 
@@ -717,6 +742,11 @@ async function scenarioRealCandidateCompetition() {
     canReply: true, canStartDiscussions: false, canShareLinks: false,
   });
   waiting.sched.nextCommentAt = clock.now();
+  waiting.socialState = socialRelationships.recordEvent(waiting.socialState, {
+    id: 'live:outgoing:wait-seed', account: 'attention_bot', direction: 'outgoing',
+    kind: 'reply', threadKey: 't3_70', at: clock.now() - 30_000,
+    text: 'A previous exchange.',
+  }, clock.now()).state;
   const waitingStore = makeStore([waiting]);
   const waitingProviders = makeProviders({ textFor: () => JSON.stringify({
     choice: 'WAIT', reason: 'The mention does not need an answer from this personality.',
@@ -730,6 +760,9 @@ async function scenarioRealCandidateCompetition() {
   eq(waited.results[0].action, 'wait', 'an exact mention remains optional and can result in WAIT');
   eq(waitingProviders.stats().calls, 1, 'WAIT uses the selection call only and creates no content generation');
   ok(!(waiting.activity || []).some((entry) => entry.kind === 'comment'), 'WAIT does not force a reply publication');
+  const waitedCard = waiting.activity.find((entry) => entry.simulation && entry.simulation.action === 'wait');
+  ok(waitedCard && /WAIT despite/.test(waitedCard.simulation.decision.socialDecisionContext),
+    'rehearsal evidence makes explicit that direct social momentum did not force a reply');
 }
 
 // ============================================================================
