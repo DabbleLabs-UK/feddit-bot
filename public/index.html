@@ -125,11 +125,17 @@
   }
   .bot-last-outcome { margin-top: 5px; color: #c9d7e4; font-size: 12px; line-height: 1.35; }
   .bot-run-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
-  .bot-mode-state { font-size: 12px; font-weight: 700; padding: 5px 8px; border: 1px solid; border-radius: 5px; }
-  .bot-mode-state.rehearsal { color: #8ee493; border-color: var(--good); }
-  .bot-mode-state.live { color: #f0d9a0; border-color: var(--warn); }
-  .bot-mode-toggle { font-weight: 700; }
-  .bot-mode-toggle.make-live { border-color: var(--warn); color: #f0d9a0; }
+  .bot-mode-choice {
+    display: flex; flex-direction: column; gap: 5px; margin: 0; padding: 7px 10px;
+    border: 1px solid var(--line); border-radius: 8px; min-width: 116px;
+  }
+  .bot-mode-choice legend { padding: 0 4px; color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+  .bot-mode-choice label { display: flex; align-items: center; gap: 7px; cursor: pointer; font-size: 12px; font-weight: 700; }
+  .bot-mode-choice input { margin: 0; }
+  .bot-mode-choice .live { color: #f0d9a0; }
+  .bot-mode-choice .rehearsal { color: #8ee493; }
+  .bot-history-link { color: #9dceff; text-decoration: underline; text-underline-offset: 2px; font-size: 12px; }
+  .bot-history-link:hover { color: #d5eaff; }
   .bot-run-toggle { min-width: 118px; font-weight: 700; }
   .bot-run-toggle.start { background: var(--accent); border-color: var(--accent); color: #04121f; }
   .bot-run-toggle.pause { border-color: var(--bad); color: #ff9b9b; }
@@ -1008,7 +1014,7 @@ function renderBotRunBar(p) {
   const view = runStatePresentation(p);
   const rehearsal = p.dryRun !== false;
   const historyLink = p.fedditHistoryUrl
-    ? '<a class="button-link" href="' + esc(p.fedditHistoryUrl) + '" target="_blank" rel="noopener">View posts and conversations on Feddit</a>'
+    ? '<a class="bot-history-link" href="' + esc(p.fedditHistoryUrl) + '" target="_blank" rel="noopener">View posts and conversations on Feddit</a>'
     : '';
   const allocationLine = state.placement === 'hosted'
     ? '<div class="bot-run-detail">' + esc(hostedAllocationSummary(p)) + '</div>'
@@ -1024,15 +1030,20 @@ function renderBotRunBar(p) {
     '<div class="bot-run-state"><span class="dot ' + (view.className === 'active' ? 'good' : (view.className === 'setup' ? 'warn' : 'unknown')) + '"></span>' +
       '<div><div class="bot-run-heading"><strong>' + esc(view.label) + '</strong>' + originBadge + '</div><div class="bot-run-detail">' + esc(view.detail) + '</div>' + nextLine + lastOutcomeLine + allocationLine + '</div></div>' +
     '<div class="bot-run-actions">' +
-      '<span class="bot-mode-state ' + (rehearsal ? 'rehearsal' : 'live') + '">' +
-        (rehearsal ? 'Rehearsal - no publishing' : 'LIVE publishing') + '</span>' +
-      '<button type="button" id="botDryRunToggle" class="bot-mode-toggle ' + (rehearsal ? 'make-live' : '') + '">' +
-        (rehearsal ? 'Switch this bot to live' : 'Switch this bot to rehearsal') + '</button>' +
+      '<fieldset class="bot-mode-choice"><legend>Publishing mode</legend>' +
+        '<label class="live"><input type="radio" name="botPublishingMode" value="live"' + (!rehearsal ? ' checked' : '') + '> <span>LIVE</span></label>' +
+        '<label class="rehearsal"><input type="radio" name="botPublishingMode" value="rehearsal"' + (rehearsal ? ' checked' : '') + '> <span>REHEARSAL</span></label>' +
+      '</fieldset>' +
       historyLink +
       '<button type="button" id="botRunToggle" class="bot-run-toggle ' + view.buttonClass + '"' + (view.disabled ? ' disabled' : '') + '>' + esc(view.button) + '</button>' +
     '</div>';
-  const modeButton = $('#botDryRunToggle');
-  if (modeButton) modeButton.onclick = () => setProfileDryRun(p.id, !rehearsal);
+  for (const modeInput of document.querySelectorAll('input[name="botPublishingMode"]')) {
+    modeInput.onchange = async () => {
+      if (!modeInput.checked) return;
+      const changed = await setProfileDryRun(p.id, modeInput.value === 'rehearsal');
+      if (!changed && state.editing && state.editing.id === p.id) renderBotRunBar(state.editing);
+    };
+  }
   const button = $('#botRunToggle');
   if (button && !view.disabled) button.onclick = () => setProfileRunState(p.id, !p.enabled);
 }
@@ -1041,11 +1052,11 @@ async function setProfileDryRun(id, dryRun) {
   const listed = state.profiles.find((profile) => profile.id === id);
   const edited = state.editing && state.editing.id === id ? state.editing : null;
   const name = (listed && listed.referenceName) || (edited && edited.referenceName) || 'this bot';
-  if (!dryRun && !confirm('Switch ' + name + ' to live publishing?\n\nIf this bot is Active and the scheduler is running, its due posts and replies may be published to Feddit. Other bots remain unchanged.')) return;
+  if (!dryRun && !confirm('Switch ' + name + ' to live publishing?\n\nIf this bot is Active and the scheduler is running, its due posts and replies may be published to Feddit. Other bots remain unchanged.')) return false;
 
   const visibleEditor = state.selected === id && $('#f_persona');
   const body = visibleEditor ? { ...collectForm(), dryRun } : { dryRun };
-  const buttons = [...document.querySelectorAll('.profile-run-button, #botRunToggle, #botDryRunToggle')];
+  const buttons = [...document.querySelectorAll('.profile-run-button, #botRunToggle, input[name="botPublishingMode"]')];
   buttons.forEach((button) => { button.disabled = true; });
   try {
     const response = await api('/api/profiles/' + encodeURIComponent(id), { method: 'PUT', body });
@@ -1059,10 +1070,12 @@ async function setProfileDryRun(id, dryRun) {
     toast(dryRun
       ? name + ' is now rehearsing and will not publish.'
       : name + ' is now allowed to publish when active and due.', dryRun ? 'ok' : 'err');
+    return true;
   } catch (error) {
     toast('Could not change ' + name + ': ' + error.message, 'err');
     if (state.editing && state.editing.id === id) renderBotRunBar(state.editing);
     renderList();
+    return false;
   }
 }
 

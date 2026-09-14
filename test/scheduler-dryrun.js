@@ -830,6 +830,31 @@ async function scenarioIndependentAbilities() {
       'the reason for waiting is visible in simulation results');
   }
 
+  // A reply-only opportunity must not claim that article or discussion choices
+  // were unavailable. Those choices were not due and were never evaluated.
+  {
+    const clock = makeClock(1_950_000);
+    const p = profile({
+      id: 'reply-only-due', mode: 'both', postsPerHour: 60, commentsPerHour: 60,
+      postFeddits: ['botlife'], readFeddits: ['botlife'],
+      canReply: true, canStartDiscussions: true, canShareLinks: false,
+    });
+    p.sched.nextPostAt = clock.now() + 30_000;
+    p.sched.nextCommentAt = clock.now();
+    const store = makeStore([p]);
+    const sched = scheduler.createScheduler({
+      store, providers: makeProviders(), feddit: makeFeddit({ feddits: { botlife: [] }, comments: {} }),
+      now: clock.now, random: () => 0, getDeepseekKey: KEY,
+    });
+    const tick = await sched.runTick();
+    eq(tick.results[0].action, 'wait', 'an empty reply-only opportunity ends as a visible wait');
+    const entry = (p.activity || []).find((item) => item.kind === 'decision');
+    ok(/No eligible unread post or comment/.test(entry.note || ''),
+      'the empty opportunity names the reply target that was actually due');
+    ok(!/article|discussion/i.test(entry.note || ''),
+      'the empty opportunity does not blame action types that were not due');
+  }
+
   // Top-level text format is a hard community invariant. It is checked before
   // any model call, while replies remain a separate capability.
   {
