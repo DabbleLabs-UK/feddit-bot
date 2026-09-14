@@ -290,7 +290,7 @@ function hostedWorkForProfile(profile) {
     return {
       status: 'preparing',
       botName: store.referenceName(profile),
-      activityAction: 'finding an article before asking DELL to write its title',
+      activityAction: 'finding an article before asking hosted compute to write its title',
       activityTrigger: 'manual article preview',
       createdAt: previewTask.startedAt,
     };
@@ -310,17 +310,17 @@ function hostedWorkForProfile(profile) {
 
 function hostedWorkMessage(work) {
   if (!work) return 'No hosted work is waiting or running for this bot.';
-  if (work.status === 'claimed') return 'DELL is now ' + (work.activityAction || 'generating this bot\'s output') + '.';
+  if (work.status === 'claimed') return 'Hosted compute is now ' + (work.activityAction || 'generating this bot\'s output') + '.';
   if (work.status === 'queued') {
     const place = Number(work.waitingPosition) || 1;
     const total = Number(work.waitingTotal) || 1;
     const retry = work.retrying ? ' A previous attempt failed and the job is waiting for a safe retry.' : '';
-    return 'Waiting for DELL: this bot is ' + place + ' of ' + total + ' in the waiting queue.' + retry;
+    return 'Waiting for hosted compute: this bot is ' + place + ' of ' + total + ' in the waiting queue.' + retry;
   }
-  if (work.status === 'generating') return 'DELL is generating this bot\'s output.';
-  if (work.status === 'result-received') return 'DELL finished; the runner is applying the result to this bot\'s turn.';
+  if (work.status === 'generating') return 'Hosted compute is generating this bot\'s output.';
+  if (work.status === 'result-received') return 'Hosted generation finished; the runner is applying the result to this bot\'s turn.';
   if (work.status === 'finalising') return 'The generated output is ready and the runner is finalising the Feddit action.';
-  return 'Preparing the turn before it enters DELL\'s generation queue.';
+  return 'Preparing the turn before it enters the hosted generation queue.';
 }
 
 function safeLocalGenerationActivity() {

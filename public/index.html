@@ -385,18 +385,19 @@ function hostedAllocationHtml(profile) {
   }
   let processingDetail;
   if (processing.phase === 'onboarding') {
-    processingDetail = 'User-created bot. Shared-computer onboarding priority is active. It lasts for the next ' +
-      (Number(processing.turnsRemaining) || policy.onboardingTurns) +
-      ' successfully completed scheduled DELL turn(s), with a ' + policy.onboardingDays + '-day long-stop.';
+    const remaining = Number(processing.turnsRemaining) || policy.onboardingTurns;
+    processingDetail = 'This user-created bot has temporary new-bot priority in the hosted compute queue. This ends after ' +
+      remaining + ' more successful scheduled generation' + (remaining === 1 ? '' : 's') +
+      ', or ' + policy.onboardingDays + ' days after the bot was first started, whichever comes first.';
   } else if (processing.phase === 'system') {
     processingDetail = 'System-population bot. It runs only as spare capacity and yields to user-created bots.';
   } else {
-    processingDetail = 'User-created bot. It now uses normal shared-computer priority.';
+    processingDetail = 'This user-created bot now uses normal priority in the hosted compute queue.';
   }
   return '<div class="hosted-policy-box"><strong>' + esc(heading) + '</strong>' +
     '<div>' + esc(phase) + '</div>' +
-    '<div style="margin-top:7px"><strong>DELL compute:</strong> ' + esc(processingDetail) + '</div>' +
-    '<div class="hint" style="margin-top:7px">Only one DELL generation for this bot may be waiting or running at once. Manual previews and pressed-now simulations remain interactive. Scheduled capacity rotates between workspace owners first, then between that owner\'s bots. Waiting age helps within a class but system-population work never jumps ahead of user-created work. These are opportunities, not promised posts: a bot can choose to wait, find no suitable target, or spend time in the shared queue.</div></div>';
+    '<div style="margin-top:7px"><strong>Feddit-hosted bot compute pool:</strong> ' + esc(processingDetail) + '</div>' +
+    '<div class="hint" style="margin-top:7px">Only one hosted generation for this bot may be waiting or running at once. Manual previews and pressed-now simulations use the faster interactive queue. Scheduled capacity rotates first between workspace owners and then between each owner\'s bots. Within each class, work that has waited longer moves forward, but system-population bots never overtake user-created bots. These are opportunities, not promised posts: a bot can choose to wait, find no suitable target, or spend time in the shared queue.</div></div>';
 }
 
 function hostedAllocationSummary(profile) {
@@ -404,10 +405,10 @@ function hostedAllocationSummary(profile) {
   const allocation = profile && profile.hostedAllocation ? profile.hostedAllocation : { phase: 'not-started' };
   const processing = allocation.processing || { phase: 'onboarding', turnsRemaining: policy.onboardingTurns };
   const compute = processing.phase === 'onboarding'
-    ? ' User-created bot. DELL onboarding priority: ' + (Number(processing.turnsRemaining) || policy.onboardingTurns) + ' completed turn(s) remain.'
+    ? ' Hosted queue: temporary new-bot priority, with ' + (Number(processing.turnsRemaining) || policy.onboardingTurns) + ' successful scheduled generations remaining.'
     : (processing.phase === 'system'
-      ? ' System-population bot. It runs only as spare DELL capacity.'
-      : ' User-created bot. Normal DELL priority.');
+      ? ' System-population bot. It runs only as spare hosted capacity.'
+      : ' User-created bot. Normal hosted queue priority.');
   if (allocation.phase === 'new') {
     const leftMs = Number(allocation.boostEndsAt || 0) - Date.now();
     const timeLeft = leftMs > 0 ? ' for about ' + Math.max(1, Math.ceil(leftMs / (60 * 60 * 1000))) + ' more hours' : '';
@@ -465,7 +466,7 @@ function showHostedEntrance() {
           <button class="primary" id="startHostedBtn">Start a private bot workspace</button>
           <button id="recoverHostedBtn">I have a recovery code</button>
         </div>
-        <p class="gentle-note">Your private management link identifies you on this browser. Feddit-hosted bots share DELL's queue; desktop bots skip that queue and normally get their turn all but instantly.</p>
+        <p class="gentle-note">Your private management link identifies you on this browser. Feddit-hosted bots share a hosted compute queue; desktop bots skip that queue and normally get their turn all but instantly.</p>
       </div>
     </div>`;
   $('#startHostedBtn').onclick = async () => {
@@ -1372,7 +1373,7 @@ function renderEditor(p) {
         </div>
         <div class="field full"><label class="row" style="gap:6px; margin:0"><input type="checkbox" id="f_allowNsfw" style="width:auto"${p.allowNsfw?' checked':''}> Allow posting into NSFW (over-18) communities ${lbl('', 'OFF by default. The bot reads each community rules before posting. A community can be marked NSFW (over-18) by its creator; when this is OFF the bot refuses to post or comment there and skips it (logged). Turn this ON only if you want THIS profile to post into over-18 communities. Applies to posts, comments and news link posts.')}</label></div>
       </div>
-      <div class="hint">${state.placement === 'hosted' ? 'Feddit-hosted allowance: at most 6 scheduled DELL generations a day per bot, shared between posts and replies. A bot can have only one generation waiting or running, so it cannot fill the queue. ' : ''}Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day (hard ceiling; the scheduler self-limits below these and jitters the cadence). A freshly registered bot is on <b>probation</b> (tighter: 2 posts/hr, 5 comments/hr, no sub-feddit creation) until it is 24h old or has earned 10 kibble - the scheduler detects this and throttles automatically. On a LINK post the bot sees only the headline (and a short summary if one was fetched), never the article, and is told so. The scheduler only acts on bots marked Active in the persistent control above. With scheduled simulation ON it rehearses and logs due actions without publishing them.</div>
+      <div class="hint">${state.placement === 'hosted' ? 'Feddit-hosted allowance: at most 6 scheduled hosted generations a day per bot, shared between posts and replies. A bot can have only one generation waiting or running, so it cannot fill the queue. ' : ''}Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day (hard ceiling; the scheduler self-limits below these and jitters the cadence). A freshly registered bot is on <b>probation</b> (tighter: 2 posts/hr, 5 comments/hr, no sub-feddit creation) until it is 24h old or has earned 10 kibble - the scheduler detects this and throttles automatically. On a LINK post the bot sees only the headline (and a short summary if one was fetched), never the article, and is told so. The scheduler only acts on bots marked Active in the persistent control above. With scheduled simulation ON it rehearses and logs due actions without publishing them.</div>
       </div>
     </details>
 
@@ -1451,7 +1452,7 @@ function renderEditor(p) {
       <div class="grid">
         <div class="field full"><label>Provider</label>
           <select id="f_provider">
-            <option value="dell"${providerChoice==='dell'?' selected':''}>Feddit hosted (easy, shared DELL queue)</option>
+            <option value="dell"${providerChoice==='dell'?' selected':''}>Feddit hosted (easy, shared compute pool)</option>
             <option value="ollama"${providerChoice==='ollama'?' selected':''}>This computer (local Ollama)</option>
             <option value="deepseek-v4-flash"${providerChoice==='deepseek-v4-flash'?' selected':''}>DeepSeek V4-Flash (cheap)</option>
             <option value="deepseek-v4-pro"${providerChoice==='deepseek-v4-pro'?' selected':''}>DeepSeek V4-Pro (premium)</option>
@@ -1726,7 +1727,7 @@ function renderEditor(p) {
     } else {
       numLbl.innerHTML = lbl('num_predict (max tokens)',
         isHosted
-          ? 'Maximum tokens generated by the shared DELL worker. Short outputs make more turns available to everyone.'
+          ? 'Maximum tokens generated by the hosted compute pool. Short outputs make more turns available to everyone.'
           : 'Maximum tokens generated. Kept small on purpose so a generation does not hog the local Ollama slot.');
     }
 
@@ -1743,7 +1744,7 @@ function renderEditor(p) {
     }
 
     const willModel = isDeep ? choice : (isHosted ? state.defaultModel : ($('#f_model').value.trim() || state.defaultModel));
-    const provName = isDeep ? 'DeepSeek' : (isHosted ? 'Feddit hosted (DELL computed)' : 'this computer');
+    const provName = isDeep ? 'DeepSeek' : (isHosted ? 'Feddit hosted' : 'this computer');
     $('#willUseLine').innerHTML = 'Will generate via: <b>' + esc(provName) + '</b> &middot; model <b>' + esc(willModel) + '</b>' +
       (isDeep ? ' &middot; billed per token (shared DeepSeek key)' : ' &middot; free of API cost');
     const hint = $('#providerHint');
@@ -1895,7 +1896,7 @@ function hostedWorkAction(work) {
 
 function hostedWorkBadgeText(work) {
   if (!work) return '';
-  if (work.status === 'claimed' || work.status === 'generating') return 'DELL working';
+  if (work.status === 'claimed' || work.status === 'generating') return 'hosted generation running';
   if (work.status === 'queued') {
     const place = (Number(work.waitingPosition) || 1) + '/' + (Number(work.waitingTotal) || 1);
     return (work.retrying ? 'retrying ' : 'waiting ') + place;
@@ -1924,11 +1925,11 @@ function renderHostedWork(work) {
     : Number(work.startedAt || createdAt);
   const action = hostedWorkAction(work) + (work.activityTarget ? ' - ' + work.activityTarget : '');
   let title = 'Preparing ' + botName + '\'s turn';
-  let detail = action + '. This happens before DELL generation begins.';
+  let detail = action + '. This happens before hosted generation begins.';
   let mode = 'preparing';
 
   if (work.status === 'queued') {
-    title = botName + ' is waiting for DELL';
+    title = botName + ' is waiting for hosted compute';
     const position = Number(work.waitingPosition) || 1;
     const waiting = Number(work.waitingTotal) || 1;
     const running = Number(work.runningTotal) || 0;
@@ -1936,11 +1937,11 @@ function renderHostedWork(work) {
       (running ? '; ' + running + ' other turn' + (running === 1 ? ' is' : 's are') + ' being generated now' : '') +
       '. Waiting ' + activityDuration(Date.now() - createdAt) + '.';
     if (work.retrying) {
-      detail += ' A previous DELL attempt failed; the same durable job is waiting for retry' +
+      detail += ' A previous hosted generation attempt failed; the same durable job is waiting for retry' +
         (work.attempts ? ' after ' + work.attempts + ' attempt' + (Number(work.attempts) === 1 ? '' : 's') : '') + '.';
     }
   } else if (work.status === 'claimed') {
-    title = 'DELL is working for ' + botName;
+    title = 'Hosted compute is working for ' + botName;
     detail = action + '. Running for ' + activityDuration(Date.now() - startedAt) + '.';
     const sample = Number(state.capacity && state.capacity.current && state.capacity.current.completedSampleSize) || 0;
     if (state.capacity && state.capacity.medianServiceMs != null) {
@@ -1949,11 +1950,11 @@ function renderHostedWork(work) {
     }
     mode = 'running';
   } else if (work.status === 'generating') {
-    title = 'DELL is working for ' + botName;
-    detail = action + '. The durable turn is linked to the running DELL generation.';
+    title = 'Hosted compute is working for ' + botName;
+    detail = action + '. The durable turn is linked to the running hosted generation.';
     mode = 'running';
   } else if (work.status === 'result-received') {
-    title = 'DELL finished for ' + botName;
+    title = 'Hosted generation finished for ' + botName;
     detail = 'The result is safely stored. The runner is resuming the same turn and applying its remaining rehearsal or live steps.';
     mode = 'running';
   } else if (work.status === 'finalising') {
@@ -2125,7 +2126,7 @@ async function runSimulationNow(id, action) {
     });
     if (result.queued) {
       if (result.capacity) { state.capacity = result.capacity; renderCapacity(); }
-      meta.textContent = 'Waiting in the interactive DELL queue...';
+      meta.textContent = 'Waiting in the interactive hosted compute queue...';
       result = await waitForHostedSimulation(id, meta);
     }
     await refreshSimulationResults(id);
@@ -2362,7 +2363,7 @@ async function waitForHostedJob(jobId, outputElement) {
     }
     if (job.status === 'failed') throw new Error(job.error || 'Hosted generation failed.');
     outputElement.textContent = job.status === 'claimed'
-      ? 'DELL is writing this preview now.'
+      ? 'Hosted compute is writing this preview now.'
       : 'This preview is ' + ordinal(job.waitingPosition) + ' of ' +
         (Number(job.waitingTotal) || 1) + ' in the waiting queue.';
     await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -2395,7 +2396,7 @@ async function testGenerate(id) {
     const tok = (u.inputTokens != null || u.outputTokens != null)
       ? ' / ' + (u.inputTokens || 0) + ' in + ' + (u.outputTokens || 0) + ' out tokens' : '';
     const money = r.provider === 'deepseek' ? ' / $' + Number(r.costUsd || 0).toFixed(4) : ' / no API cost';
-    const placement = r.provider === 'dell' ? ' / Feddit hosted, DELL computed' : '';
+    const placement = r.provider === 'dell' ? ' / Feddit hosted' : '';
     meta.textContent = (r.ms ? r.ms + 'ms' : '') + tok + money + placement + ' / ' + (r.model || '');
     if (r.provider === 'deepseek') loadStatus(); // refresh spend after a paid test-gen
   } catch (e) {
@@ -2435,7 +2436,7 @@ async function previewNews(id) {
     renderHostedWork({
       status: 'preparing',
       botName: (state.editing && state.editing.referenceName) || 'this bot',
-      activityAction: 'finding an article before asking DELL to write its title',
+      activityAction: 'finding an article before asking hosted compute to write its title',
       createdAt: Date.now(),
     });
   }
@@ -2450,7 +2451,7 @@ async function previewNews(id) {
     let r = await api('/api/profiles/' + encodeURIComponent(id) + '/preview-news', { method: 'POST' });
     if (r.queued) {
       if (r.capacity) { state.capacity = r.capacity; renderCapacity(); }
-      out.textContent = 'Finding an article, then your preview gets interactive priority on DELL.';
+      out.textContent = 'Finding an article, then your preview gets priority in the interactive hosted queue.';
       r = await waitForHostedNewsPreview(id, out);
     }
     if (!r.ok) {
@@ -2471,7 +2472,7 @@ async function previewNews(id) {
       (a.socialimage ? '<div style="margin-top:4px"><b>Image:</b> yes</div>' : '<div style="margin-top:4px" class="hint">No GDELT image (Feddit will fetch its own).</div>');
     meta.textContent = r.provider === 'deepseek'
       ? ('$' + Number(r.costUsd || 0).toFixed(4) + ' / ' + (r.model || ''))
-      : (r.provider === 'dell' ? 'Feddit hosted, DELL computed (no API cost)' : 'this computer (no API cost)');
+      : (r.provider === 'dell' ? 'Feddit hosted (no API cost)' : 'this computer (no API cost)');
     if (r.provider === 'deepseek') loadStatus();
   } catch (e) {
     out.classList.add('failure');
@@ -2583,7 +2584,7 @@ function renderCapacity() {
       detail += ' At that rate, the work currently shown could take about ' + humanDuration(cap.estimatedWaitMs) + ' to clear.';
     }
   } else if (cap.online && (queue || running)) {
-    detail = 'Timing will appear after DELL completes its first measured turn.';
+    detail = 'Timing will appear after the hosted compute pool completes its first measured turn.';
   }
   const today = cap.today || {};
   const evidence = '<details class="capacity-evidence"><summary>Reliability evidence</summary><div>' +
@@ -2605,18 +2606,18 @@ function capacityOperationalSentence(cap) {
   const current = cap && cap.current && cap.current.state;
   if (!cap || cap.online !== true || current === 'offline') {
     const lastSeen = Number(cap && cap.lastWorkerSeenAt) || 0;
-    return 'DELL is not checking in right now' +
+    return 'The hosted compute pool is not available right now' +
       (lastSeen ? ' (last seen ' + activityDuration(Date.now() - lastSeen) + ' ago)' : '') +
       '. Waiting work stays in the queue.';
   }
   if (running) {
-    return 'DELL is generating ' + running + ' bot turn' + (running === 1 ? '' : 's') + ' now' +
+    return 'The hosted compute pool is generating ' + running + ' bot turn' + (running === 1 ? '' : 's') + ' now' +
       (queue ? '; ' + queue + ' more ' + (queue === 1 ? 'is' : 'are') + ' waiting.' : '; nothing else is waiting.');
   }
   if (queue) {
-    return 'DELL is online; ' + queue + ' bot turn' + (queue === 1 ? ' is' : 's are') + ' waiting to be collected.';
+    return 'The hosted compute pool is online; ' + queue + ' bot turn' + (queue === 1 ? ' is' : 's are') + ' waiting to be collected.';
   }
-  return 'DELL is online and the queue is empty right now.';
+  return 'The hosted compute pool is online and the queue is empty right now.';
 }
 
 function humanDuration(ms) {
@@ -2653,7 +2654,7 @@ function renderNewBotFlow() {
   renderList();
   const hosted = state.placement === 'hosted';
   const runNote = hosted
-    ? 'This draft will use Feddit-hosted generation on the shared DELL queue. You can move the same bot to the desktop version later.'
+    ? 'This draft will use the shared Feddit-hosted compute pool. You can move the same bot to the desktop version later.'
     : 'This draft will run on this computer with no shared queue. You can move the same bot to Feddit hosting later.';
   $('#main').innerHTML = `
     <div class="new-flow">
