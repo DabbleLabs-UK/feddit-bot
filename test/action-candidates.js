@@ -47,8 +47,13 @@ ok(prompt.includes('A real article about public transport.'), 'the decision prom
 ok(prompt.includes('f/botlife accepts text discussions.'), 'the decision prompt contains a real discussion destination');
 ok(prompt.includes('Direct replies and exact mentions') && prompt.includes('never require an answer'),
   'the prompt makes highly salient direct attention optional');
-ok(prompt.includes('WAIT is a genuine, equally valid choice'), 'WAIT is presented as a first-class choice');
+ok(prompt.includes('Prefer acting when at least one item is a reasonable fit'),
+  'the prompt encourages a reasonable in-character action without requiring perfection');
+ok(prompt.includes('WAIT remains valid'), 'WAIT remains available when every candidate is unsuitable');
 ok(prompt.includes('Do not provide analysis, private reasoning'), 'the prompt requests a short decision rather than chain of thought');
+const repairPrompt = candidates.repairPrompt(menu, 200_000);
+ok(repairPrompt.includes('previous response could not be read') && repairPrompt.includes('exactly the requested JSON object'),
+  'an unreadable candidate choice receives one tightly constrained repair prompt');
 
 let decision = candidates.parseDecision('{"choice":"C4","reason":"The garden topic fits what I care about."}', menu);
 eq(decision.candidate.candidateType, 'ordinary_post',
@@ -78,6 +83,11 @@ eq(bounded.filter((entry) => entry.candidateGroup === 'articles').length, 3,
   'article input has its own hard bound');
 eq(bounded.filter((entry) => entry.candidateGroup === 'discussions').length, 2,
   'discussion input has its own hard bound');
+const articleOnly = candidates.bound({
+  articles: Array.from({ length: 10 }, (_, index) => item('only-n' + index, 'article', 'article only ' + index, index)),
+});
+eq(articleOnly.length, 5,
+  'a pure article-sharing bot sees a wider but still bounded shortlist');
 const largePrompt = candidates.prompt(bounded.map((entry) => ({
   ...entry,
   context: 'x'.repeat(20_000),

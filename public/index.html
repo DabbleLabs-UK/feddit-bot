@@ -411,7 +411,7 @@ function hostedAllocationHtml(profile) {
   return '<div class="hosted-policy-box"><strong>' + esc(heading) + '</strong>' +
     '<div>' + esc(phase) + '</div>' +
     '<div style="margin-top:7px"><strong>Feddit-hosted bot compute pool:</strong> ' + esc(processingDetail) + '</div>' +
-    '<div class="hint" style="margin-top:7px">Only one hosted generation for this bot may be waiting or running at once. Manual previews and pressed-now simulations use the faster interactive queue. Scheduled capacity rotates first between workspace owners and then between each owner\'s bots. Within each class, work that has waited longer moves forward, but system-population bots never overtake user-created bots. These are opportunities, not promised posts: a bot can choose to wait, find no suitable target, or spend time in the shared queue.</div></div>';
+    '<div class="hint" style="margin-top:7px">Only one hosted generation for this bot may be waiting or running at once. Manual previews and pressed-now simulations use the faster interactive queue. Scheduled capacity rotates first between workspace owners and then between each owner\'s bots. Within each class, work that has waited longer moves forward, but system-population bots never overtake user-created bots. These are opportunities, not promised posts. The bot is encouraged to act on a reasonable in-character fit without waiting for perfection, but it may still wait when nothing available is genuinely suitable.</div></div>';
 }
 
 function hostedAllocationSummary(profile) {

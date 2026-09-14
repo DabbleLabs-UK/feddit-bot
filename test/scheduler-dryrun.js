@@ -881,17 +881,18 @@ async function scenarioIndependentAbilities() {
     await feedClient.fetchItems([feedUrl]);
     const p = profile({
       id: 'article-choice', mode: 'post', postsPerHour: 60,
+      provider: 'dell',
       postFeddits: ['general'], canReply: false, canStartDiscussions: false,
       canShareLinks: true, newsUseAllFeeds: false,
       newsFeedSelection: [feedUrl], newsQuery: 'bus', newsUseGdelt: false,
     });
     p.sched.nextPostAt = clock.now();
     const store = makeStore([p]);
-    const providers = makeProviders({ textFor: (opts, index) => (
-      index === 0
-        ? JSON.stringify({ choice: 'C1', reason: 'The transport story matches this bot\'s interests.' })
-        : 'late buses finally get a little less impossible'
-    ) });
+    const providers = makeProviders({ textFor: (opts, index) => {
+      if (index === 0) return 'I think the bus story sounds relevant.';
+      if (index === 1) return JSON.stringify({ choice: 'C1', reason: 'The transport story matches this bot\'s interests.' });
+      return 'late buses finally get a little less impossible';
+    } });
     const world = {
       feddits: { general: [] }, comments: {},
       abouts: { general: { post_format: 'link', description: 'Real article links.', rules: [] } },
@@ -904,8 +905,10 @@ async function scenarioIndependentAbilities() {
     });
     const tick = await sched.runTick();
     eq(tick.results[0].action, 'news', 'a real filtered article can be selected from the opportunity menu');
-    eq(providers.stats().calls, 2,
-      'article action uses one opportunity decision call and one bot-voiced title call');
+    eq(providers.stats().calls, 3,
+      'an unreadable opportunity decision is repaired once before the bot-voiced title call');
+    eq(providers.genCalls[1].kind, 'scheduled-decision-retry',
+      'the decision repair is recorded as a distinct scheduled generation');
     const entry = (p.activity || []).find((item) => item.simulation && item.simulation.action === 'news');
     eq(entry.simulation.sourceUrl, 'https://publisher.example.com/night-buses',
       'the selected article keeps its real publisher URL');
@@ -1337,8 +1340,8 @@ async function scenarioHostedEligibility() {
     eq(tick.acted, 1, 'exactly one hosted profile passes the current eligibility gates');
     eq(
       JSON.stringify(providers.genCalls.map((call) => call.profileId)),
-      JSON.stringify(['hosted-due']),
-      'disabled, unregistered, backed-off and future-due hosted profiles do not generate',
+      JSON.stringify(['hosted-due', 'hosted-due']),
+      'an unreadable choice may retry once, but no disabled, unregistered, backed-off or future-due hosted profile generates',
     );
   }
 
@@ -2511,17 +2514,22 @@ async function scenarioFeeds() {
     });
     // Feeds-ONLY (GDELT off). Keyword 'rocket' should keep the rocket story and
     // drop the cooking one, then route to the default target f/general.
-    const p = profile({ id: 'feednews', botType: 'news', mode: 'post', postsPerHour: 60, newsUseGdelt: false, newsQuery: 'rocket', newsUseAllFeeds: false, newsFeedSelection: [SHIPPED], postFeddits: ['general'], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
+    const p = profile({ id: 'feednews', botType: 'news', mode: 'post', postsPerHour: 60, provider: 'dell', canReply: false, canStartDiscussions: false, canShareLinks: true, newsUseGdelt: false, newsQuery: 'rocket', newsUseAllFeeds: false, newsFeedSelection: [SHIPPED], postFeddits: ['general'], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
     p.sched.nextPostAt = clock.now();
     const store = makeStore([p]);
     const fed = makeFeddit({ feddits: {}, comments: {} });
-    // Blocking preview would fetch; the scheduled tick is non-blocking, so warm
-    // the shared cache first (as a real deployment does over its first tick).
-    await inst.fetchItems([SHIPPED]);
-    const sched = scheduler.createScheduler({ store, providers: makeProviders(), feddit: fed, gdelt: null, feeds: inst, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    const providers = makeProviders({ textFor: (_opts, index) => (
+      index === 0
+        ? JSON.stringify({ choice: 'C1', reason: 'The rocket story matches the configured interest.' })
+        : 'rockets are heading up tonight'
+    ) });
+    // A hosted durable turn waits for its first feed refresh instead of spending
+    // a scarce scheduled opportunity only warming an in-memory cache.
+    const sched = scheduler.createScheduler({ store, providers, feddit: fed, gdelt: null, feeds: inst, now: clock.now, random: () => 0, getDeepseekKey: KEY });
     const r = await sched.runTick();
     const a = r.results.find((x) => x && x.action === 'news');
     ok(a && a.ok === true, 'feeds-only news profile acted');
+    eq(fc, 1, 'a hosted article turn fetched and used an initially cold feed in the same opportunity');
     eq(a.feddit, 'general', 'posted the feed article to the default target f/general');
     eq(a.domain, 'pub.example.com', 'the REAL publisher domain (not a feed/aggregator) was used');
     ok(store.hasPostedNews('feednews', feeds.canonicalUrl('https://pub.example.com/rocket')), 'permanent canonical dedupe recorded the posted publisher URL');
@@ -2533,8 +2541,10 @@ async function scenarioFeeds() {
     clock.advance(60_000); p.sched.nextPostAt = clock.now();
     const sched2 = scheduler.createScheduler({ store, providers: makeProviders(), feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: null, feeds: inst, now: clock.now, random: () => 0, getDeepseekKey: KEY });
     const r2 = await sched2.runTick();
-    const a2 = r2.results.find((x) => x && x.action === 'news');
-    eq(a2.note, 'none', 'second tick posted nothing: rocket deduped, cooking keyword-filtered');
+    const a2 = r2.results.find((x) => x && x.action === 'wait');
+    ok(a2 && a2.waited, 'second tick waited: rocket deduped and cooking keyword-filtered');
+    eq(store.getProfile('feednews').postedNews.length, 1,
+      'the second tick did not add or repost another article');
   }
 }
 

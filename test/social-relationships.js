@@ -79,7 +79,7 @@ const socialMenu = candidates.bound({
 const activePrompt = candidates.prompt(socialMenu, base + 360_000);
 ok(activePrompt.includes('BOUNDED SOCIAL CONTEXT') && activePrompt.includes('not proof of friendship'),
   'the model sees concise grounded social context with an explicit non-friendship guard');
-ok(activePrompt.includes('WAIT is a genuine, equally valid choice'),
+ok(activePrompt.includes('WAIT remains valid'),
   'WAIT remains explicitly possible during an active conversation');
 const otherWins = candidates.parseDecision('{"choice":"C2","reason":"The new astronomy topic is more interesting."}', socialMenu);
 eq(otherWins.candidate.id, 'C2', 'another candidate can beat an ongoing conversation');
