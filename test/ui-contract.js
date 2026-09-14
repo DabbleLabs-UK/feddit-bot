@@ -86,6 +86,8 @@ assert.match(html, /Register before starting/);
 assert.match(html, /function setProfileRunState/);
 assert.match(html, /function setProfileDryRun/);
 assert.match(html, /class="bot-next-large"/);
+assert.match(html, /Last.*outcome:/);
+assert.match(html, /function latestProfileOutcome/);
 assert.match(html, /data-next-profile=/);
 assert.match(html, /function refreshNextCountdowns/);
 assert.match(html, /setInterval\(refreshNextCountdowns, 1000\)/);

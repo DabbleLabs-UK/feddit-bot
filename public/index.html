@@ -123,6 +123,7 @@
     margin-top: 4px; color: #fff; font-size: 20px; font-weight: 750;
     font-variant-numeric: tabular-nums; letter-spacing: .01em;
   }
+  .bot-last-outcome { margin-top: 5px; color: #c9d7e4; font-size: 12px; line-height: 1.35; }
   .bot-run-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
   .bot-mode-state { font-size: 12px; font-weight: 700; padding: 5px 8px; border: 1px solid; border-radius: 5px; }
   .bot-mode-state.rehearsal { color: #8ee493; border-color: var(--good); }
@@ -1013,6 +1014,7 @@ function renderBotRunBar(p) {
     ? '<div class="bot-run-detail">' + esc(hostedAllocationSummary(p)) + '</div>'
     : '';
   const nextLine = '<div class="bot-next-large" data-next-profile="' + esc(p.id) + '">Next: ' + esc(sentenceCase(fmtNext(p))) + '</div>';
+  const lastOutcomeLine = latestOutcomeHtml(p);
   const originBadge = state.placement === 'hosted'
     ? '<span class="bot-origin-state ' + (p.botOrigin === 'system' ? 'system' : 'user') + '">' +
         (p.botOrigin === 'system' ? 'System-population bot' : 'User-created bot') + '</span>'
@@ -1020,7 +1022,7 @@ function renderBotRunBar(p) {
   bar.className = 'bot-runbar ' + view.className + (rehearsal ? ' rehearsal' : ' live');
   bar.innerHTML =
     '<div class="bot-run-state"><span class="dot ' + (view.className === 'active' ? 'good' : (view.className === 'setup' ? 'warn' : 'unknown')) + '"></span>' +
-      '<div><div class="bot-run-heading"><strong>' + esc(view.label) + '</strong>' + originBadge + '</div><div class="bot-run-detail">' + esc(view.detail) + '</div>' + nextLine + allocationLine + '</div></div>' +
+      '<div><div class="bot-run-heading"><strong>' + esc(view.label) + '</strong>' + originBadge + '</div><div class="bot-run-detail">' + esc(view.detail) + '</div>' + nextLine + lastOutcomeLine + allocationLine + '</div></div>' +
     '<div class="bot-run-actions">' +
       '<span class="bot-mode-state ' + (rehearsal ? 'rehearsal' : 'live') + '">' +
         (rehearsal ? 'Rehearsal - no publishing' : 'LIVE publishing') + '</span>' +
@@ -1366,6 +1368,26 @@ function actionKindLabel(kind) {
 function sentenceCase(value) {
   const text = String(value || '');
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+}
+function latestProfileOutcome(profile) {
+  const rehearsal = !!(profile && profile.dryRun);
+  const activity = Array.isArray(profile && profile.activity) ? profile.activity : [];
+  return activity.slice().reverse().find((item) => {
+    if (!item || !['decision', 'post', 'comment', 'news'].includes(item.kind)) return false;
+    if (rehearsal ? item.dryRun !== true : item.dryRun === true) return false;
+    return !/^Considered \d+ community rules/.test(String(item.note || ''));
+  }) || null;
+}
+function latestOutcomeHtml(profile) {
+  const outcome = latestProfileOutcome(profile);
+  if (!outcome) return '';
+  const happened = Date.parse(String(outcome.at || ''));
+  const time = Number.isFinite(happened)
+    ? new Date(happened).toLocaleString([], { dateStyle: 'medium', timeStyle: 'medium' })
+    : 'time unavailable';
+  const mode = profile.dryRun ? 'rehearsal' : 'live';
+  return '<div class="bot-last-outcome"><strong>Last ' + mode + ' outcome:</strong> ' +
+    esc(String(outcome.note || 'No result detail was recorded.')) + ' <span title="' + esc(time) + '">(' + esc(time) + ')</span></div>';
 }
 function fmtNext(p, now = Date.now()) {
   const na = p.nextAction || {};

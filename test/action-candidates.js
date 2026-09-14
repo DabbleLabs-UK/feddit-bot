@@ -50,10 +50,15 @@ ok(prompt.includes('Direct replies and exact mentions') && prompt.includes('neve
 ok(prompt.includes('Prefer acting when at least one item is a reasonable fit'),
   'the prompt encourages a reasonable in-character action without requiring perfection');
 ok(prompt.includes('WAIT remains valid'), 'WAIT remains available when every candidate is unsuitable');
+ok(prompt.includes('{"choice":"C1"') && prompt.includes('{"choice":"WAIT"'),
+  'the response contract gives separate unambiguous choose and wait examples');
+ok(!prompt.includes('"choice":"C1 or WAIT"'),
+  'the response contract never offers the model an ambiguous literal choice value');
 ok(prompt.includes('Do not provide analysis, private reasoning'), 'the prompt requests a short decision rather than chain of thought');
 const repairPrompt = candidates.repairPrompt(menu, 200_000);
 ok(repairPrompt.includes('previous response could not be read') && repairPrompt.includes('exactly the requested JSON object'),
   'an unreadable candidate choice receives one tightly constrained repair prompt');
+ok(repairPrompt.includes('never both'), 'the repair prompt explicitly forbids combining a candidate with WAIT');
 
 let decision = candidates.parseDecision('{"choice":"C4","reason":"The garden topic fits what I care about."}', menu);
 eq(decision.candidate.candidateType, 'ordinary_post',
