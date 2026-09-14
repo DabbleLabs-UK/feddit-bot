@@ -326,6 +326,7 @@ function harness(options = {}) {
   return {
     dir,
     now,
+    advance: (ms) => { current += Number(ms) || 0; },
     profiles,
     store,
     queue,
@@ -433,6 +434,64 @@ async function run() {
       eq(h.profiles[0].activity.filter((entry) => entry.dryRun).length, 1, 'terminal reconciliation does not duplicate activity');
       eq(h.profiles[0].hostedOnboardingTurnsCompleted, 1,
         'restart reconciliation never consumes the same onboarding opportunity twice');
+    } finally {
+      h.cleanup();
+    }
+  }
+
+  {
+    const h = harness({ profiles: [makeProfile('slow-decision-bot', false)] });
+    try {
+      await h.scheduler().runTick();
+      await settle();
+      const turn = h.turnStore.activeForProfile('slow-decision-bot');
+      chooseFirstCandidate(h.queue, turn);
+
+      // Hosted inference commonly crosses one or more human-readable recency
+      // boundaries before the runner resumes the turn.
+      h.advance(2 * 60 * 1000);
+      const restarted = h.restartRuntime();
+      const content = await queueContentGeneration(restarted, turn.id);
+      completeJob(restarted.queue, content.jobId, 'A stable title\n\nA stable body.');
+      restarted.scheduler.reconcileDurableTurns();
+      await settle();
+
+      eq(restarted.turnStore.get(turn.id).status, 'completed',
+        'elapsed time during hosted generation cannot invalidate durable candidate replay');
+      eq(h.writes.length, 1,
+        'a slow hosted candidate decision still reaches one live publication');
+      ok(!h.profiles[0].activity.some((entry) => String(entry.note || '').includes('replay did not reproduce')),
+        'elapsed time is never recorded as a personality WAIT');
+    } finally {
+      h.cleanup();
+    }
+  }
+
+  {
+    const profile = makeProfile('mismatched-decision-bot', false);
+    const h = harness({ profiles: [profile] });
+    try {
+      await h.scheduler().runTick();
+      await settle();
+      const turn = h.turnStore.activeForProfile(profile.id);
+      h.turnStore.generation(turn.id, 0, { signature: 'deliberately-wrong-signature' });
+      chooseFirstCandidate(h.queue, turn);
+
+      const restarted = h.restartRuntime();
+      restarted.scheduler.reconcileDurableTurns();
+      await settle();
+      eq(restarted.turnStore.get(turn.id).status, 'failed',
+        'a genuine replay mismatch remains an infrastructure failure');
+      eq(profile.sched.nextPostAt, 0,
+        'an infrastructure failure does not postpone the due opportunity');
+      ok(!profile.activity.some((entry) => String(entry.note || '').startsWith('WAIT:')),
+        'an infrastructure failure is not presented as a personality decision');
+
+      await restarted.scheduler.runTick();
+      await settle();
+      const retry = restarted.turnStore.activeForProfile(profile.id);
+      ok(retry && retry.id !== turn.id,
+        'the next scheduler tick creates a fresh retry for the still-due opportunity');
     } finally {
       h.cleanup();
     }
