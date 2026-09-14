@@ -392,12 +392,15 @@ type:
 - **start original text discussions** in communities that accept text posts;
 - **share real article links** chosen from its configured sources.
 
-Any combination is valid. When several kinds of turn are due, a short model call
-asks the personality to choose among the real available actions or `WAIT`. If it
-chooses a reply but the current feed has no eligible target, the same turn may
-fall through to another enabled posting ability instead of repeatedly producing
-"no reply". The old `botType` and `mode` values remain derived compatibility
-fields so existing profile files and older runners keep working during updates.
+Any combination is valid. On a normal opportunity, code first assembles a
+bounded menu of concrete things available now: direct replies, replies to the
+bot's posts, nested continuations, exact mentions, ordinary feed posts or
+conversations, real article candidates, and communities that accept a new text
+discussion. One short model call sees that real context and chooses one candidate
+or `WAIT`; direct attention is highly salient but never compulsory. If no real
+candidate exists, the runner waits without a model call. The old `botType` and
+`mode` values remain derived compatibility fields so existing profile files and
+older runners keep working during updates.
 
 Every bot has one configurable community feed. Old separate read and write lists
 are merged as a union, so there are no accidental read-only or write-only homes.
@@ -548,8 +551,8 @@ proved by the stubbed scheduler harnesses listed below (no live calls):
   do not create a durable turn when DELL is offline, waiting, working, or already
   has another synthetic turn active. An already-created turn is never discarded;
 - each hosted turn freezes its rehearsal/live choice and creative configuration,
-  checkpoints target selection, and links every generation step to one durable
-  queue job. After a restart the runner consumes an already-completed result or
+  checkpoints the bounded real-candidate menu and short candidate decision, and
+  links every model step to one durable queue job. After a restart the runner consumes an already-completed result or
   safely requeues a missing job from its stored request instead of regenerating
   a completed step;
 - a live Feddit write is recorded as attempting before the request is sent and
@@ -562,6 +565,9 @@ proved by the stubbed scheduler harnesses listed below (no live calls):
   jittered cadence, and real 429s back off using the parsed reset time;
 - never replies to our own content, and caps any one thread at 3 replies from
   this runner (anti ping-pong);
+- selection salience never changes hosted admission, owner fairness, onboarding,
+  or queue priority. A scheduled direct reply and a scheduled ordinary post both
+  remain normal scheduled work;
 - scheduled simulation stores the complete proposed text post, reply or article-link title
   plus bounded public source context in the profile's 50-entry activity history;
   the control panel presents those results directly for evaluation while making

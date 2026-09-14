@@ -618,16 +618,130 @@ async function scenarioNewsDiscussion() {
 }
 
 // ============================================================================
+// Scenario 1aaa: current profiles choose among real content candidates. Direct
+// attention is salient but optional, ordinary feed content can win, and WAIT
+// never forces a publication.
+// ============================================================================
+async function scenarioRealCandidateCompetition() {
+  console.log('\n[1aaa] bounded real-candidate competition + optional attention');
+  const clock = makeClock(Date.parse('2026-09-14T14:00:00Z'));
+  const attentionEvent = (type, id, body) => ({
+    source: 'feddit_attention',
+    source_type: 'comment',
+    type,
+    event_id: 't1_' + id,
+    post_id: 70,
+    comment_id: id,
+    parent_comment_id: null,
+    author: 'attention_bot',
+    community: 'botlife',
+    created_utc: Math.floor(clock.now() / 1000) - id,
+    directness: type === 'reply_to_own_comment' ? 'direct' : 'mention',
+    directly_addresses_bot: true,
+    mentioned: type === 'mention_in_comment',
+    seen: false,
+    reason: type === 'reply_to_own_comment'
+      ? 'Direct reply to this bot\'s comment.'
+      : 'This comment explicitly mentions @chooser.',
+    body,
+    context: {
+      post: { post_id: 70, author: 'someone', community: 'botlife', title: 'Attention thread', kind: 'text', body: 'Opening.' },
+      parent_chain: [],
+    },
+  });
+  const world = {
+    feddits: {
+      botlife: [{ id: 99, feddit: 'botlife', title: 'A garden observation', body: 'The first shoots appeared today.', author: 'gardener' }],
+    },
+    comments: { 99: [] },
+    abouts: { botlife: { post_format: 'any', description: 'General bot life.', rules: [] } },
+    onAttention: async () => ({
+      ok: true,
+      status: 200,
+      data: {
+        cursor: { comments: 82, posts: 0 },
+        has_more: false,
+        events: [
+          attentionEvent('reply_to_own_comment', 81, 'Can you answer my direct question?'),
+          attentionEvent('mention_in_comment', 82, '@chooser, what do you think?'),
+        ],
+      },
+    }),
+  };
+  const p = profile({
+    id: 'chooser', fedditUsername: 'chooser', mode: 'both', postsPerHour: 1, commentsPerHour: 1,
+    postFeddits: ['botlife'], readFeddits: ['botlife'],
+    canReply: true, canStartDiscussions: true, canShareLinks: false,
+  });
+  p.sched.nextPostAt = clock.now();
+  p.sched.nextCommentAt = clock.now();
+  const store = makeStore([p]);
+  const providers = makeProviders({
+    textFor: (gopts) => {
+      if (gopts.kind === 'scheduled-decision') {
+        const match = gopts.prompt.match(/\[(C\d+)\]\nTYPE: Ordinary Feddit post you could reply to/);
+        return JSON.stringify({
+          choice: match ? match[1] : 'WAIT',
+          reason: 'The garden post fits this bot\'s interests better right now.',
+        });
+      }
+      return 'The new shoots sound promising.';
+    },
+  });
+  const client = makeFeddit(world);
+  const sched = scheduler.createScheduler({
+    store, providers, feddit: client,
+    about: aboutLib.createAbout({ feddit: client, now: clock.now }),
+    feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY,
+  });
+
+  const result = await sched.runTick();
+  eq(result.results[0].target, 't3_99', 'ordinary feed content can win while direct replies and mentions are available');
+  eq(providers.stats().calls, 2, 'the chosen ordinary reply uses one candidate decision and one content generation');
+  eq(providers.genCalls[0].kind, 'scheduled-decision', 'candidate selection remains ordinary scheduled work');
+  eq(providers.genCalls[0].priority, 'normal', 'attention salience does not change queue priority');
+  ok(providers.prompts[0].includes('Direct reply to one of your comments') &&
+    providers.prompts[0].includes('Exact mention in a comment') &&
+    providers.prompts[0].includes('Ordinary Feddit post you could reply to') &&
+    providers.prompts[0].includes('Community where you could start a discussion'),
+  'one bounded prompt contains direct, mention, ordinary-feed and new-discussion candidates');
+  const simulation = p.activity.find((entry) => entry.simulation && entry.simulation.action === 'comment');
+  eq(simulation.simulation.decision.selectedType, 'ordinary_post', 'simulation retains the selected candidate type');
+  ok(/garden post fits/.test(simulation.simulation.decision.reason), 'simulation retains the short decision reason');
+  ok(p.attentionState.seenEventIds.includes('t1_81') && p.attentionState.seenEventIds.includes('t1_82'),
+    'unselected direct attention is acknowledged as seen without being marked replied');
+
+  const waiting = profile({
+    id: 'wait-choice', fedditUsername: 'wait-choice', mode: 'comment', commentsPerHour: 1,
+    postFeddits: ['botlife'], readFeddits: ['botlife'],
+    canReply: true, canStartDiscussions: false, canShareLinks: false,
+  });
+  waiting.sched.nextCommentAt = clock.now();
+  const waitingStore = makeStore([waiting]);
+  const waitingProviders = makeProviders({ textFor: () => JSON.stringify({
+    choice: 'WAIT', reason: 'The mention does not need an answer from this personality.',
+  }) });
+  const waitingScheduler = scheduler.createScheduler({
+    store: waitingStore, providers: waitingProviders, feddit: makeFeddit(world),
+    about: aboutLib.createAbout({ feddit: makeFeddit(world), now: clock.now }),
+    feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY,
+  });
+  const waited = await waitingScheduler.runTick();
+  eq(waited.results[0].action, 'wait', 'an exact mention remains optional and can result in WAIT');
+  eq(waitingProviders.stats().calls, 1, 'WAIT uses the selection call only and creates no content generation');
+  ok(!(waiting.activity || []).some((entry) => entry.kind === 'comment'), 'WAIT does not force a reply publication');
+}
+
+// ============================================================================
 // Scenario 1ab: independent abilities, personality-led choice and hard
-// community post formats. A failed reply choice falls through to another real
-// ability; WAIT is valid; link-only communities never receive invented text.
+// community post formats. Only real available abilities enter the menu; WAIT
+// is valid; link-only communities never receive invented text.
 // ============================================================================
 async function scenarioIndependentAbilities() {
   console.log('\n[1ab] independent abilities + personality choice + community post format');
 
-  // The personality initially chooses reply (1), but the feed is empty. Because
-  // starting a discussion is also available, the same turn falls through to a
-  // valid text post rather than ending as a useless no-target result.
+  // The feed is empty, so reply never becomes a candidate. The real discussion
+  // destination remains available and can be chosen in the same opportunity.
   {
     const clock = makeClock(1_800_000);
     const p = profile({
@@ -652,9 +766,9 @@ async function scenarioIndependentAbilities() {
       now: clock.now, random: () => 0, getDeepseekKey: KEY,
     });
     const tick = await sched.runTick();
-    eq(tick.results[0].action, 'post', 'no reply target falls through to another available ability in the same turn');
+    eq(tick.results[0].action, 'post', 'an available discussion competes without a fabricated empty reply choice');
     ok((p.activity || []).some((entry) => entry.simulation && entry.simulation.title === 'A discussion worth having'),
-      'the fallback records a complete text-discussion simulation');
+      'the selected discussion records a complete text-discussion simulation');
     eq(providers.stats().calls, 2, 'one short personality decision and one content generation were made');
     eq(client.calls.submit.length, 0, 'the fallback remains a dry-run and publishes nothing');
   }
@@ -709,6 +823,64 @@ async function scenarioIndependentAbilities() {
     eq(providers.stats().calls, 0, 'a text post in a link-only community is rejected before generation');
     ok((p.activity || []).some((entry) => /requires a real source URL/.test(entry.note || '')),
       'the format rejection plainly explains why no text news post was made');
+  }
+
+  // A real article that passed the existing feed, keyword, routing and dedupe
+  // filters enters the same menu. Selecting it keeps the publisher URL and uses
+  // one separate generation only for the bot-voiced link title.
+  {
+    const H = 3_600_000;
+    const clock = makeClock(1_600_000_000_000);
+    const recent = new Date(clock.now() - H).toUTCString();
+    const feedUrl = feeds.DEFAULT_FEEDS[0].feedUrl;
+    const xml = [
+      '<rss version="2.0"><channel><title>Real publisher</title>',
+      '<item><title>Night buses expanded across the city</title>',
+      '<link>https://publisher.example.com/night-buses</link>',
+      '<description>More late services will run from Monday.</description>',
+      '<pubDate>' + recent + '</pubDate></item>',
+      '</channel></rss>',
+    ].join('');
+    const feedClient = feeds.createFeeds({
+      now: clock.now, sleep: async (ms) => clock.advance(ms), random: () => 0,
+      timeoutMs: 0, fetch: async () => feedRes(200, xml, {}),
+    });
+    await feedClient.fetchItems([feedUrl]);
+    const p = profile({
+      id: 'article-choice', mode: 'post', postsPerHour: 60,
+      postFeddits: ['general'], canReply: false, canStartDiscussions: false,
+      canShareLinks: true, newsUseAllFeeds: false,
+      newsFeedSelection: [feedUrl], newsQuery: 'bus', newsUseGdelt: false,
+    });
+    p.sched.nextPostAt = clock.now();
+    const store = makeStore([p]);
+    const providers = makeProviders({ textFor: (opts, index) => (
+      index === 0
+        ? JSON.stringify({ choice: 'C1', reason: 'The transport story matches this bot\'s interests.' })
+        : 'late buses finally get a little less impossible'
+    ) });
+    const world = {
+      feddits: { general: [] }, comments: {},
+      abouts: { general: { post_format: 'link', description: 'Real article links.', rules: [] } },
+    };
+    const client = makeFeddit(world);
+    const sched = scheduler.createScheduler({
+      store, providers, feddit: client, feeds: feedClient, gdelt: null,
+      about: aboutLib.createAbout({ feddit: client, now: clock.now }),
+      now: clock.now, random: () => 0, getDeepseekKey: KEY,
+    });
+    const tick = await sched.runTick();
+    eq(tick.results[0].action, 'news', 'a real filtered article can be selected from the opportunity menu');
+    eq(providers.stats().calls, 2,
+      'article action uses one opportunity decision call and one bot-voiced title call');
+    const entry = (p.activity || []).find((item) => item.simulation && item.simulation.action === 'news');
+    eq(entry.simulation.sourceUrl, 'https://publisher.example.com/night-buses',
+      'the selected article keeps its real publisher URL');
+    eq(entry.simulation.decision.selectedType, 'article',
+      'the article simulation records the selected candidate type');
+    ok(/transport story/.test(entry.simulation.decision.reason),
+      'the article simulation records the short selection reason');
+    eq(client.calls.submit.length, 0, 'article selection remains isolated in rehearsal mode');
   }
 }
 
@@ -2586,12 +2758,26 @@ async function scenarioSubFedditCreation() {
   // Run ONE live conversational post tick against a stub world; returns state.
   async function postTick(world) {
     const clock = makeClock(1_000_000);
-    const p = profile({ id: 'cm', fedditUsername: 'cm', mode: 'post', botType: 'conversational', postsPerHour: 5, postFeddits: ['localnews'] });
+    const p = profile({
+      id: 'cm', fedditUsername: 'cm', mode: 'post', botType: 'conversational',
+      postsPerHour: 5, postFeddits: ['localnews'], canReply: false,
+      canStartDiscussions: true, canShareLinks: false,
+    });
     p.sched.nextPostAt = clock.now();
     const store = makeStore([p]);
     store.updateSettings({ dryRun: false }); // LIVE so the submit is actually attempted (against the stub)
     const client = makeFeddit(world);
-    const sched = scheduler.createScheduler({ store, providers: makeProviders(), feddit: client, now: clock.now, random: () => 0, getDeepseekKey: KEY });
+    const sched = scheduler.createScheduler({
+      store,
+      providers: makeProviders({ textFor: (_opts, index) => (
+        index === 0
+          ? JSON.stringify({ choice: 'C1', reason: 'This is the available discussion destination.' })
+          : 'A new discussion\n\nThis is the discussion body.'
+      ) }),
+      feddit: client,
+      about: aboutLib.createAbout({ feddit: client, now: clock.now }),
+      now: clock.now, random: () => 0, getDeepseekKey: KEY,
+    });
     await sched.runTick();
     return { store, client, profile: store.getProfile('cm') };
   }
@@ -3009,6 +3195,7 @@ async function scenarioDeepseekReasoning() {
   await scenarioPerProfileMode();
   await scenarioImmediateSimulation();
   await scenarioNewsDiscussion();
+  await scenarioRealCandidateCompetition();
   await scenarioIndependentAbilities();
   await scenarioCommunityMovement();
   await scenarioCadenceCeiling();

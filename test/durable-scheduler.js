@@ -146,6 +146,21 @@ function completeJob(queue, jobId, text) {
   });
 }
 
+function chooseFirstCandidate(queue, turn) {
+  completeJob(queue, turn.generations[0].jobId, JSON.stringify({
+    choice: 'C1',
+    reason: 'The available discussion fits this bot right now.',
+  }));
+}
+
+async function queueContentGeneration(runtime, turnId) {
+  runtime.scheduler.reconcileDurableTurns();
+  await settle();
+  const turn = runtime.turnStore.get(turnId);
+  eq(turn.generations.length, 2, 'the stored candidate decision resumes into one content generation');
+  return turn.generations[1];
+}
+
 function harness(options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'feddit-durable-scheduler-'));
   let current = 10_000;
@@ -274,6 +289,11 @@ async function run() {
       eq(queuedA.ownerKey, 'owner-bot-a', 'durable jobs use the real private workspace owner key');
       eq(queuedA.allocationClass, 'user', 'user-created durable work enters the user allocation class');
       eq(queuedA.onboarding, true, 'new user-created durable work carries onboarding priority');
+      eq(queuedA.priority, 'normal', 'candidate salience does not promote scheduled work to interactive priority');
+      const queuedTurnA = h.turnStore.activeForProfile('bot-a');
+      ok(queuedTurnA.generations[0].request.prompt.includes('real things available now') &&
+        queuedTurnA.generations[0].request.prompt.includes('WAIT'),
+        'the first durable generation chooses from real candidates and can wait');
 
       const secondTick = await firstScheduler.runTick();
       await settle();
@@ -319,17 +339,18 @@ async function run() {
       await beforeRestart.runTick();
       await settle();
       const turn = h.turnStore.activeForProfile('rehearsal-bot');
-      const jobId = turn.generations[0].jobId;
-      completeJob(h.queue, jobId, 'A durable title\n\nA durable body.');
+      chooseFirstCandidate(h.queue, turn);
 
       h.profiles[0].dryRun = false;
       const restarted = h.restartRuntime();
+      const content = await queueContentGeneration(restarted, turn.id);
+      completeJob(restarted.queue, content.jobId, 'A durable title\n\nA durable body.');
       restarted.scheduler.reconcileDurableTurns();
       await settle();
       const finished = restarted.turnStore.get(turn.id);
       eq(finished.status, 'completed', 'a completed queue result resumes and completes after scheduler recreation');
       eq(h.writes.length, 0, 'the turn keeps its frozen rehearsal mode even if the profile changes after restart');
-      eq(queueJobs(h.queueFile).length, 1, 'the completed generation is reused rather than regenerated');
+      eq(queueJobs(h.queueFile).length, 2, 'the completed decision and content generations are reused rather than regenerated');
       eq(h.profiles[0].activity.filter((entry) => entry.dryRun).length, 1, 'post-generation rehearsal handling runs once');
       eq(h.profiles[0].hostedOnboardingTurnsCompleted, 1,
         'one useful completed scheduled DELL turn consumes one onboarding opportunity');
@@ -337,7 +358,7 @@ async function run() {
       const anotherRestart = h.restartRuntime();
       anotherRestart.scheduler.reconcileDurableTurns();
       await settle();
-      eq(queueJobs(h.queueFile).length, 1, 'a terminal turn remains terminal across another restart');
+      eq(queueJobs(h.queueFile).length, 2, 'a terminal turn remains terminal across another restart');
       eq(h.profiles[0].activity.filter((entry) => entry.dryRun).length, 1, 'terminal reconciliation does not duplicate activity');
       eq(h.profiles[0].hostedOnboardingTurnsCompleted, 1,
         'restart reconciliation never consumes the same onboarding opportunity twice');
@@ -395,9 +416,11 @@ async function run() {
       await initial.runTick();
       await settle();
       const turn = h.turnStore.activeForProfile('live-bot');
-      completeJob(h.queue, turn.generations[0].jobId, 'Live durable title\n\nLive durable body.');
+      chooseFirstCandidate(h.queue, turn);
 
       const restarted = h.restartRuntime();
+      const content = await queueContentGeneration(restarted, turn.id);
+      completeJob(restarted.queue, content.jobId, 'Live durable title\n\nLive durable body.');
       restarted.scheduler.reconcileDurableTurns();
       await settle();
       eq(h.writes.length, 1, 'a live durable turn publishes once after its result arrives');
@@ -418,14 +441,17 @@ async function run() {
       await initial.runTick();
       await settle();
       const turn = h.turnStore.activeForProfile('uncertain-bot');
-      completeJob(h.queue, turn.generations[0].jobId, 'Uncertain title\n\nUncertain body.');
-      h.turnStore.publication(turn.id, { state: 'attempting', attemptingAt: h.now() });
+      chooseFirstCandidate(h.queue, turn);
 
       const restarted = h.restartRuntime();
-      restarted.scheduler.reconcileDurableTurns();
+      const content = await queueContentGeneration(restarted, turn.id);
+      completeJob(restarted.queue, content.jobId, 'Uncertain title\n\nUncertain body.');
+      restarted.turnStore.publication(turn.id, { state: 'attempting', attemptingAt: h.now() });
+      const afterPublicationRestart = h.restartRuntime();
+      afterPublicationRestart.scheduler.reconcileDurableTurns();
       await settle();
       eq(h.writes.length, 0, 'an interrupted publication boundary is not retried after restart');
-      eq(restarted.turnStore.get(turn.id).status, 'publication-uncertain', 'the residual no-idempotency edge is explicit and terminal');
+      eq(afterPublicationRestart.turnStore.get(turn.id).status, 'publication-uncertain', 'the residual no-idempotency edge is explicit and terminal');
     } finally {
       h.cleanup();
     }
@@ -441,9 +467,11 @@ async function run() {
       await h.scheduler().runTick();
       await settle();
       const turn = h.turnStore.activeForProfile('network-uncertain-bot');
-      completeJob(h.queue, turn.generations[0].jobId, 'Network boundary title\n\nNetwork boundary body.');
+      chooseFirstCandidate(h.queue, turn);
 
       const restarted = h.restartRuntime();
+      const content = await queueContentGeneration(restarted, turn.id);
+      completeJob(restarted.queue, content.jobId, 'Network boundary title\n\nNetwork boundary body.');
       restarted.scheduler.reconcileDurableTurns();
       await settle();
       eq(h.writes.length, 1, 'a live write is attempted once when Feddit never returns a response');
@@ -464,19 +492,22 @@ async function run() {
       await initial.runTick();
       await settle();
       const turn = h.turnStore.activeForProfile('response-saved-bot');
-      completeJob(h.queue, turn.generations[0].jobId, 'Saved response title\n\nSaved response body.');
-      h.turnStore.publication(turn.id, {
+      chooseFirstCandidate(h.queue, turn);
+      const restarted = h.restartRuntime();
+      const content = await queueContentGeneration(restarted, turn.id);
+      completeJob(restarted.queue, content.jobId, 'Saved response title\n\nSaved response body.');
+      restarted.turnStore.publication(turn.id, {
         kind: 'post',
         state: 'response-received',
         response: { ok: true, status: 200, data: { post: { data: { id: 777 } } } },
         responseReceivedAt: h.now(),
       });
 
-      const restarted = h.restartRuntime();
-      restarted.scheduler.reconcileDurableTurns();
+      const afterResponseRestart = h.restartRuntime();
+      afterResponseRestart.scheduler.reconcileDurableTurns();
       await settle();
       eq(h.writes.length, 0, 'a stored successful publication response is reused without another Feddit write');
-      eq(restarted.turnStore.get(turn.id).status, 'completed', 'post-publication finalisation resumes after restart');
+      eq(afterResponseRestart.turnStore.get(turn.id).status, 'completed', 'post-publication finalisation resumes after restart');
       eq(h.profiles[0].activity.filter((entry) => entry.postId === 777).length, 1, 'the stored publication result is applied to local history once');
     } finally {
       h.cleanup();
@@ -501,7 +532,7 @@ async function run() {
       const recovered = h.turnStore.get(turn.id);
       ok(recovered.generations[0].jobId !== originalJobId, 'a genuinely missing queue job is re-enqueued');
       eq(h.queue.capacity().queued, 1, 'missing-job recovery creates exactly one replacement job');
-      eq(recovered.generations[0].request.prompt.includes('posting a NEW thread'), true, 'missing-job recovery preserves the original generation request');
+      eq(recovered.generations[0].request.prompt.includes('real things available now'), true, 'missing-job recovery preserves the original candidate-decision request');
 
       const missingAgain = JSON.parse(fs.readFileSync(h.queueFile, 'utf8'));
       missingAgain.jobs = [];

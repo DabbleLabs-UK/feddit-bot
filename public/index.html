@@ -1389,7 +1389,7 @@ function renderEditor(p) {
         </div>
       </div>
       <div class="hint" style="margin-bottom:8px"><b>Want it to reconsider posts or articles it already tried?</b> Reset simulation memory. This clears only the dry-run results, tried-target memory, thread limits and rehearsal timers, so the bot can begin a fresh simulation. Live Feddit activity and live publishing history are untouched.</div>
-      <div class="hint"><b>Nothing is posted to a separate sandbox site.</b> Scheduled simulation results appear here automatically, including the complete text post, reply or article-link title and enough source context to evaluate it. To avoid waiting, the buttons below run the same live targeting and generation path immediately, but always stop before publishing.</div>
+      <div class="hint"><b>Nothing is posted to a separate sandbox site.</b> Scheduled simulation results appear here automatically, including the complete text post, reply or article-link title and enough source context to evaluate it. Each normal opportunity starts with a bounded menu of real Feddit items, available articles and possible new discussions; the bot chooses one or WAIT. The result shows that short decision without exposing private reasoning. To avoid waiting, the buttons below run the same live targeting and generation path immediately, but always stop before publishing.</div>
       <div class="hosted-work" id="hostedWork" role="status" aria-live="polite" hidden></div>
       <div class="row" style="margin-top:10px">
         <button type="button" id="simulatePostBtn">Simulate a post now</button>
@@ -2071,6 +2071,26 @@ function simulationValue(label, value) {
     '<div class="simulation-output">' + esc(value) + '</div>';
 }
 
+function simulationDecision(decision) {
+  if (!decision || typeof decision !== 'object') return '';
+  const reasonLabel = decision.outcome === 'wait'
+    ? 'Why the bot waited'
+    : 'Why this candidate was chosen';
+  const selected = decision.outcome === 'wait'
+    ? 'WAIT'
+    : (decision.selectedLabel || decision.selectedType || 'Selected candidate');
+  const types = Array.isArray(decision.candidateTypes)
+    ? decision.candidateTypes.map((type) => String(type || '').replaceAll('_', ' ')).filter(Boolean)
+    : [];
+  const considered = Number(decision.candidateCount) || 0;
+  return '<div class="simulation-decision">' +
+    simulationValue('Opportunity decision', selected) +
+    simulationValue(reasonLabel, decision.reason || 'No short decision reason was recorded.') +
+    (considered ? '<details class="simulation-context"><summary>' + esc(considered + ' real candidate' + (considered === 1 ? '' : 's') + ' considered') +
+      '</summary><div class="simulation-output">' + esc(types.length ? types.join(', ') : 'Candidate types unavailable.') + '</div></details>' : '') +
+    '</div>';
+}
+
 function renderSimulationResults(p) {
   const host = $('#simulationResults');
   const count = $('#simulationCount');
@@ -2108,13 +2128,14 @@ function renderSimulationResults(p) {
       ? '<span class="badge" style="color:var(--bad);border-color:var(--bad)">failed - no output</span>'
       : '<span class="badge" style="color:var(--good);border-color:var(--good)">generated</span>';
     let body = '';
+    const decision = sim ? simulationDecision(sim.decision) : '';
     if (!sim) {
       body = '<div class="hint" style="margin-top:8px">Earlier app versions kept only this shortened summary; complete text was not retained.</div>' +
         simulationValue('Recorded summary', entry.note || 'No summary available.');
     } else if (sim.error) {
-      body = simulationValue('Why no output was generated', sim.error);
+      body = decision + simulationValue('Why no output was generated', sim.error);
     } else if (entry.kind === 'decision') {
-      body = simulationValue('Why it did nothing this turn', sim.reason || entry.note);
+      body = decision || simulationValue('Why it did nothing this turn', sim.reason || entry.note);
     } else if (entry.kind === 'comment') {
       const attentionReason = sim.attention && sim.attention.reason
         ? simulationValue('Why this reached the bot', sim.attention.reason)
@@ -2122,14 +2143,14 @@ function renderSimulationResults(p) {
       const context = sim.context
         ? '<details class="simulation-context"><summary>What it was replying to</summary><div class="simulation-output">' + esc(sim.context) + '</div></details>'
         : '';
-      body = attentionReason + context + simulationValue('Complete reply it would publish', sim.reply);
+      body = decision + attentionReason + context + simulationValue('Complete reply it would publish', sim.reply);
     } else if (entry.kind === 'news') {
-      body = simulationValue('Publisher headline', sim.sourceTitle) +
+      body = decision + simulationValue('Publisher headline', sim.sourceTitle) +
         simulationValue('Source URL', sim.sourceUrl) +
         simulationValue('Available article summary', sim.summary) +
         simulationValue('Feddit title it would publish', sim.title);
     } else {
-      body = simulationValue('Title it would publish', sim.title) +
+      body = decision + simulationValue('Title it would publish', sim.title) +
         simulationValue('Body it would publish', sim.body);
     }
     return '<article class="simulation-card"><div class="row" style="justify-content:space-between">' +
