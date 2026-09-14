@@ -1279,6 +1279,16 @@ function renderEditor(p) {
           <label class="row" style="gap:7px;margin-top:7px"><input type="checkbox" id="f_canShareLinks" style="width:auto"${abilities.canShareLinks?' checked':''}> Share real article links</label></div>
       </div>
       <div class="hint" id="botTypeHint">These are independent abilities, not fixed bot types. When several are available, the bot chooses in character and may decide to wait.</div>
+      <div class="field full" style="margin-top:16px">
+        <label>Public Feddit biography</label>
+        <textarea id="f_fedditBio" maxlength="500" placeholder="A short public description shown on this bot's Feddit profile.">${esc(p.fedditBio == null ? '' : p.fedditBio)}</textarea>
+        <div class="hint"><b>This is public profile text.</b> It is not sent to the model and does not tell the bot how to think, write or behave. Use the Persona section below for that.</div>
+        <div class="row" style="margin-top:8px">
+          <button type="button" id="saveBiographyBtn" disabled>Save biography</button>
+          <span class="hint" id="fedditBioMeta"></span>
+          <span class="hint" id="fedditBioCount" style="margin-left:auto"></span>
+        </div>
+      </div>
     </div>
 
     <div class="section">
@@ -1563,6 +1573,24 @@ function renderEditor(p) {
       renderTokenArea(state.editing);
     });
   }
+  const biographyField = $('#f_fedditBio');
+  const biographyButton = $('#saveBiographyBtn');
+  const biographyCount = $('#fedditBioCount');
+  const biographyMeta = $('#fedditBioMeta');
+  biographyField.dataset.initial = biographyField.value;
+  biographyMeta.textContent = p.fedditBioStatus === 'loaded'
+    ? 'Loaded from Feddit. Saving changes the public profile.'
+    : (p.fedditBioStatus === 'unavailable'
+      ? 'Feddit could not be reached. You can still type a replacement and save it when Feddit responds.'
+      : (p.hasToken
+        ? 'This saved copy will be written to the public Feddit profile when changed.'
+        : 'Saved with this draft and used as its public biography when you register it.'));
+  const syncBiographyInput = () => {
+    biographyCount.textContent = [...biographyField.value].length + ' / 500';
+    biographyButton.disabled = biographyField.value === biographyField.dataset.initial;
+  };
+  biographyField.addEventListener('input', syncBiographyInput);
+  syncBiographyInput();
   $('#f_model').addEventListener('change', renderProviderView);
   $('#f_provider').addEventListener('change', renderProviderView);
   ['#f_canReply', '#f_canStartDiscussions', '#f_canShareLinks'].forEach((selector) => {
@@ -1589,6 +1617,7 @@ function renderEditor(p) {
   $('#simulatePostBtn').onclick = () => runSimulationNow(p.id, 'post');
   $('#simulateCommentBtn').onclick = () => runSimulationNow(p.id, 'comment');
   $('#saveBtn').onclick = () => saveProfile(p.id);
+  $('#saveBiographyBtn').onclick = () => saveBiography(p.id);
   $('#exportBtn').onclick = () => exportProfile(p.id, p.referenceName);
   if ($('#handoverBtn')) $('#handoverBtn').onclick = () => handoverProfile(p.id, p.referenceName, p.handoverPending);
   if ($('#handoverCompleteBtn')) $('#handoverCompleteBtn').onclick = () => completeHandover(p.id);
@@ -2226,7 +2255,53 @@ function collectForm() {
   };
 }
 
+async function saveBiography(id, options = {}) {
+  const field = $('#f_fedditBio');
+  const button = $('#saveBiographyBtn');
+  const meta = $('#fedditBioMeta');
+  if (!field || field.value === field.dataset.initial) return true;
+  const originalLabel = button ? button.textContent : '';
+  if (button) { button.disabled = true; button.textContent = 'Saving biography...'; }
+  if (meta) meta.textContent = state.editing && state.editing.hasToken
+    ? 'Updating the public Feddit profile...'
+    : 'Saving this draft biography...';
+  try {
+    const response = await api('/api/profiles/' + encodeURIComponent(id) + '/biography', {
+      method: 'PUT',
+      body: { bio: field.value },
+    });
+    const saved = response.profile || {};
+    field.value = saved.fedditBio == null ? '' : saved.fedditBio;
+    field.dataset.initial = field.value;
+    if (state.editing && state.editing.id === id) {
+      state.editing = {
+        ...state.editing,
+        fedditBio: field.value,
+        fedditBioStatus: saved.fedditBioStatus,
+        fedditBioError: null,
+      };
+    }
+    if (meta) meta.textContent = saved.fedditBioStatus === 'saved'
+      ? 'Saved on the public Feddit profile.'
+      : 'Saved with this draft for registration.';
+    const count = $('#fedditBioCount');
+    if (count) count.textContent = [...field.value].length + ' / 500';
+    if (!options.quiet) toast('Public biography saved.', 'ok');
+    return true;
+  } catch (error) {
+    if (meta) meta.textContent = 'Not saved. The previous biography is unchanged.';
+    toast('Biography save failed: ' + error.message, 'err');
+    return false;
+  } finally {
+    if (button) {
+      button.textContent = originalLabel || 'Save biography';
+      button.disabled = field.value === field.dataset.initial;
+    }
+  }
+}
+
 async function saveProfile(id) {
+  if (!(await saveBiography(id, { quiet: true }))) return;
   try {
     await api('/api/profiles/' + encodeURIComponent(id), { method: 'PUT', body: collectForm() });
     toast('Saved.', 'ok');
@@ -2236,7 +2311,9 @@ async function saveProfile(id) {
 }
 
 async function registerProfile(id) {
-  // Persist current form first so username/persona are up to date before registering.
+  // Persist public biography and private settings independently before claiming
+  // the identity, so registration never falls back to the persona as profile text.
+  if (!(await saveBiography(id, { quiet: true }))) return;
   try {
     await api('/api/profiles/' + encodeURIComponent(id), { method: 'PUT', body: collectForm() });
   } catch (e) { toast('Could not save before registering: ' + e.message, 'err'); return; }
@@ -2617,6 +2694,7 @@ function renderNewBotFlow() {
         <details>
           <summary>Add a little more voice, if you want</summary>
           <div class="field" style="margin-top:10px"><label>Tone notes</label><textarea id="n_tone" placeholder="e.g. warm, sceptical, brief, easily delighted"></textarea></div>
+          <div class="field" style="margin-top:10px"><label>Public Feddit biography</label><textarea id="n_fedditBio" maxlength="500" placeholder="A short public description shown on the bot's profile."></textarea><div class="hint">Public profile text only. It does not tell the bot how to behave.</div></div>
           <div class="field" id="n_ruleStyleField" style="margin-top:10px"><label>Attitude to community rules</label>
             <select id="n_communityRuleStyle">
               <option value="personality">Personality decides - may naturally deviate</option>
@@ -2679,6 +2757,7 @@ function renderNewBotFlow() {
     const canComment = canReply;
     const patch = {
       fedditUsername: username,
+      fedditBio: $('#n_fedditBio').value.trim(),
       persona,
       toneNotes: $('#n_tone').value.trim(),
       canReply,

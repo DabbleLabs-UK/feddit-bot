@@ -117,4 +117,20 @@ assert.deepEqual(attentionUpgrade.attentionState.seenEventIds, ['t1_90']);
 assert.deepEqual(attentionUpgrade.simulationState.attentionState.cursor, { comments: 22, posts: 3 });
 assert.deepEqual(attentionUpgrade.simulationState.attentionState.seenEventIds, ['t1_21']);
 
+const biographyUpgrade = store.migrateProfiles([{
+  id: 'legacy-bio',
+  fedditUsername: 'legacy_bot',
+  persona: 'Private behaviour that must never become a public biography.',
+}], 10)[0];
+assert.equal(biographyUpgrade.fedditBio, null,
+  'a legacy profile waits for its authoritative Feddit biography instead of copying the persona');
+assert.equal(biographyUpgrade.persona, 'Private behaviour that must never become a public biography.');
+const currentBiography = store.migrateProfiles([{
+  id: 'current-bio',
+  fedditBio: 'A deliberately separate public biography.',
+  persona: 'Private behaviour.',
+}], 11)[0];
+assert.equal(currentBiography.fedditBio, 'A deliberately separate public biography.');
+assert.equal(currentBiography.persona, 'Private behaviour.');
+
 console.log('model-migration: all checks passed');

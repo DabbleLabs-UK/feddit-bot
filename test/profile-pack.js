@@ -7,6 +7,7 @@ const original = {
   id: 'p_private',
   fedditUsername: 'news_numbnut',
   refName: '',
+  fedditBio: 'Publicly follows local stories with a suspicious eye.',
   token: 'feddit_NEVER_EXPORT_THIS',
   persona: 'A highly opinionated local-news reader.',
   toneNotes: 'Short and excitable.',
@@ -40,6 +41,7 @@ assert.equal(moved.format, packs.FORMAT);
 assert.equal(moved.version, packs.VERSION);
 assert.equal(moved.kind, 'move');
 assert.equal(moved.bot.persona, original.persona);
+assert.equal(moved.bot.fedditBio, original.fedditBio);
 assert.equal(moved.bot.canReply, true);
 assert.equal(moved.bot.canStartDiscussions, true);
 assert.equal(moved.bot.canShareLinks, true);
@@ -63,6 +65,7 @@ assert.equal(JSON.stringify(moved).includes('machine-specific-model'), false);
 
 const imported = packs.importPatch(moved);
 assert.equal(imported.persona, original.persona);
+assert.equal(imported.fedditBio, original.fedditBio);
 assert.equal(imported.canReply, true);
 assert.equal(imported.canStartDiscussions, true);
 assert.equal(imported.canShareLinks, true);
@@ -81,6 +84,7 @@ const template = packs.exportProfile(original, { template: true });
 assert.equal(template.kind, 'template');
 assert.equal(template.sourceProfileId, null);
 assert.equal(template.bot.fedditUsername, '');
+assert.equal(template.bot.fedditBio, original.fedditBio);
 assert.equal('runtime' in template, false);
 
 assert.deepEqual(packs.validate(null), {
@@ -95,14 +99,22 @@ assert.equal(handover.format, packs.HANDOVER_FORMAT);
 assert.equal(handover.version, packs.HANDOVER_VERSION);
 assert.equal(handover.fedditToken, replacementToken);
 assert.equal(handover.profilePack.bot.persona, original.persona);
+assert.equal(handover.profilePack.bot.fedditBio, original.fedditBio);
 assert.equal(handover.profilePack.bot.provider, undefined);
 assert.equal(packs.validateHandover(handover).ok, true);
 const handedIn = packs.importHandoverPatch(handover);
 assert.equal(handedIn.token, replacementToken);
 assert.equal(handedIn.enabled, false);
 assert.equal(handedIn.persona, original.persona);
+assert.equal(handedIn.fedditBio, original.fedditBio);
 assert.equal(handedIn.provider, undefined);
 assert.equal(packs.validateHandover({ ...handover, fedditToken: 'not-a-token' }).ok, false);
 assert.throws(() => packs.createHandover(original, 'not-a-token'));
+assert.equal(packs.validate({
+  format: packs.FORMAT,
+  version: packs.VERSION,
+  kind: 'template',
+  bot: { fedditBio: 'x'.repeat(501) },
+}).ok, false, 'portable biographies cannot exceed Feddit\'s limit');
 
 console.log('profile-pack: all checks passed');

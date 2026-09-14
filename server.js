@@ -169,6 +169,41 @@ function safeProfile(p) {
   };
 }
 
+function normalizeFedditBio(value) {
+  if (typeof value !== 'string') {
+    const error = new Error('The public Feddit biography must be text.');
+    error.code = 'INVALID_BIO';
+    throw error;
+  }
+  const bio = value.replace(/\r\n?/g, '\n').trim();
+  if ([...bio].length > 500) {
+    const error = new Error('The public Feddit biography must be at most 500 characters.');
+    error.code = 'INVALID_BIO';
+    throw error;
+  }
+  return bio;
+}
+
+async function currentFedditBiography(profile) {
+  const stored = typeof profile.fedditBio === 'string' ? profile.fedditBio : '';
+  if (!profile.token || !String(profile.fedditUsername || '').trim()) {
+    return { bio: stored, status: 'draft', error: null };
+  }
+  const info = await feddit.botInfo(profile.fedditUsername, { timeoutMs: 5000 });
+  const bot = info && info.data && info.data.bot;
+  if (info && info.ok && bot && (Object.prototype.hasOwnProperty.call(bot, 'bio') ||
+      Object.prototype.hasOwnProperty.call(bot, 'description'))) {
+    const remote = normalizeFedditBio(String(bot.bio ?? bot.description ?? ''));
+    if (profile.fedditBio !== remote) store.updateProfile(profile.id, { fedditBio: remote });
+    return { bio: remote, status: 'loaded', error: null };
+  }
+  return {
+    bio: stored,
+    status: 'unavailable',
+    error: (info && info.error) || 'Feddit did not return this bot\'s biography.',
+  };
+}
+
 function safeHostedJob(job) {
   const result = job && job.result && typeof job.result === 'object' ? job.result : {};
   const allocationClass = cleanAllocationClass(job.allocationClass, job.priority);
@@ -600,6 +635,13 @@ async function handleApi(req, res, urlPath, query) {
   // POST /api/profiles - create.
   if (method === 'POST' && urlPath === '/api/profiles') {
     const body = await readBody(req);
+    if (Object.prototype.hasOwnProperty.call(body, 'fedditBio')) {
+      try {
+        body.fedditBio = normalizeFedditBio(body.fedditBio);
+      } catch (error) {
+        return sendJson(res, 400, { error: error.message });
+      }
+    }
     delete body.ownerId;
     delete body.botOrigin;
     delete body.hostedOnboardingTurnsCompleted;
@@ -681,6 +723,7 @@ async function handleApi(req, res, urlPath, query) {
     // stale client state.
     if (method === 'GET' && !sub) {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
+      const biography = await currentFedditBiography(existing);
       const {
         token, ownerId, postedNews, newsDomainDaily, newsDomainDays,
         simulationState, ...rest
@@ -689,6 +732,9 @@ async function handleApi(req, res, urlPath, query) {
       return sendJson(res, 200, {
         profile: {
           ...rest,
+          fedditBio: biography.bio,
+          fedditBioStatus: biography.status,
+          fedditBioError: biography.error,
           sched: simulation && simulationState && simulationState.sched ? simulationState.sched : rest.sched,
           hasToken: Boolean(token),
           handoverPending: Boolean(secrets.getFedditHandover(existing.id)),
@@ -701,6 +747,41 @@ async function handleApi(req, res, urlPath, query) {
             ? simulationState.postedNews.length : 0,
           hostedAllocation: PLACEMENT === 'hosted' ? hostedPolicy.allocationFor(existing) : null,
         },
+      });
+    }
+
+    // PUT /api/profiles/:id/biography - edit the public Feddit biography without
+    // conflating it with the private persona or any behavioural setting. Drafts
+    // keep it locally for registration; registered identities update Feddit
+    // first so a failed remote write cannot leave the runner claiming success.
+    if (method === 'PUT' && sub === '/biography') {
+      if (!existing) return sendJson(res, 404, { error: 'No such profile' });
+      const body = await readBody(req);
+      let bio;
+      try {
+        bio = normalizeFedditBio(body.bio);
+      } catch (error) {
+        return sendJson(res, 400, { error: error.message });
+      }
+      if (existing.token) {
+        const updated = await feddit.updateMe(existing.token, { bio });
+        if (!updated.ok) {
+          const status = updated.status === 400 || updated.status === 401 || updated.status === 403 || updated.status === 429
+            ? updated.status : 502;
+          return sendJson(res, status, {
+            error: updated.error || 'Feddit could not update this biography. The previous biography was kept.',
+          });
+        }
+        const remoteBot = updated.data && updated.data.bot;
+        if (remoteBot && (Object.prototype.hasOwnProperty.call(remoteBot, 'bio') ||
+            Object.prototype.hasOwnProperty.call(remoteBot, 'description'))) {
+          bio = normalizeFedditBio(String(remoteBot.bio ?? remoteBot.description ?? ''));
+        }
+      }
+      const profile = store.updateProfile(id, { fedditBio: bio });
+      return sendJson(res, 200, {
+        ok: true,
+        profile: { ...safeProfile(profile), fedditBio: bio, fedditBioStatus: existing.token ? 'saved' : 'draft', fedditBioError: null },
       });
     }
 
@@ -732,6 +813,11 @@ async function handleApi(req, res, urlPath, query) {
     if (method === 'PUT' && !sub) {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
       const body = await readBody(req);
+      // Public biography writes deliberately use /biography so an ordinary
+      // behaviour/settings save can never overwrite the live Feddit profile.
+      delete body.fedditBio;
+      delete body.fedditBioStatus;
+      delete body.fedditBioError;
       delete body.ownerId;
       delete body.botOrigin;
       delete body.hostedOnboardingTurnsCompleted;
@@ -779,7 +865,7 @@ async function handleApi(req, res, urlPath, query) {
       if (secrets.getFedditHandover(id)) return sendJson(res, 409, { error: 'This bot has a handover in progress.' });
       if (existing.token) return sendJson(res, 409, { error: 'This profile already has a token. Delete it first to re-register.' });
 
-      const description = (existing.persona || '').slice(0, 500);
+      const description = normalizeFedditBio(typeof existing.fedditBio === 'string' ? existing.fedditBio : '');
       const r = await feddit.register({ username, description });
       if (!r.ok) {
         return sendJson(res, r.status === 429 ? 429 : 502, { error: r.error || 'Registration failed', data: r.data });
@@ -788,7 +874,11 @@ async function handleApi(req, res, urlPath, query) {
       const bot = r.data && r.data.bot;
       if (!token) return sendJson(res, 502, { error: 'Feddit did not return a token', data: r.data });
 
-      store.updateProfile(id, { token });
+      const registeredBio = bot && (Object.prototype.hasOwnProperty.call(bot, 'description') ||
+          Object.prototype.hasOwnProperty.call(bot, 'bio'))
+        ? normalizeFedditBio(String(bot.bio ?? bot.description ?? ''))
+        : description;
+      store.updateProfile(id, { token, fedditBio: registeredBio });
       store.logActivity(id, { kind: 'register', ok: true, note: 'Registered as ' + username });
       return sendJson(res, 200, { ok: true, bot, profile: safeProfile(store.getProfile(id)) });
     }

@@ -11,7 +11,9 @@ creative flow are used wherever the bot runs.
 
 It manages multiple independent **bot profiles**. Feddit has no user accounts:
 a bot identity IS a registration that returns a bearer token, so N profiles
-means N registrations, each with its own token, persona, and behaviour.
+means N registrations, each with its own token, public biography, private
+persona, and behaviour. The public biography is edited independently and is
+never used as a model instruction.
 
 The Feddit username remains editable while a profile is only a draft. Once the
 identity is registered and has a bearer token, its username is permanent, like
