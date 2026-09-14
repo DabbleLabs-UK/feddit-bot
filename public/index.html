@@ -103,8 +103,9 @@
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .section { border: 1px solid var(--line); border-radius: 7px; padding: 14px 16px; margin-bottom: 16px; background: var(--panel); }
   .bot-runbar {
-    position: sticky; top: 0; z-index: 25; display: flex; justify-content: space-between;
-    align-items: center; gap: 14px; margin: 0 0 16px; padding: 12px 14px;
+    position: sticky; top: 0; z-index: 25; display: grid;
+    grid-template-columns: minmax(0, 1fr) auto; align-items: start;
+    gap: 14px; margin: 0 0 16px; padding: 12px 14px;
     border: 2px solid var(--line); border-radius: 8px; background: var(--panel);
     box-shadow: 0 5px 16px rgba(0,0,0,.45);
   }
@@ -124,13 +125,16 @@
     font-variant-numeric: tabular-nums; letter-spacing: .01em;
   }
   .bot-last-outcome { margin-top: 5px; color: #c9d7e4; font-size: 12px; line-height: 1.35; }
-  .bot-run-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+  .bot-run-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: nowrap; white-space: nowrap; }
   .bot-mode-choice {
-    display: flex; flex-direction: column; gap: 5px; margin: 0; padding: 7px 10px;
-    border: 1px solid var(--line); border-radius: 8px; min-width: 116px;
+    display: flex; flex-direction: column; align-items: stretch; gap: 5px; margin: 0; padding: 7px 10px;
+    border: 1px solid var(--line); border-radius: 8px; width: 126px; min-width: 126px; box-sizing: border-box;
   }
   .bot-mode-choice legend { padding: 0 4px; color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
-  .bot-mode-choice label { display: flex; align-items: center; gap: 7px; cursor: pointer; font-size: 12px; font-weight: 700; }
+  .bot-mode-choice label {
+    display: grid; grid-template-columns: 15px 1fr; align-items: center; justify-items: start;
+    gap: 7px; width: 100%; cursor: pointer; text-align: left; font-size: 12px; font-weight: 700;
+  }
   .bot-mode-choice input { margin: 0; }
   .bot-mode-choice .live { color: #f0d9a0; }
   .bot-mode-choice .rehearsal { color: #8ee493; }
@@ -283,9 +287,14 @@
     .main { min-height: 65vh; }
     .grid { grid-template-columns: 1fr; }
     .model-choice { grid-template-columns: 1fr; }
-    .bot-runbar { flex-direction: column; align-items: stretch; }
-    .bot-run-actions { justify-content: stretch; }
-    .bot-run-actions > * { width: 100%; }
+    .bot-runbar { grid-template-columns: 1fr; align-items: stretch; }
+    .bot-run-actions {
+      display: grid; grid-template-columns: 126px minmax(0, 1fr); align-items: center;
+      justify-content: stretch; white-space: normal;
+    }
+    .bot-mode-choice { grid-column: 1; grid-row: 1 / span 2; }
+    .bot-history-link { grid-column: 2; grid-row: 1; }
+    .bot-run-toggle { grid-column: 2; grid-row: 2; width: 100%; }
   }
 </style>
 </head>
@@ -1014,7 +1023,7 @@ function renderBotRunBar(p) {
   const view = runStatePresentation(p);
   const rehearsal = p.dryRun !== false;
   const historyLink = p.fedditHistoryUrl
-    ? '<a class="bot-history-link" href="' + esc(p.fedditHistoryUrl) + '" target="_blank" rel="noopener">View posts and conversations on Feddit</a>'
+    ? '<a class="bot-history-link" href="' + esc(p.fedditHistoryUrl) + '" target="_blank" rel="noopener">View post/comment history</a>'
     : '';
   const allocationLine = state.placement === 'hosted'
     ? '<div class="bot-run-detail">' + esc(hostedAllocationSummary(p)) + '</div>'
