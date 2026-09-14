@@ -62,7 +62,7 @@ function requestJson(port, method, route, body, headers = {}) {
         const text = Buffer.concat(chunks).toString('utf8');
         let json = null;
         try { json = text ? JSON.parse(text) : null; } catch { /* assertion reports raw text */ }
-        resolve({ status: res.statusCode, json, text });
+        resolve({ status: res.statusCode, headers: res.headers, json, text });
       });
     });
     req.once('error', reject);
@@ -209,6 +209,22 @@ async function hostedPlacementContract() {
     const session = await requestJson(runner.port, 'POST', '/api/session');
     eq(session.status, 201, 'hosted runner issues an anonymous private workspace');
     const ownerHeaders = { 'X-Feddit-Bot-Owner': session.json.accessToken };
+    const activity = await requestJson(runner.port, 'POST', '/api/activity', undefined, {
+      ...ownerHeaders,
+      Host: 'feddit-bots.dabblelabs.uk',
+    });
+    eq(activity.status, 200, 'hosted dashboard can record owner activity');
+    ok(activity.json.lastActiveAt, 'hosted activity returns its coarse last-active evidence');
+    const activityCookie = Array.isArray(activity.headers['set-cookie'])
+      ? activity.headers['set-cookie'][0]
+      : activity.headers['set-cookie'];
+    ok(/feddit_owner_activity=/.test(activityCookie || ''), 'hosted dashboard issues a separate activity-only cookie');
+    ok(/Domain=\.dabblelabs\.uk/.test(activityCookie || ''), 'activity cookie is available to the two sibling Feddit sites');
+    ok(/HttpOnly/.test(activityCookie || ''), 'activity cookie is not exposed to page scripts');
+    const pixel = await requestJson(runner.port, 'GET', '/api/activity.gif', undefined, {
+      Cookie: String(activityCookie || '').split(';')[0],
+    });
+    eq(pixel.status, 204, 'Feddit activity marker refreshes silently without owner API access');
     const created = await requestJson(runner.port, 'POST', '/api/profiles', {
       fedditUsername: 'hosted_contract_bot',
       enabled: true,

@@ -17,6 +17,7 @@ eq(advertised.managedCadence, true, 'hosted cadence is centrally managed');
 eq(advertised.standardDailyTurns, 3, 'standard allocation is three turns a day');
 eq(advertised.newBotDailyTurns, 6, 'new-bot allocation is six turns a day');
 eq(advertised.newBotBoostHours, 72, 'new-bot boost lasts 72 hours');
+eq(advertised.ownerActivityBoostHours, 72, 'owner activity keeps the boost alive for 72 hours');
 eq(advertised.firstTurnDueMinutes, 2, 'first turn becomes due promptly');
 eq(advertised.maxActiveJobsPerBot, 1, 'only one active job is allowed per bot');
 eq(advertised.onboardingCompletedTurns, 5, 'compute onboarding is bounded by completed turns');
@@ -59,6 +60,16 @@ const establishedProfile = {
 eq(policy.allocationFor(establishedProfile, boostEnd - 1).phase, 'new', 'boost lasts until the 72-hour boundary');
 eq(policy.allocationFor(establishedProfile, boostEnd).phase, 'standard', 'standard allocation begins at 72 hours');
 eq(policy.allocationFor(establishedProfile, boostEnd).dailyTurns, 3, 'standard allocation is applied');
+const laterVisit = new Date(boostEnd + 24 * 60 * 60 * 1000).toISOString();
+const visitContext = { ownerLastActiveAt: laterVisit };
+eq(policy.allocationFor(establishedProfile, boostEnd, visitContext).phase, 'new',
+  'a recent owner visit keeps an established bot on the exploratory cadence');
+eq(policy.allocationFor(establishedProfile, Date.parse(laterVisit) + policy.OWNER_ACTIVITY_BOOST_MS - 1, visitContext).dailyTurns, 6,
+  'activity boost remains active up to the inactivity boundary');
+eq(policy.allocationFor(establishedProfile, Date.parse(laterVisit) + policy.OWNER_ACTIVITY_BOOST_MS, visitContext).dailyTurns, 3,
+  'activity boost steps down after 72 hours without another visit');
+eq(policy.allocationFor(establishedProfile, boostEnd, visitContext).continuedByOwnerActivity, true,
+  'allocation explains when owner activity extended the initial boost');
 
 const reconciled = policy.applyHostedPolicy({
   hostedActivatedAt: new Date(boostEnd).toISOString(),
@@ -70,6 +81,8 @@ eq(reconciled.hostedActivatedAt, establishedProfile.hostedActivatedAt, 'client c
 eq(reconciled.hostedDailyTurns, 3, 'reconciliation applies the standard allocation');
 eq(reconciled.postsPerHour * 24, 1, 'standard mixed allocation includes one post opportunity');
 eq(reconciled.commentsPerHour * 24, 2, 'standard mixed allocation includes two reply opportunities');
+const activeReconciled = policy.applyHostedPolicy({}, establishedProfile, boostEnd, visitContext);
+eq(activeReconciled.hostedDailyTurns, 6, 'reconciliation applies the active-owner boost');
 
 const postOnly = policy.applyHostedPolicy({
   canReply: false,

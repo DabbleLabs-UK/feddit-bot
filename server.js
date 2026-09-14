@@ -50,6 +50,7 @@ providers.configureDellQueue(jobQueue);
 const hostedPreviewTasks = new Map();
 const hostedSimulationTasks = new Map();
 const ownerStore = createOwnerStore({ file: path.join(store.DATA_DIR, 'owners.json') });
+const OWNER_ACTIVITY_COOKIE = 'feddit_owner_activity';
 const modelInstaller = createModelInstaller({
   pullModel: ollama.pullModel,
   onReady: (model) => store.updateSettings({ localDefaultModel: model }),
@@ -61,7 +62,9 @@ function activeDefaultModel() {
 }
 
 function applyHostedProfilePolicy(patch, current = {}, at = Date.now()) {
-  Object.assign(patch, hostedPolicy.applyHostedPolicy(patch, current, at));
+  const ownerId = patch.ownerId || current.ownerId;
+  const context = { ownerLastActiveAt: ownerId ? ownerStore.lastActiveAt(ownerId) : null };
+  Object.assign(patch, hostedPolicy.applyHostedPolicy(patch, current, at, context));
   patch.provider = 'dell';
   patch.model = store.DEFAULT_MODEL;
   return patch;
@@ -100,6 +103,50 @@ function readBody(req) {
     });
     req.on('error', reject);
   });
+}
+
+function cookieValue(req, name) {
+  const source = String(req.headers.cookie || '');
+  for (const part of source.split(';')) {
+    const index = part.indexOf('=');
+    if (index < 0) continue;
+    if (part.slice(0, index).trim() !== name) continue;
+    try { return decodeURIComponent(part.slice(index + 1).trim()); } catch { return ''; }
+  }
+  return '';
+}
+
+function setOwnerActivityCookie(req, res, value) {
+  const host = String(req.headers.host || '').split(':')[0].toLowerCase();
+  if (host !== 'feddit-bots.dabblelabs.uk') return;
+  res.setHeader('Set-Cookie', OWNER_ACTIVITY_COOKIE + '=' + encodeURIComponent(value) +
+    '; Domain=.dabblelabs.uk; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Lax');
+}
+
+function ownerPolicyContext(profile) {
+  return {
+    ownerLastActiveAt: profile && profile.ownerId
+      ? ownerStore.lastActiveAt(profile.ownerId)
+      : null,
+  };
+}
+
+function recordHostedOwnerActivity(req, res, owner, allowIssue) {
+  if (!owner) return false;
+  const existingToken = cookieValue(req, OWNER_ACTIVITY_COOKIE);
+  const activityOwner = ownerStore.authoriseActivity(existingToken);
+  let changed = false;
+  if (activityOwner && activityOwner.id === owner.id) {
+    changed = ownerStore.touchActivity(owner.id);
+  } else if (allowIssue) {
+    const issued = ownerStore.issueActivity(owner.id);
+    if (issued) {
+      setOwnerActivityCookie(req, res, issued.activityToken);
+      changed = true;
+    }
+  }
+  if (changed) reconcileHostedProfiles();
+  return changed;
 }
 
 const MIME = {
@@ -168,7 +215,7 @@ function safeProfile(p) {
     effProvider: scheduler.providerOf(p),
     effModel: scheduler.modelOf(p, store.DEFAULT_MODEL),
     hostedWork: PLACEMENT === 'hosted' ? hostedWorkForProfile(p) : null,
-    hostedAllocation: PLACEMENT === 'hosted' ? hostedPolicy.allocationFor(p, now) : null,
+    hostedAllocation: PLACEMENT === 'hosted' ? hostedPolicy.allocationFor(p, now, ownerPolicyContext(p)) : null,
     spend,
   };
 }
@@ -581,6 +628,16 @@ async function handleApi(req, res, urlPath, query) {
     });
   }
 
+  // A deliberately capability-limited, cross-subdomain activity marker lets
+  // Feddit page visits extend the owner's higher exploratory cadence. It can do
+  // nothing except refresh a timestamp and reveals no page or bot information.
+  if (PLACEMENT === 'hosted' && method === 'GET' && urlPath === '/api/activity.gif') {
+    const activityOwner = ownerStore.authoriseActivity(cookieValue(req, OWNER_ACTIVITY_COOKIE));
+    if (activityOwner) recordHostedOwnerActivity(req, res, activityOwner, false);
+    res.writeHead(204, { 'Cache-Control': 'no-store, max-age=0' });
+    return res.end();
+  }
+
   let requestOwner = null;
   if (PLACEMENT === 'hosted') {
     requestOwner = ownerStore.authorise(req.headers['x-feddit-bot-owner']);
@@ -589,6 +646,14 @@ async function handleApi(req, res, urlPath, query) {
     }
     if (method === 'GET' && urlPath === '/api/session') {
       return sendJson(res, 200, { ok: true });
+    }
+    if (method === 'POST' && urlPath === '/api/activity') {
+      recordHostedOwnerActivity(req, res, requestOwner, true);
+      return sendJson(res, 200, {
+        ok: true,
+        lastActiveAt: ownerStore.lastActiveAt(requestOwner.id),
+        dormantAfterHours: hostedPolicy.OWNER_ACTIVITY_BOOST_MS / (60 * 60 * 1000),
+      });
     }
   }
 
@@ -912,7 +977,9 @@ async function handleApi(req, res, urlPath, query) {
             ? Object.keys(socialState.relationships).length : 0,
           simulationRelationshipCount: simulationState && simulationState.socialState && simulationState.socialState.relationships
             ? Object.keys(simulationState.socialState.relationships).length : 0,
-          hostedAllocation: PLACEMENT === 'hosted' ? hostedPolicy.allocationFor(existing) : null,
+          hostedAllocation: PLACEMENT === 'hosted'
+            ? hostedPolicy.allocationFor(existing, Date.now(), ownerPolicyContext(existing))
+            : null,
         },
       });
     }

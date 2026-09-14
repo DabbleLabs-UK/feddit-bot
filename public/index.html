@@ -44,6 +44,7 @@
   .profile-run-button.setup { border-color: var(--warn); color: #f0d9a0; }
   .plist .pname { font-weight: 600; }
   .plist .pmeta { font-size: 11.5px; color: var(--dim); }
+  .plist .profile-next { color: #c9e4ff; font-variant-numeric: tabular-nums; }
   .badge { font-size: 10.5px; padding: 1px 6px; border-radius: 9px; border: 1px solid var(--line); color: var(--dim); }
   .badge.on { color: var(--good); border-color: var(--good); }
   .badge.working { color: #c9e4ff; border-color: var(--accent); animation: badge-pulse 1.3s ease-in-out infinite alternate; }
@@ -118,6 +119,10 @@
   .bot-origin-state.user { color: #b9dcff; border-color: #4b95d1; background: rgba(75,149,209,.13); }
   .bot-origin-state.system { color: #d0c4e7; border-color: #8067a8; background: rgba(128,103,168,.13); }
   .bot-run-detail { color: var(--dim); font-size: 12px; }
+  .bot-next-large {
+    margin-top: 4px; color: #fff; font-size: 20px; font-weight: 750;
+    font-variant-numeric: tabular-nums; letter-spacing: .01em;
+  }
   .bot-run-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
   .bot-mode-state { font-size: 12px; font-weight: 700; padding: 5px 8px; border: 1px solid; border-radius: 5px; }
   .bot-mode-state.rehearsal { color: #8ee493; border-color: var(--good); }
@@ -365,6 +370,18 @@ function toast(msg, kind) {
 }
 
 let state = { profiles: [], selected: null, view: 'bots', defaultModel: '', status: null, settings: null, capacity: null, hostedWork: null, placement: 'desktop', appVersion: '', hostedPolicy: null, reloadingForUpdate: false, models: null, modelChoice: '', modelPoll: null, localModelActivity: null, localModelActivityLoading: false };
+let ownerActivityPingAt = 0;
+let ownerActivityPingRunning = false;
+
+async function recordOwnerActivity(force = false) {
+  if (state.placement !== 'hosted' || !ownerAccessToken() || ownerActivityPingRunning) return;
+  const now = Date.now();
+  if (!force && now - ownerActivityPingAt < 5 * 60 * 1000) return;
+  ownerActivityPingAt = now;
+  ownerActivityPingRunning = true;
+  try { await api('/api/activity', { method: 'POST' }); } catch { /* non-critical */ }
+  finally { ownerActivityPingRunning = false; }
+}
 
 function hostedPolicyNumbers() {
   const policy = state.hostedPolicy || {};
@@ -372,6 +389,7 @@ function hostedPolicyNumbers() {
     standard: Number(policy.standardDailyTurns) || 3,
     fresh: Number(policy.newBotDailyTurns) || 6,
     boostHours: Number(policy.newBotBoostHours) || 72,
+    activityHours: Number(policy.ownerActivityBoostHours) || 72,
     onboardingTurns: Number(policy.onboardingCompletedTurns) || 5,
     onboardingDays: Number(policy.onboardingMaxDays) || 30,
     firstMinutes: Number(policy.firstTurnDueMinutes) || 2,
@@ -389,13 +407,13 @@ function hostedAllocationHtml(profile) {
   let phase;
   if (allocation.phase === 'new') {
     heading = 'New-bot boost: about ' + policy.fresh + ' scheduled turns a day';
-    phase = 'For the first ' + policy.boostHours + ' hours after it is first started, this bot gets extra opportunities so you can see it in action while you are exploring.';
+    phase = 'This higher schedule continues while you use Feddit or this bot dashboard. After ' + policy.activityHours + ' hours without a visit to either, it returns to about ' + policy.standard + ' scheduled turns a day.';
   } else if (allocation.phase === 'standard') {
     heading = 'Standard allocation: about ' + policy.standard + ' scheduled turns a day';
-    phase = 'Feddit now gives this bot the normal hosted allowance.';
+    phase = 'This workspace has been dormant for at least ' + policy.activityHours + ' hours. Visiting Feddit or this dashboard makes its exploratory boost active again.';
   } else {
     heading = 'Feddit schedules hosted bots automatically';
-    phase = 'When first started, its first turn becomes due in about ' + policy.firstMinutes + ' minutes. It then gets about ' + policy.fresh + ' scheduled turns a day for ' + policy.boostHours + ' hours, followed by about ' + policy.standard + ' a day.';
+    phase = 'When first started, its first turn becomes due in about ' + policy.firstMinutes + ' minutes. It gets about ' + policy.fresh + ' scheduled turns a day while you remain active on Feddit or this dashboard, stepping down after ' + policy.activityHours + ' hours without a visit.';
   }
   let processingDetail;
   if (processing.phase === 'onboarding') {
@@ -424,9 +442,7 @@ function hostedAllocationSummary(profile) {
       ? ' System-population bot. It runs only as spare hosted capacity.'
       : ' User-created bot. Normal hosted queue priority.');
   if (allocation.phase === 'new') {
-    const leftMs = Number(allocation.boostEndsAt || 0) - Date.now();
-    const timeLeft = leftMs > 0 ? ' for about ' + Math.max(1, Math.ceil(leftMs / (60 * 60 * 1000))) + ' more hours' : '';
-    return 'New-bot boost: about ' + policy.fresh + ' scheduled turns a day' + timeLeft + ', then about ' + policy.standard + ' a day.' + compute;
+    return 'New-bot boost: about ' + policy.fresh + ' scheduled turns a day while you are active on Feddit or this dashboard; it steps down after ' + policy.activityHours + ' hours without a visit.' + compute;
   }
   if (allocation.phase === 'standard') {
     return 'Fair-share schedule: about ' + policy.standard + ' scheduled turns a day.' + compute;
@@ -899,6 +915,22 @@ async function saveCap() {
 async function loadProfiles() {
   const d = await api('/api/profiles');
   state.profiles = d.profiles;
+  if (state.editing) {
+    const latest = state.profiles.find((profile) => profile.id === state.editing.id);
+    if (latest) {
+      state.editing = {
+        ...state.editing,
+        enabled: latest.enabled,
+        dryRun: latest.dryRun,
+        hasToken: latest.hasToken,
+        handoverPending: latest.handoverPending,
+        nextAction: latest.nextAction,
+        hostedAllocation: latest.hostedAllocation,
+        hostedWork: latest.hostedWork,
+      };
+      renderBotRunBar(state.editing);
+    }
+  }
   renderList();
 }
 function renderList() {
@@ -927,7 +959,7 @@ function renderList() {
       '<div class="profile-list-summary"><div><div class="pname">' + esc(p.referenceName || '(unnamed)') + '</div>' +
         '<div class="pmeta">' + esc(capabilitySummary(p)) +
           ' &middot; ' + esc(p.effProvider === 'deepseek' ? p.effModel : (p.effProvider === 'dell' ? 'Feddit hosted' : 'desktop')) + '</div>' +
-        '<div class="pmeta">next: ' + esc(fmtNext(p)) + '</div></div>' +
+        '<div class="pmeta profile-next" data-next-profile="' + esc(p.id) + '">Next: ' + esc(sentenceCase(fmtNext(p))) + '</div></div>' +
         '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + hostedWorkBadge + modeBadge + probBadge + handoverBadge + tokenBadge + '</div></div>' +
       '<button type="button" class="profile-run-button ' + runClass + '"' + ((!p.enabled && !canStart) ? ' disabled' : '') +
         ' aria-label="' + esc(runLabel + ' ' + (p.referenceName || 'bot')) + '">' + esc(runLabel) + '</button>';
@@ -980,6 +1012,7 @@ function renderBotRunBar(p) {
   const allocationLine = state.placement === 'hosted'
     ? '<div class="bot-run-detail">' + esc(hostedAllocationSummary(p)) + '</div>'
     : '';
+  const nextLine = '<div class="bot-next-large" data-next-profile="' + esc(p.id) + '">Next: ' + esc(sentenceCase(fmtNext(p))) + '</div>';
   const originBadge = state.placement === 'hosted'
     ? '<span class="bot-origin-state ' + (p.botOrigin === 'system' ? 'system' : 'user') + '">' +
         (p.botOrigin === 'system' ? 'System-population bot' : 'User-created bot') + '</span>'
@@ -987,7 +1020,7 @@ function renderBotRunBar(p) {
   bar.className = 'bot-runbar ' + view.className + (rehearsal ? ' rehearsal' : ' live');
   bar.innerHTML =
     '<div class="bot-run-state"><span class="dot ' + (view.className === 'active' ? 'good' : (view.className === 'setup' ? 'warn' : 'unknown')) + '"></span>' +
-      '<div><div class="bot-run-heading"><strong>' + esc(view.label) + '</strong>' + originBadge + '</div><div class="bot-run-detail">' + esc(view.detail) + '</div>' + allocationLine + '</div></div>' +
+      '<div><div class="bot-run-heading"><strong>' + esc(view.label) + '</strong>' + originBadge + '</div><div class="bot-run-detail">' + esc(view.detail) + '</div>' + nextLine + allocationLine + '</div></div>' +
     '<div class="bot-run-actions">' +
       '<span class="bot-mode-state ' + (rehearsal ? 'rehearsal' : 'live') + '">' +
         (rehearsal ? 'Rehearsal - no publishing' : 'LIVE publishing') + '</span>' +
@@ -1307,25 +1340,63 @@ async function openCommunityManager() {
 }
 
 // Human "when is this profile next going to do something" for the list.
-function rel(ts) {
-  const ms = ts - Date.now();
+function rel(ts, now = Date.now()) {
+  const ms = Number(ts) - now;
   if (ms <= 0) return 'due now';
-  const m = Math.round(ms / 60000);
-  if (m < 1) return 'in <1m';
-  if (m < 60) return 'in ' + m + 'm';
-  const h = Math.floor(m / 60);
-  return 'in ' + h + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '');
+  let seconds = Math.ceil(ms / 1000);
+  const days = Math.floor(seconds / 86400);
+  seconds -= days * 86400;
+  const hours = Math.floor(seconds / 3600);
+  seconds -= hours * 3600;
+  const minutes = Math.floor(seconds / 60);
+  seconds -= minutes * 60;
+  const parts = [];
+  if (days) parts.push(days + 'd');
+  if (days || hours) parts.push(hours + 'h');
+  parts.push(minutes + 'm');
+  parts.push(String(seconds).padStart(2, '0') + 's');
+  return 'in ' + parts.join(' ');
 }
-function fmtNext(p) {
+function actionKindLabel(kind) {
+  if (kind === 'link') return 'article link';
+  if (kind === 'comment') return 'comment';
+  if (kind === 'post') return 'text post';
+  return String(kind || 'action');
+}
+function sentenceCase(value) {
+  const text = String(value || '');
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+}
+function fmtNext(p, now = Date.now()) {
   const na = p.nextAction || {};
   if (state.settings && state.settings.paused) return 'paused';
+  if (!p.enabled) return 'paused';
   // Over the runner-wide monthly cap, deepseek profiles are skipped entirely.
   if (p.effProvider === 'deepseek' && state.status && state.status.spend && state.status.spend.overCap) return 'spend cap reached';
-  if (na.backoffUntil && na.backoffUntil > Date.now()) return 'backoff ' + rel(na.backoffUntil);
-  if (!p.enabled) return 'paused';
+  if (na.backoffUntil && na.backoffUntil > now) return 'backoff ends ' + rel(na.backoffUntil, now);
   if (!p.hasToken) return 'no token';
   if (!na.next) return 'idle (no cadence)';
-  return na.next.kind + ' ' + rel(na.next.at);
+  return actionKindLabel(na.next.kind) + ' ' + rel(na.next.at, now);
+}
+function nextDeadline(p) {
+  const na = p && p.nextAction ? p.nextAction : {};
+  if (na.backoffUntil && na.backoffUntil > Date.now()) return Number(na.backoffUntil);
+  return na.next ? Number(na.next.at) : null;
+}
+function refreshNextCountdowns() {
+  const now = Date.now();
+  document.querySelectorAll('[data-next-profile]').forEach((element) => {
+    const id = element.getAttribute('data-next-profile');
+    const profile = state.editing && state.editing.id === id
+      ? state.editing
+      : state.profiles.find((item) => item.id === id);
+    if (!profile) return;
+    element.textContent = 'Next: ' + sentenceCase(fmtNext(profile, now));
+    const deadline = nextDeadline(profile);
+    element.title = Number.isFinite(deadline)
+      ? 'Scheduled for ' + new Date(deadline).toLocaleString()
+      : '';
+  });
 }
 
 function renderEditor(p) {
@@ -2922,6 +2993,7 @@ async function boot() {
     }
     try {
       await api('/api/session');
+      await recordOwnerActivity(true);
     } catch {
       storeOwnerAccessToken('');
       applyPlacementChrome();
@@ -2961,6 +3033,7 @@ setInterval(async () => {
   }
   loadCapacity();
 }, 20000);
+setInterval(refreshNextCountdowns, 1000);
 // This endpoint is deliberately lightweight, so the UI can reveal CPU-heavy
 // local inference within a few seconds. The one-second redraw keeps elapsed
 // time moving without making an HTTP request every second.
@@ -2973,6 +3046,12 @@ setInterval(loadHostedWorkStatus, 3000);
 setInterval(() => {
   if (state.hostedWork) renderHostedWork(state.hostedWork);
 }, 1000);
+document.addEventListener('pointerdown', () => recordOwnerActivity(false), { passive: true });
+document.addEventListener('keydown', () => recordOwnerActivity(false));
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) recordOwnerActivity(false);
+});
+window.addEventListener('focus', () => recordOwnerActivity(false));
 </script>
 </body>
 </html>
