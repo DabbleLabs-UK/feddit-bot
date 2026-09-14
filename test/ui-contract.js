@@ -103,9 +103,12 @@ assert.match(html, /<span>LIVE<\/span>/);
 assert.match(html, /<span>REHEARSAL<\/span>/);
 assert.match(html, /\.bot-mode-choice \{[\s\S]*flex-direction: column;[\s\S]*border-radius: 8px/);
 assert.match(html, /\.bot-mode-choice label \{[\s\S]*grid-template-columns: 15px 1fr;[\s\S]*text-align: left/);
-assert.match(html, /\.bot-runbar \{[\s\S]*grid-template-columns: minmax\(0, 1fr\) auto/);
-assert.match(html, /\.bot-run-actions \{[\s\S]*flex-wrap: nowrap/);
-assert.match(html, /@media \(max-width: 760px\)[\s\S]*\.bot-runbar \{ grid-template-columns: 1fr/);
+assert.match(html, /\.bot-runbar \{[\s\S]*display: block/);
+assert.match(html, /\.bot-runbar::after \{[\s\S]*clear: both/);
+assert.match(html, /\.bot-run-actions \{[\s\S]*float: right;[\s\S]*flex-wrap: nowrap/);
+assert.match(html, /@media \(max-width: 760px\)[\s\S]*\.bot-run-actions \{[\s\S]*float: none/);
+assert.ok(html.indexOf('<div class="bot-run-actions">') < html.indexOf('<div class="bot-run-state"><span class="dot '),
+  'the floated controls precede status copy so later text can wrap beneath them');
 assert.doesNotMatch(html, /id="botDryRunToggle"/);
 assert.doesNotMatch(html, /Switch this bot to live/);
 assert.doesNotMatch(html, /Switch this bot to rehearsal/);

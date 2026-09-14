@@ -103,17 +103,18 @@
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .section { border: 1px solid var(--line); border-radius: 7px; padding: 14px 16px; margin-bottom: 16px; background: var(--panel); }
   .bot-runbar {
-    position: sticky; top: 0; z-index: 25; display: grid;
-    grid-template-columns: minmax(0, 1fr) auto; align-items: start;
-    gap: 14px; margin: 0 0 16px; padding: 12px 14px;
+    position: sticky; top: 0; z-index: 25; display: block;
+    margin: 0 0 16px; padding: 12px 14px;
     border: 2px solid var(--line); border-radius: 8px; background: var(--panel);
     box-shadow: 0 5px 16px rgba(0,0,0,.45);
   }
+  .bot-runbar::after { content: ""; display: block; clear: both; }
   .bot-runbar.active { border-color: var(--good); background: #17251a; }
   .bot-runbar.paused { border-color: #68737d; }
   .bot-runbar.setup { border-color: var(--warn); background: #292311; }
   .bot-runbar.live { box-shadow: 0 5px 16px rgba(0,0,0,.45), inset 0 0 0 1px rgba(224,168,58,.35); }
-  .bot-run-state { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .bot-run-state { display: block; min-width: 0; }
+  .bot-run-state > .dot { float: left; margin: 7px 10px 0 0; }
   .bot-run-state strong { display: block; font-size: 17px; }
   .bot-run-heading { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .bot-origin-state { display: inline-flex; align-items: center; padding: 3px 7px; border: 1px solid; border-radius: 999px; font-size: 11px; font-weight: 700; }
@@ -125,7 +126,10 @@
     font-variant-numeric: tabular-nums; letter-spacing: .01em;
   }
   .bot-last-outcome { margin-top: 5px; color: #c9d7e4; font-size: 12px; line-height: 1.35; }
-  .bot-run-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: nowrap; white-space: nowrap; }
+  .bot-run-actions {
+    float: right; display: flex; align-items: center; justify-content: flex-end;
+    gap: 10px; margin: 0 0 8px 18px; flex-wrap: nowrap; white-space: nowrap;
+  }
   .bot-mode-choice {
     display: flex; flex-direction: column; align-items: stretch; gap: 5px; margin: 0; padding: 7px 10px;
     border: 1px solid var(--line); border-radius: 8px; width: 126px; min-width: 126px; box-sizing: border-box;
@@ -287,10 +291,12 @@
     .main { min-height: 65vh; }
     .grid { grid-template-columns: 1fr; }
     .model-choice { grid-template-columns: 1fr; }
-    .bot-runbar { grid-template-columns: 1fr; align-items: stretch; }
+    .bot-runbar { display: grid; grid-template-columns: 1fr; align-items: stretch; gap: 12px; }
+    .bot-run-state { grid-column: 1; grid-row: 1; }
     .bot-run-actions {
-      display: grid; grid-template-columns: 126px minmax(0, 1fr); align-items: center;
-      justify-content: stretch; white-space: normal;
+      float: none; display: grid; grid-column: 1; grid-row: 2;
+      grid-template-columns: 126px minmax(0, 1fr); align-items: center;
+      justify-content: stretch; margin: 0; white-space: normal;
     }
     .bot-mode-choice { grid-column: 1; grid-row: 1 / span 2; }
     .bot-history-link { grid-column: 2; grid-row: 1; }
@@ -1036,8 +1042,6 @@ function renderBotRunBar(p) {
     : '';
   bar.className = 'bot-runbar ' + view.className + (rehearsal ? ' rehearsal' : ' live');
   bar.innerHTML =
-    '<div class="bot-run-state"><span class="dot ' + (view.className === 'active' ? 'good' : (view.className === 'setup' ? 'warn' : 'unknown')) + '"></span>' +
-      '<div><div class="bot-run-heading"><strong>' + esc(view.label) + '</strong>' + originBadge + '</div><div class="bot-run-detail">' + esc(view.detail) + '</div>' + nextLine + lastOutcomeLine + allocationLine + '</div></div>' +
     '<div class="bot-run-actions">' +
       '<fieldset class="bot-mode-choice"><legend>Publishing mode</legend>' +
         '<label class="live"><input type="radio" name="botPublishingMode" value="live"' + (!rehearsal ? ' checked' : '') + '> <span>LIVE</span></label>' +
@@ -1045,7 +1049,9 @@ function renderBotRunBar(p) {
       '</fieldset>' +
       historyLink +
       '<button type="button" id="botRunToggle" class="bot-run-toggle ' + view.buttonClass + '"' + (view.disabled ? ' disabled' : '') + '>' + esc(view.button) + '</button>' +
-    '</div>';
+    '</div>' +
+    '<div class="bot-run-state"><span class="dot ' + (view.className === 'active' ? 'good' : (view.className === 'setup' ? 'warn' : 'unknown')) + '"></span>' +
+      '<div class="bot-run-heading"><strong>' + esc(view.label) + '</strong>' + originBadge + '</div><div class="bot-run-detail">' + esc(view.detail) + '</div>' + nextLine + lastOutcomeLine + allocationLine + '</div>';
   for (const modeInput of document.querySelectorAll('input[name="botPublishingMode"]')) {
     modeInput.onchange = async () => {
       if (!modeInput.checked) return;
