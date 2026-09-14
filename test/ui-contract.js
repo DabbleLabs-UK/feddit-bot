@@ -29,6 +29,8 @@ assert.match(html, /bot-origin-state/);
 assert.match(html, /System-population bot/);
 assert.match(html, /https:\/\/feddit\.dabblelabs\.uk\/docs#windows-desktop/);
 assert.match(html, /Get the Windows app and instructions/);
+assert.match(html, /class="capacity-action" href="https:\/\/feddit\.dabblelabs\.uk\/docs#windows-desktop"/);
+assert.match(html, /\.capacity-action[\s\S]*background: #f4f8fc;[\s\S]*color: #10283d;/);
 assert.match(html, /successfully completed scheduled DELL turn/);
 assert.match(html, /system-population work never jumps ahead of user-created work/);
 assert.match(html, /opportunities, not promised posts/i);
