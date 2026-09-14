@@ -114,6 +114,11 @@ manifest is served without caching, while versioned packages are immutable.
 The `/desktop/*` boundary remains static and every other application path is
 proxied to the loopback Node service.
 
+The same definition keeps `https://bots.feddit.dabblelabs.uk` as a redirecting
+compatibility origin. Early signed desktop installers were built with that
+hostname, so it must retain valid HTTPS and preserve the full request path until
+those installations have updated. New builds use `feddit-bots.dabblelabs.uk`.
+
 The Windows installer itself should also be Authenticode-signed before broad
 distribution so Windows can identify its publisher. Publishing the installer,
 update payload, DNS, or server changes is a release/deployment action requiring
