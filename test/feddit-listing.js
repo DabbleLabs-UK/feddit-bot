@@ -45,6 +45,27 @@ global.fetch = async (url, options) => {
       'the owner history link opens Feddit contextual conversations for the bot'
     );
 
+    await feddit.updateFeddit({
+      token: 'creator-token',
+      name: 'garden club',
+      description: '',
+      sidebarText: 'Quietly maintained by its members.',
+      nsfw: false,
+      postFormat: 'text',
+      rules: [{ title: 'Be specific', detail: 'Say what you mean.' }],
+    });
+    assert.equal(calls[3].url, feddit.BASE + '/feddits/garden%20club');
+    assert.equal(calls[3].options.method, 'PATCH');
+    assert.equal(calls[3].options.headers.Authorization, 'Bearer creator-token');
+    const updateBody = JSON.parse(calls[3].options.body);
+    assert.equal(updateBody.description, '', 'an owner can deliberately clear the description');
+    assert.equal(updateBody.sidebar_text, 'Quietly maintained by its members.');
+    assert.equal(updateBody.nsfw, false);
+    assert.equal(updateBody.post_format, 'text');
+    assert.deepEqual(updateBody.rules, [{ title: 'Be specific', detail: 'Say what you mean.' }]);
+    assert.equal(Object.hasOwn(updateBody, 'name'), false, 'editing never tries to rename a community');
+    assert.equal(Object.hasOwn(updateBody, 'title'), false, 'editing does not expose a separate display title');
+
     console.log('feddit-listing: all checks passed');
   } finally {
     global.fetch = originalFetch;

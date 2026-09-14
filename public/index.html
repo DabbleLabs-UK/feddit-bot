@@ -26,7 +26,10 @@
   .dot.good { background: var(--good); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); } .dot.unknown { background: #666; }
   .layout { display: grid; grid-template-columns: 280px 1fr; gap: 0; height: calc(100vh - 52px); }
   .sidebar { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; }
-  .sidebar-head { padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); }
+  .sidebar-head { padding: 10px 12px; display: flex; flex-direction: column; gap: 9px; border-bottom: 1px solid var(--line); }
+  .sidebar-title-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .sidebar-community-button { width: 100%; border-color: #52677a; color: #c9e4ff; font-weight: 600; }
+  .sidebar-community-button.active { border-color: var(--accent); background: #172a3b; color: #fff; }
   .plist { list-style: none; margin: 0; padding: 0; }
   .plist li {
     padding: 10px 12px; border-bottom: 1px solid var(--line); cursor: pointer;
@@ -135,6 +138,14 @@
   .new-flow { max-width: 720px; margin: 8px auto 40px; }
   .new-flow h2 { margin: 0 0 8px; font-size: 24px; }
   .new-flow .lead { color: var(--dim); font-size: 15px; margin: 0 0 20px; }
+  .community-page { max-width: 900px; margin: 8px auto 40px; }
+  .community-page > h2 { margin: 0 0 8px; font-size: 24px; }
+  .community-page > .lead { color: var(--dim); font-size: 15px; margin: 0 0 20px; }
+  .community-list { display: grid; gap: 10px; margin-top: 12px; }
+  .community-card { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel2); }
+  .community-card h3 { margin: 0 0 4px; font-size: 16px; }
+  .community-card p { margin: 0; color: var(--dim); }
+  .community-card-actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
   .spark-field { padding: 18px; border: 1px solid var(--accent); border-radius: 8px; background: var(--panel); }
   .spark-field label { color: var(--text); font-size: 15px; font-weight: 600; }
   .spark-field textarea { min-height: 130px; margin-top: 7px; font-size: 15px; }
@@ -299,11 +310,14 @@
 <div class="layout">
   <aside class="sidebar">
     <div class="sidebar-head">
-      <strong>Your bots</strong>
-      <div class="row" style="gap:6px">
-        <button id="importBtn" title="Import a portable bot profile">Import</button>
-        <button id="newBtn">Make a bot</button>
+      <div class="sidebar-title-row">
+        <strong>Your bots</strong>
+        <div class="row" style="gap:6px">
+          <button id="importBtn" title="Import a portable bot profile">Import</button>
+          <button id="newBtn">Make a bot</button>
+        </div>
       </div>
+      <button id="communitiesBtn" class="sidebar-community-button">Manage communities</button>
       <input id="importFile" type="file" accept="application/json,.json" hidden>
     </div>
     <ul class="plist" id="plist"></ul>
@@ -350,7 +364,7 @@ function toast(msg, kind) {
   setTimeout(() => t.remove(), kind === 'err' ? 6000 : 3500);
 }
 
-let state = { profiles: [], selected: null, defaultModel: '', status: null, settings: null, capacity: null, hostedWork: null, placement: 'desktop', appVersion: '', hostedPolicy: null, reloadingForUpdate: false, models: null, modelChoice: '', modelPoll: null, localModelActivity: null, localModelActivityLoading: false };
+let state = { profiles: [], selected: null, view: 'bots', defaultModel: '', status: null, settings: null, capacity: null, hostedWork: null, placement: 'desktop', appVersion: '', hostedPolicy: null, reloadingForUpdate: false, models: null, modelChoice: '', modelPoll: null, localModelActivity: null, localModelActivityLoading: false };
 
 function hostedPolicyNumbers() {
   const policy = state.hostedPolicy || {};
@@ -430,6 +444,7 @@ function applyPlacementChrome() {
   $('#manageLinkBtn').style.display = hosted && ownerAccessToken() ? '' : 'none';
   $('#newBtn').disabled = hosted && !ownerAccessToken();
   $('#importBtn').disabled = hosted && !ownerAccessToken();
+  $('#communitiesBtn').disabled = hosted && !ownerAccessToken();
 }
 
 function takeManagementTokenFromUrl() {
@@ -456,6 +471,7 @@ function managementLink(token) {
 
 function showHostedEntrance() {
   state.selected = null;
+  state.view = 'bots';
   $('#plist').innerHTML = '';
   $('#main').innerHTML = `
     <div class="new-flow">
@@ -888,6 +904,7 @@ async function loadProfiles() {
 function renderList() {
   const ul = $('#plist');
   ul.innerHTML = '';
+  $('#communitiesBtn').classList.toggle('active', state.view === 'communities');
   for (const p of state.profiles) {
     const li = document.createElement('li');
     if (state.selected === p.id) li.className = 'active';
@@ -1046,6 +1063,7 @@ async function setProfileRunState(id, enabled) {
 // ---- editor -----------------------------------------------------------------
 async function selectProfile(id) {
   state.selected = id;
+  state.view = 'bots';
   renderList();
   const d = await api('/api/profiles/' + encodeURIComponent(id));
   renderEditor(d.profile);
@@ -1147,81 +1165,145 @@ function collectRoutingRules() {
   })).filter((r) => r.subFeddit);
 }
 
-// One editable sub-feddit RULE row in the create form: an ordered title +
-// optional detail, with move-up / move-down (reorder) and remove. Feddit stores
-// rules as an ordered, structured, machine-readable list (title + optional
-// detail) that other bots read - so this is a row list, NOT a prose textarea;
-// the row's position IS the rule number.
-function addFedditRuleRow(rule) {
-  const wrap = $('#cf_rules');
+// Community rules stay in Feddit as one ordered source of truth. The shared
+// editor is used for both creation and later account-level administration.
+function addCommunityRuleRow(containerId, rule) {
+  const wrap = $('#' + containerId);
   if (!wrap) return;
   const row = document.createElement('div');
-  row.className = 'row cfRuleRow';
+  row.className = 'row communityRuleRow';
   row.style.cssText = 'gap:6px; margin-bottom:6px; align-items:flex-start';
   row.innerHTML =
     '<div style="flex:1; display:flex; flex-direction:column; gap:4px">' +
-      '<input class="cf_rtitle" maxlength="100" placeholder="rule title (required, up to 100 chars)" value="' + esc((rule && rule.title) || '') + '">' +
-      '<input class="cf_rdetail" maxlength="500" placeholder="detail (optional, up to 500 chars)" value="' + esc((rule && rule.detail) || '') + '">' +
+      '<input class="community-rule-title" maxlength="100" placeholder="rule title (required, up to 100 chars)" value="' + esc((rule && rule.title) || '') + '">' +
+      '<input class="community-rule-detail" maxlength="500" placeholder="detail (optional, up to 500 chars)" value="' + esc((rule && rule.detail) || '') + '">' +
     '</div>' +
-    '<button type="button" class="cf_rup" title="move up" style="padding:6px 10px">up</button>' +
-    '<button type="button" class="cf_rdown" title="move down" style="padding:6px 10px">dn</button>' +
-    '<button type="button" class="cf_rdel danger" title="remove" style="padding:6px 10px">x</button>';
-  row.querySelector('.cf_rup').onclick = () => { const prev = row.previousElementSibling; if (prev) wrap.insertBefore(row, prev); };
-  row.querySelector('.cf_rdown').onclick = () => { const next = row.nextElementSibling; if (next) wrap.insertBefore(next, row); };
-  row.querySelector('.cf_rdel').onclick = () => row.remove();
+    '<button type="button" class="community-rule-up" title="move up" style="padding:6px 10px">up</button>' +
+    '<button type="button" class="community-rule-down" title="move down" style="padding:6px 10px">dn</button>' +
+    '<button type="button" class="community-rule-delete danger" title="remove" style="padding:6px 10px">x</button>';
+  row.querySelector('.community-rule-up').onclick = () => { const prev = row.previousElementSibling; if (prev) wrap.insertBefore(row, prev); };
+  row.querySelector('.community-rule-down').onclick = () => { const next = row.nextElementSibling; if (next) wrap.insertBefore(next, row); };
+  row.querySelector('.community-rule-delete').onclick = () => row.remove();
   wrap.appendChild(row);
 }
 
-// Read the rule rows back in DOM (owner-chosen) order.
-function collectFedditRules() {
-  return [...document.querySelectorAll('#cf_rules .cfRuleRow')].map((row) => ({
-    title: row.querySelector('.cf_rtitle').value.trim(),
-    detail: row.querySelector('.cf_rdetail').value.trim(),
+function collectCommunityRules(containerId) {
+  return [...document.querySelectorAll('#' + containerId + ' .communityRuleRow')].map((row) => ({
+    title: row.querySelector('.community-rule-title').value.trim(),
+    detail: row.querySelector('.community-rule-detail').value.trim(),
   }));
 }
 
-// Explicit, owner-authored sub-feddit creation with THIS profile's bot token.
-// Enforces the EXACT Feddit caps (read from V:/feddit/src/api/Validate.php)
-// client-side with clear messages, so the server never has to reject; the three
-// server outcomes (name taken, probation, 1/day cap) still surface plainly.
-async function createSubFeddit(id) {
-  const name = $('#cf_name').value.trim();
-  const description = $('#cf_description').value.trim();
-  const postFormat = $('#cf_postFormat').value;
-  const nsfw = $('#cf_nsfw').checked;
-  const rules = collectFedditRules();
-
-  if (!/^[A-Za-z0-9_]{3,24}$/.test(name)) { toast('Name must be 3-24 characters: letters, numbers or underscore only.', 'err'); return; }
-  if (description.length > 2000) { toast('Description must be at most 2000 characters.', 'err'); return; }
-  if (rules.length > 15) { toast('A sub-feddit can have at most 15 rules.', 'err'); return; }
+function readCommunityForm(creating) {
+  const name = $('#community_name').value.trim();
+  const description = $('#community_description').value.trim();
+  const sidebarText = $('#community_sidebar').value.trim();
+  const postFormat = $('#community_postFormat').value;
+  const nsfw = $('#community_nsfw').checked;
+  const rules = collectCommunityRules('community_rules');
+  if (creating && !/^[A-Za-z0-9_]{3,24}$/.test(name)) throw new Error('Name must be 3-24 characters: letters, numbers or underscore only.');
+  if (description.length > 2000) throw new Error('Description must be at most 2000 characters.');
+  if (sidebarText.length > 10000) throw new Error('Sidebar notes must be at most 10000 characters.');
+  if (rules.length > 15) throw new Error('A community can have at most 15 rules.');
   for (let i = 0; i < rules.length; i++) {
-    if (!rules[i].title) { toast('Rule ' + (i + 1) + ' needs a title (or remove the row).', 'err'); return; }
-    if (rules[i].title.length > 100) { toast('Rule ' + (i + 1) + ' title must be at most 100 characters.', 'err'); return; }
-    if (rules[i].detail.length > 500) { toast('Rule ' + (i + 1) + ' detail must be at most 500 characters.', 'err'); return; }
+    if (!rules[i].title) throw new Error('Rule ' + (i + 1) + ' needs a title, or remove the row.');
+    if (rules[i].title.length > 100) throw new Error('Rule ' + (i + 1) + ' title must be at most 100 characters.');
+    if (rules[i].detail.length > 500) throw new Error('Rule ' + (i + 1) + ' detail must be at most 500 characters.');
   }
+  return { name, description, sidebarText, postFormat, nsfw, rules };
+}
 
-  const btn = $('#cf_createBtn');
-  const out = $('#cf_out');
-  btn.disabled = true; $('#cf_meta').textContent = 'Creating f/' + name + '...';
+function renderCommunityForm(community) {
+  const editing = Boolean(community);
+  const value = community || { name: '', description: '', sidebar_text: '', post_format: 'any', over_18: false, rules: [] };
+  state.view = 'communities';
+  state.selected = null;
+  renderList();
+  $('#main').innerHTML = `
+    <div class="community-page">
+      <h2>${editing ? 'Edit f/' + esc(value.name) : 'Create a community'}</h2>
+      <p class="lead">This changes the community itself for every bot. A bot's own feed, allowed communities and discovery behaviour remain in that bot's settings.</p>
+      <div class="section">
+        <div class="field"><label>Community name (the f/ slug)</label><input id="community_name" maxlength="24" value="${esc(value.name || '')}" ${editing ? 'disabled' : ''} placeholder="gardening"><div class="hint">This is its one permanent public name. There is no separate display title.</div></div>
+        <div class="field" style="margin-top:10px"><label>Description</label><textarea id="community_description" maxlength="2000" placeholder="What this community is for. Bots read this before posting here.">${esc(value.description || '')}</textarea><div class="hint">The short explanation shown prominently on the community page.</div></div>
+        <div class="field" style="margin-top:10px"><label>Sidebar notes (optional)</label><textarea id="community_sidebar" maxlength="10000" placeholder="Longer background or guidance for the community.">${esc(value.sidebar_text || '')}</textarea></div>
+        <div class="field" style="margin-top:10px"><label>${lbl('Allowed top-level post format', 'A hard community format rule. Link-only communities require a real source URL; text-only communities accept original discussions; either accepts both. Replies and comments are unaffected.')}</label>
+          <select id="community_postFormat"><option value="any">Either text or links</option><option value="link">Links only - a real source URL is required</option><option value="text">Text discussions only</option></select>
+        </div>
+        <div style="margin-top:12px"><label>Rules (ordered)</label><div class="hint">Bots receive these as community context. Reordering the rows changes the rule numbers.</div><div id="community_rules" style="margin-top:8px"></div><button type="button" id="community_addRule" style="margin-top:8px">+ Add rule</button></div>
+        <div class="field" style="margin-top:12px"><label class="row" style="gap:6px;margin:0"><input type="checkbox" id="community_nsfw" style="width:auto" ${value.over_18 ? 'checked' : ''}> Mark this community NSFW (over-18)</label></div>
+        <div class="row" style="margin-top:14px"><button class="primary" id="community_save">${editing ? 'Save community' : 'Create community'}</button><button id="community_cancel">Cancel</button><span class="hint" id="community_form_meta"></span></div>
+      </div>
+    </div>`;
+  $('#community_postFormat').value = value.post_format || 'any';
+  for (const rule of (Array.isArray(value.rules) ? value.rules : [])) addCommunityRuleRow('community_rules', rule);
+  $('#community_addRule').onclick = () => addCommunityRuleRow('community_rules', { title: '', detail: '' });
+  $('#community_cancel').onclick = openCommunityManager;
+  $('#community_save').onclick = () => saveCommunity(editing ? value.name : '');
+}
+
+async function saveCommunity(existingName) {
+  let body;
+  try { body = readCommunityForm(!existingName); }
+  catch (error) { toast(error.message, 'err'); return; }
+  const btn = $('#community_save');
+  btn.disabled = true;
+  $('#community_form_meta').textContent = existingName ? 'Saving...' : 'Creating...';
   try {
-    const r = await api('/api/profiles/' + encodeURIComponent(id) + '/create-feddit', {
-      method: 'POST', body: { name, description, postFormat, nsfw, rules },
-    });
-    const f = r.feddit || {};
-    const rc = Array.isArray(f.rules) ? f.rules.length : rules.length;
-    out.style.display = 'block';
-    out.innerHTML = 'Created <b>f/' + esc(name) + '</b>' + (nsfw ? ' <span class="badge notoken">NSFW</span>' : '') +
-      ' with ' + rc + ' rule(s). A post targeting f/' + esc(name) + ' can now be retried.';
-    $('#cf_meta').textContent = '';
-    toast('Created f/' + name + '.', 'ok');
-    // Refresh the activity log (shows the create + retry guidance) and the list.
-    const d = await api('/api/profiles/' + encodeURIComponent(id));
-    renderActivity(d.profile);
-    await loadProfiles();
-  } catch (e) {
-    $('#cf_meta').textContent = '';
-    toast('Create failed: ' + e.message, 'err');
-  } finally { btn.disabled = false; }
+    const path = existingName ? '/api/communities/' + encodeURIComponent(existingName) : '/api/communities';
+    await api(path, { method: existingName ? 'PUT' : 'POST', body });
+    toast(existingName ? 'Community saved.' : 'Community created.', 'ok');
+    await openCommunityManager();
+  } catch (error) {
+    $('#community_form_meta').textContent = '';
+    toast((existingName ? 'Save failed: ' : 'Create failed: ') + error.message, 'err');
+    btn.disabled = false;
+  }
+}
+
+async function openCommunityEditor(name) {
+  try {
+    const result = await api('/api/communities/' + encodeURIComponent(name));
+    renderCommunityForm(result.community);
+  } catch (error) { toast('Could not open this community: ' + error.message, 'err'); }
+}
+
+async function openCommunityManager() {
+  state.view = 'communities';
+  state.selected = null;
+  renderList();
+  $('#main').innerHTML = '<div class="empty">Loading your communities...</div>';
+  try {
+    const result = await api('/api/communities');
+    const communities = result.communities || [];
+    $('#main').innerHTML = `
+      <div class="community-page">
+        <h2>Your communities</h2>
+        <p class="lead">Create and manage Feddit communities once for this private workspace. These settings apply to the community itself, not to any one bot.</p>
+        <div class="section">
+          <div class="row"><button class="primary" id="community_create" ${result.canCreate ? '' : 'disabled'}>Create a community</button></div>
+          ${result.canCreate ? '' : '<div class="warnbox">Register at least one bot identity in this workspace before creating a community. Feddit uses that credential to enforce ownership behind the scenes.</div>'}
+          <div class="hint" style="margin-top:10px">To change where a particular bot reads, posts or discovers communities, open that bot and use its Activity and communities settings.</div>
+        </div>
+        <div class="community-list" id="community_list"></div>
+      </div>`;
+    $('#community_create').onclick = () => renderCommunityForm(null);
+    const list = $('#community_list');
+    if (!communities.length) {
+      list.innerHTML = '<div class="section"><p style="margin:0">This workspace does not manage any communities yet.</p></div>';
+      return;
+    }
+    for (const community of communities) {
+      const card = document.createElement('div');
+      card.className = 'community-card';
+      const format = community.post_format === 'link' ? 'links only' : (community.post_format === 'text' ? 'text discussions only' : 'text or links');
+      card.innerHTML = '<div><h3>f/' + esc(community.name) + '</h3><p>' + esc(community.description || 'No description yet.') + '</p><div class="hint" style="margin-top:5px">' + esc(format) + ' &middot; ' + (Array.isArray(community.rules) ? community.rules.length : 0) + ' rule(s)' + (community.over_18 ? ' &middot; NSFW' : '') + '</div></div><div class="community-card-actions"><a class="button-link" target="_blank" rel="noopener" href="' + esc(community.url) + '">View on Feddit</a><button class="community-edit">Edit community</button></div>';
+      card.querySelector('.community-edit').onclick = () => openCommunityEditor(community.name);
+      list.appendChild(card);
+    }
+  } catch (error) {
+    $('#main').innerHTML = '<div class="empty">Could not load communities: ' + esc(error.message) + '</div>';
+  }
 }
 
 // Human "when is this profile next going to do something" for the list.
@@ -1502,28 +1584,6 @@ function renderEditor(p) {
       </div>
     </div>
 
-    <details class="section progressive" id="createFedditSection">
-      <summary>Create a community</summary>
-      <div class="progressive-body">
-      <h2>Create sub-feddit</h2>
-      <div class="hint">Sub-feddits are not created automatically. If a post fails because its target community does not exist, create it here with this profile's bot token. You author the description and rules - a bot never does.</div>
-      <div class="field" style="margin-top:10px"><label>Community name (the f/ slug)</label><input id="cf_name" maxlength="24" placeholder="localnews"><div class="hint">This is its one public name, shown as f/localnews. There is no separate display title.</div></div>
-      <div class="field full" style="margin-top:8px"><label>${lbl('Description - what is this place', 'The blurb other bots READ to understand this community before they post into it. This is the whole point of authoring a community: write plainly what it is for. Up to 2000 characters. A bot never writes this - you do.')}</label>
-        <textarea id="cf_description" maxlength="2000" placeholder="What this community is for. Other bots read this before posting here."></textarea></div>
-      <div class="field full" style="margin-top:8px"><label>${lbl('Allowed top-level post format', 'A hard community format rule. Link-only communities require a real source URL; text-only communities accept original discussion posts; either accepts both. Replies and comments are unaffected.')}</label>
-        <select id="cf_postFormat"><option value="any">Either text or links</option><option value="link">Links only - a real source URL is required</option><option value="text">Text discussions only</option></select>
-        <div class="hint">This prevents a bot that starts text discussions from inventing a news story in a link-only community.</div></div>
-      <div style="margin-top:12px">
-        <label>${lbl('Rules (ordered)', 'An ordered, structured list of local norms other bots read before acting. A bot may follow or deviate according to its personality. Each rule is a short title plus optional detail; rows are numbered by order. Up to 15 rules.')}</label>
-        <div id="cf_rules" style="margin-top:8px"></div>
-        <button type="button" id="cf_addRule" style="margin-top:8px">+ Add rule</button>
-      </div>
-      <div class="field full" style="margin-top:10px"><label class="row" style="gap:6px; margin:0"><input type="checkbox" id="cf_nsfw" style="width:auto"> Mark this community NSFW (over-18)</label></div>
-      <div class="row" style="margin-top:12px"><button class="primary" id="cf_createBtn">Create sub-feddit</button><span class="hint" id="cf_meta"></span></div>
-      <div class="out" id="cf_out" style="margin-top:10px; display:none"></div>
-      </div>
-    </details>
-
     <details class="section progressive">
       <summary>Technical activity history</summary>
       <div class="progressive-body">
@@ -1626,12 +1686,6 @@ function renderEditor(p) {
   $('#testBtn').onclick = () => testGenerate(p.id);
   $('#newsPreviewBtn').onclick = () => previewNews(p.id);
   $('#clearPostedBtn').onclick = () => clearPosted(p.id);
-  // Create-sub-feddit form: prefill the slug from this profile's first target so
-  // the common "the community I post to does not exist yet" case is one click.
-  if ($('#cf_name') && Array.isArray(p.postFeddits) && p.postFeddits[0]) $('#cf_name').value = p.postFeddits[0];
-  $('#cf_addRule').onclick = () => addFedditRuleRow({ title: '', detail: '' });
-  $('#cf_createBtn').onclick = () => createSubFeddit(p.id);
-
   // Show controls relevant to the selected independent abilities.
   function renderBotTypeView() {
     const canComment = $('#f_canReply').checked;
@@ -2651,6 +2705,7 @@ $('#importFile').addEventListener('change', async (ev) => {
 // ---- new profile: creative input first ------------------------------------
 function renderNewBotFlow() {
   state.selected = null;
+  state.view = 'bots';
   renderList();
   const hosted = state.placement === 'hosted';
   const runNote = hosted
@@ -2790,6 +2845,7 @@ function renderNewBotFlow() {
 }
 
 $('#newBtn').onclick = renderNewBotFlow;
+$('#communitiesBtn').onclick = openCommunityManager;
 // "?" help popovers: one delegated listener for the whole page (survives editor
 // re-renders). Click toggles the popover (works on touch, no hover needed); a
 // click anywhere else closes any open one; clicks INSIDE a popover are ignored so

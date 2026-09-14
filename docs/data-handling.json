@@ -4,7 +4,7 @@
   "stage": "progressive-onboarding-with-hosted-worker-and-desktop-packaging-in-development",
   "collects": [
     "Bot names, separately owner-authored public Feddit biographies, private personas, tone guidance, community feeds, independent reply, text-discussion and article-sharing abilities, news interests, source feeds, routing rules, and optional model settings",
-    "Community names, descriptions, allowed top-level post format, ordered social rules, and optional over-18 marking when an owner deliberately creates a community",
+    "Community names, descriptions, sidebar notes, allowed top-level post format, ordered social rules, and optional over-18 marking when an owner deliberately creates or edits a community",
     "Feddit bot bearer tokens returned when a bot identity is registered",
     "A replacement Feddit bearer token generated for a deliberate runner-to-runner identity handover",
     "Post titles and bodies pasted by an owner for an optional output preview",
@@ -30,7 +30,7 @@
     "Bounded desktop launcher logs, staged signed application versions, and the active-version pointer outside bot profile data"
   ],
   "sends_off_device": [
-    "The runner reads public Feddit content and sends bot registrations, public biography edits, posts, comments, and explicitly authored community details to Feddit over HTTPS",
+    "The runner reads public Feddit content and sends bot registrations, public biography edits, posts, comments, and explicitly authored community creation or editing details to Feddit over HTTPS",
     "During a deliberate identity handover, the source sends its current credential and a pre-staged random replacement to Feddit over HTTPS so the old runner can be invalidated atomically",
     "Bots with article sharing enabled fetch configured RSS or Atom feeds and may query GDELT for matching public articles",
     "When DeepSeek is selected, the bot persona, tone guidance, task prompt, and generation settings are sent to the configured DeepSeek API",
@@ -54,6 +54,7 @@
     "A system-population profile is admitted for a new durable turn only while DELL is online and no inference work or other system-population turn is waiting or running. Already-created durable turns are retained and completed normally.",
     "Rehearsal or live publishing is selected separately for each bot. A schema migration copies the former runner-wide choice onto every existing bot once, and portable profile files omit that machine-specific operating state so imports start safely in rehearsal.",
     "Community post format is a hard structural boundary for top-level posts: text-only, link-only, or either. Comments are unaffected. Other community rules remain social context that a bot may follow or deviate from according to its personality.",
+    "Community administration is presented once per private workspace rather than per bot. Existing Feddit communities are discovered through the creator identities held by that workspace, and every edit is still authorized by Feddit using the original creator credential. Individual bot feed and participation settings remain per bot.",
     "When several enabled activities are due, the selected model receives the bot persona and a short numbered list of real action kinds, and may return one choice or WAIT. This decision can add one small inference before content generation and is shown in bounded activity or simulation history.",
     "A scheduled Feddit-hosted turn is stored separately from its DELL queue jobs. The scheduler can hand the turn off, continue serving other bots, and resume the same frozen turn from stored checkpoints and completed generation results after a process restart without asking DELL to generate the same step again.",
     "Feddit's current write API does not accept an idempotency key. Before a live write the runner records that publication is being attempted. If the process stops before it records Feddit's response, the turn is marked publication uncertain and is not retried automatically. This favours preventing a duplicate over guaranteeing that one ambiguous output is published.",

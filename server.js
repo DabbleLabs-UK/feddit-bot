@@ -184,6 +184,79 @@ function normalizeFedditBio(value) {
   return bio;
 }
 
+function workspaceProfiles(requestOwner) {
+  return store.listProfiles().filter((profile) => !requestOwner || profile.ownerId === requestOwner.id);
+}
+
+function communityManagerProfiles(requestOwner) {
+  const probationRank = (profile) => {
+    if (profile.probation && profile.probation.onProbation === false) return 0;
+    if (!profile.probation || profile.probation.onProbation == null) return 1;
+    return 2;
+  };
+  return workspaceProfiles(requestOwner)
+    .filter((profile) => Boolean(profile.token) && !secrets.getFedditHandover(profile.id))
+    .sort((a, b) => {
+      const byProbation = probationRank(a) - probationRank(b);
+      if (byProbation) return byProbation;
+      return String(a.createdAt || '').localeCompare(String(b.createdAt || '')) || String(a.id).localeCompare(String(b.id));
+    });
+}
+
+function communityManagerMap(requestOwner) {
+  const managers = new Map();
+  for (const profile of communityManagerProfiles(requestOwner)) {
+    const username = String(profile.fedditUsername || '').trim().toLowerCase();
+    if (username && !managers.has(username)) managers.set(username, profile);
+  }
+  return managers;
+}
+
+function communityListFromResponse(response) {
+  return response && response.data && Array.isArray(response.data.feddits)
+    ? response.data.feddits
+    : [];
+}
+
+function communityForClient(community) {
+  const value = { ...(community || {}) };
+  const suppliedUrl = String(value.url || '');
+  value.url = /^https?:\/\//i.test(suppliedUrl)
+    ? suppliedUrl
+    : suppliedUrl
+      ? feddit.SITE_BASE + (suppliedUrl.startsWith('/') ? suppliedUrl : '/' + suppliedUrl)
+      : feddit.SITE_BASE + '/f/' + encodeURIComponent(value.name || '');
+  value.can_manage = true;
+  return value;
+}
+
+function normalizeCommunityRequest(body, creating = false) {
+  const input = body && typeof body === 'object' ? body : {};
+  const name = String(input.name || '').trim();
+  const description = String(input.description || '').trim();
+  const sidebarText = String(input.sidebarText ?? input.sidebar_text ?? '').trim();
+  const postFormat = String(input.postFormat ?? input.post_format ?? 'any').toLowerCase();
+  const nsfw = input.nsfw === true || input.over_18 === true;
+  const rules = Array.isArray(input.rules) ? input.rules : [];
+
+  if (creating && !/^[A-Za-z0-9_]{3,24}$/.test(name)) {
+    throw new Error('Name must be 3-24 characters: letters, numbers or underscore only.');
+  }
+  if ([...description].length > 2000) throw new Error('Description must be at most 2000 characters.');
+  if ([...sidebarText].length > 10000) throw new Error('Sidebar notes must be at most 10000 characters.');
+  if (!['any', 'text', 'link'].includes(postFormat)) throw new Error('Post format must be text, link or either.');
+  if (rules.length > 15) throw new Error('A community can have at most 15 rules.');
+  for (let i = 0; i < rules.length; i++) {
+    const title = String((rules[i] && rules[i].title) || '').trim();
+    const detail = String((rules[i] && rules[i].detail) || '').trim();
+    if (!title || [...title].length > 100) {
+      throw new Error('Rule ' + (i + 1) + ' needs a title of at most 100 characters.');
+    }
+    if ([...detail].length > 500) throw new Error('Rule ' + (i + 1) + ' detail must be at most 500 characters.');
+  }
+  return { name, description, sidebarText, postFormat, nsfw, rules };
+}
+
 async function currentFedditBiography(profile) {
   const stored = typeof profile.fedditBio === 'string' ? profile.fedditBio : '';
   if (!profile.token || !String(profile.fedditUsername || '').trim()) {
@@ -616,6 +689,92 @@ async function handleApi(req, res, urlPath, query) {
     const r = await feddit.feddits();
     if (!r.ok) return sendJson(res, 502, { error: r.error || 'Feddit unreachable' });
     return sendJson(res, 200, r.data);
+  }
+
+  // Community administration lives once per private workspace, rather than in
+  // every bot editor. Feddit currently represents authority through the bearer
+  // token of the identity that originally created a community. The runner hides
+  // that compatibility detail: it finds the matching credential among this
+  // workspace's registered profiles, while Feddit still performs the decisive
+  // creator check on every update.
+  if (urlPath === '/api/communities' && method === 'GET') {
+    const r = await feddit.feddits();
+    if (!r.ok) return sendJson(res, 502, { error: r.error || 'Feddit unreachable' });
+    const managers = communityManagerMap(requestOwner);
+    const communities = communityListFromResponse(r)
+      .filter((community) => managers.has(String(community.created_by || '').trim().toLowerCase()))
+      .map(communityForClient);
+    return sendJson(res, 200, {
+      communities,
+      canCreate: communityManagerProfiles(requestOwner).length > 0,
+    });
+  }
+
+  if (urlPath === '/api/communities' && method === 'POST') {
+    const managers = communityManagerProfiles(requestOwner);
+    if (!managers.length) {
+      return sendJson(res, 409, {
+        error: 'Register at least one bot identity in this workspace before creating a community. Feddit uses that credential to enforce ownership behind the scenes.',
+      });
+    }
+    let input;
+    try {
+      input = normalizeCommunityRequest(await readBody(req), true);
+    } catch (error) {
+      return sendJson(res, 400, { error: error.message });
+    }
+    const manager = managers[0];
+    const r = await feddit.createFeddit({ token: manager.token, ...input });
+    if (!r.ok) {
+      let message = feddit.createErrorMessage(r, input.name);
+      message = message.replace(/^This bot is still on probation,/, 'Feddit is still applying new-identity probation in this workspace,');
+      const status = [400, 403, 409, 429].includes(r.status) ? r.status : 502;
+      return sendJson(res, status, { error: message });
+    }
+    const created = (r.data && r.data.feddit) || { name: input.name, title: input.name };
+    store.logActivity(manager.id, {
+      kind: 'feddit', ok: true, target: 'f/' + input.name,
+      note: 'Created community f/' + input.name + ' from the workspace community manager.',
+    });
+    return sendJson(res, 201, { ok: true, community: communityForClient(created) });
+  }
+
+  const communityRoute = urlPath.match(/^\/api\/communities\/([^/]+)$/);
+  if (communityRoute && (method === 'GET' || method === 'PUT')) {
+    const name = decodeURIComponent(communityRoute[1]);
+    const list = await feddit.feddits();
+    if (!list.ok) return sendJson(res, 502, { error: list.error || 'Feddit unreachable' });
+    const listed = communityListFromResponse(list).find((community) =>
+      String(community.name || '').toLowerCase() === name.toLowerCase());
+    if (!listed) return sendJson(res, 404, { error: 'No such community.' });
+    const manager = communityManagerMap(requestOwner).get(String(listed.created_by || '').trim().toLowerCase());
+    if (!manager) {
+      return sendJson(res, 403, { error: 'This community is not managed by this private workspace.' });
+    }
+
+    if (method === 'GET') {
+      const detail = await feddit.about(listed.name);
+      if (!detail.ok) return sendJson(res, 502, { error: detail.error || 'Feddit could not load this community.' });
+      const community = detail.data && detail.data.feddit;
+      if (!community || String(community.created_by || '').trim().toLowerCase() !== String(manager.fedditUsername || '').trim().toLowerCase()) {
+        return sendJson(res, 403, { error: 'This community is not managed by this private workspace.' });
+      }
+      return sendJson(res, 200, { community: communityForClient(community) });
+    }
+
+    let input;
+    try {
+      input = normalizeCommunityRequest(await readBody(req), false);
+    } catch (error) {
+      return sendJson(res, 400, { error: error.message });
+    }
+    const updated = await feddit.updateFeddit({ ...input, token: manager.token, name: listed.name });
+    if (!updated.ok) {
+      const status = [400, 401, 403, 404, 409, 429].includes(updated.status) ? updated.status : 502;
+      return sendJson(res, status, { error: updated.error || 'Feddit could not update this community.' });
+    }
+    const community = updated.data && updated.data.feddit;
+    return sendJson(res, 200, { ok: true, community: communityForClient(community || listed) });
   }
 
   // GET /api/news/feeds - the shipped default RSS/Atom feed list, so the news
