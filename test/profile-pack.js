@@ -20,7 +20,7 @@ const original = {
   readFeddits: [],
   feedSort: 'controversial',
   postsPerHour: 0.5,
-  provider: 'deepseek',
+  provider: 'ollama',
   model: 'machine-specific-model',
   deepseekModel: 'paid-machine-policy',
   enabled: true,
@@ -61,6 +61,7 @@ assert.equal('token' in moved.runtime, false);
 assert.equal('provider' in moved.bot, false);
 assert.equal('model' in moved.bot, false);
 assert.equal('deepseekModel' in moved.bot, false);
+assert.deepEqual(moved.executionPreference, { localModel: 'machine-specific-model' });
 assert.equal('enabled' in moved.bot, false);
 assert.equal('dryRun' in moved.bot, false);
 assert.equal('deployment' in moved.bot, false);
@@ -68,7 +69,7 @@ assert.equal('botOrigin' in moved.bot, false);
 assert.equal('botOrigin' in moved.runtime, false);
 assert.equal('hostedOnboardingTurnsCompleted' in moved.runtime, false);
 assert.equal(JSON.stringify(moved).includes('NEVER_EXPORT_THIS'), false);
-assert.equal(JSON.stringify(moved).includes('machine-specific-model'), false);
+assert.equal(JSON.stringify(moved).includes('machine-specific-model'), true);
 
 const imported = packs.importPatch(moved);
 assert.equal(imported.persona, original.persona);
@@ -83,7 +84,8 @@ assert.equal(imported.feedSort, 'controversial');
 assert.deepEqual(imported.simulationState, original.simulationState);
 assert.equal(imported.enabled, false);
 assert.equal('dryRun' in imported, false, 'a moved bot starts from the destination safe default');
-assert.equal('provider' in imported, false);
+assert.equal(imported.provider, 'ollama');
+assert.equal(imported.model, 'machine-specific-model');
 assert.equal('token' in imported, false);
 assert.equal('botOrigin' in imported, false, 'portable files cannot assert shared-capacity provenance');
 assert.equal('hostedOnboardingTurnsCompleted' in imported, false, 'portable files cannot carry destination onboarding priority');
@@ -94,6 +96,11 @@ assert.equal(template.sourceProfileId, null);
 assert.equal(template.bot.fedditUsername, '');
 assert.equal(template.bot.fedditBio, original.fedditBio);
 assert.equal('runtime' in template, false);
+assert.deepEqual(template.executionPreference, { localModel: 'machine-specific-model' });
+
+const cloudProfile = packs.exportProfile({ ...original, provider: 'deepseek', model: 'runner-private-cloud-model' });
+assert.equal('executionPreference' in cloudProfile, false, 'cloud placement details stay destination-specific');
+assert.equal(JSON.stringify(cloudProfile).includes('runner-private-cloud-model'), false);
 
 assert.deepEqual(packs.validate(null), {
   ok: false,
@@ -109,13 +116,15 @@ assert.equal(handover.fedditToken, replacementToken);
 assert.equal(handover.profilePack.bot.persona, original.persona);
 assert.equal(handover.profilePack.bot.fedditBio, original.fedditBio);
 assert.equal(handover.profilePack.bot.provider, undefined);
+assert.deepEqual(handover.profilePack.executionPreference, { localModel: 'machine-specific-model' });
 assert.equal(packs.validateHandover(handover).ok, true);
 const handedIn = packs.importHandoverPatch(handover);
 assert.equal(handedIn.token, replacementToken);
 assert.equal(handedIn.enabled, false);
 assert.equal(handedIn.persona, original.persona);
 assert.equal(handedIn.fedditBio, original.fedditBio);
-assert.equal(handedIn.provider, undefined);
+assert.equal(handedIn.provider, 'ollama');
+assert.equal(handedIn.model, 'machine-specific-model');
 assert.equal(packs.validateHandover({ ...handover, fedditToken: 'not-a-token' }).ok, false);
 assert.throws(() => packs.createHandover(original, 'not-a-token'));
 assert.equal(packs.validate({
@@ -124,5 +133,12 @@ assert.equal(packs.validate({
   kind: 'template',
   bot: { fedditBio: 'x'.repeat(501) },
 }).ok, false, 'portable biographies cannot exceed Feddit\'s limit');
+assert.equal(packs.validate({
+  format: packs.FORMAT,
+  version: packs.VERSION,
+  kind: 'move',
+  bot: {},
+  executionPreference: { localModel: 'bad\nmodel' },
+}).ok, false, 'portable local-model preferences reject control characters');
 
 console.log('profile-pack: all checks passed');

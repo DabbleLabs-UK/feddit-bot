@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const { createModelInstaller } = require('../lib/model-installer');
+const { DELL_SHARED_MODEL } = require('../lib/model-catalog');
 
 function deferred() {
   let resolve;
@@ -37,6 +38,15 @@ async function run() {
   assert.equal(installer.get('qwen3:4b-instruct').state, 'ready');
   assert.equal(ready, 'qwen3:4b-instruct');
   assert.throws(() => installer.start('not-guided'), /guided local models/);
+
+  let abliteratedPulled = '';
+  const abliteratedInstaller = createModelInstaller({
+    pullModel: async (model) => { abliteratedPulled = model; },
+  });
+  abliteratedInstaller.start(DELL_SHARED_MODEL);
+  await settle();
+  assert.equal(abliteratedPulled, DELL_SHARED_MODEL, 'abliterated catalogue entries use the same Ollama pull path');
+  assert.equal(abliteratedInstaller.get(DELL_SHARED_MODEL).state, 'ready');
 
   const failed = createModelInstaller({ pullModel: async () => { throw new Error('disk full'); } });
   failed.start('qwen2.5:1.5b');

@@ -53,7 +53,6 @@ const ownerStore = createOwnerStore({ file: path.join(store.DATA_DIR, 'owners.js
 const OWNER_ACTIVITY_COOKIE = 'feddit_owner_activity';
 const modelInstaller = createModelInstaller({
   pullModel: ollama.pullModel,
-  onReady: (model) => store.updateSettings({ localDefaultModel: model }),
 });
 
 function activeDefaultModel() {
@@ -68,6 +67,18 @@ function applyHostedProfilePolicy(patch, current = {}, at = Date.now()) {
   patch.provider = 'dell';
   patch.model = store.DEFAULT_MODEL;
   return patch;
+}
+
+async function unavailableLocalModel(profile) {
+  const provider = String(profile?.provider || 'ollama');
+  if (PLACEMENT === 'hosted' || !profile || profile.enabled !== true || provider !== 'ollama') return '';
+  const model = String(profile.model || activeDefaultModel()).trim();
+  const status = await ollama.status();
+  // A temporarily stopped local service is handled by the existing runner
+  // startup/recovery path. Only reject a model that a reachable Ollama instance
+  // definitively says is absent.
+  if (!status.up || (status.models || []).includes(model)) return '';
+  return 'This bot prefers the local model "' + model + '", but it is not installed on this computer. Pause the bot, then download it from the bot model selector or choose an installed model.';
 }
 
 // ---- helpers ----------------------------------------------------------------
@@ -511,8 +522,8 @@ async function handleApi(req, res, urlPath, query) {
     return sendJson(res, 200, { capacity: jobQueue.capacity() });
   }
 
-  // Local model setup is intentionally a small guided choice, not an Ollama
-  // administration screen. Hosted owners never see or control DELL's models.
+  // Local model setup is intentionally a guided choice, not an Ollama
+  // administration screen. Hosted owners never see or control worker models.
   if (urlPath.startsWith('/api/models')) {
     if (PLACEMENT === 'hosted') return sendJson(res, 404, { error: 'Not found' });
     if (method === 'GET' && urlPath === '/api/models') {
@@ -526,6 +537,7 @@ async function handleApi(req, res, urlPath, query) {
       return sendJson(res, 200, {
         hardware,
         installed: status.models || [],
+        installedDetails: status.modelDetails || [],
         ollama: { up: status.up, error: status.error },
         selectedModel: activeDefaultModel(),
         downloads: modelInstaller.list(),
@@ -880,6 +892,8 @@ async function handleApi(req, res, urlPath, query) {
     } else if (!body.model) {
       body.model = activeDefaultModel();
     }
+    const modelError = await unavailableLocalModel(body);
+    if (modelError) return sendJson(res, 409, { error: modelError, code: 'LOCAL_MODEL_MISSING' });
     const p = store.createProfile(body);
     return sendJson(res, 201, { profile: safeProfile(p) });
   }
@@ -897,7 +911,7 @@ async function handleApi(req, res, urlPath, query) {
     if (requestOwner) {
       patch.ownerId = requestOwner.id;
       applyHostedProfilePolicy(patch);
-    } else {
+    } else if (!patch.model) {
       patch.model = activeDefaultModel();
     }
     const username = String(patch.fedditUsername || '').trim().toLowerCase();
@@ -921,7 +935,7 @@ async function handleApi(req, res, urlPath, query) {
     if (requestOwner) {
       patch.ownerId = requestOwner.id;
       applyHostedProfilePolicy(patch);
-    } else {
+    } else if (!patch.model) {
       patch.model = activeDefaultModel();
     }
     const username = String(patch.fedditUsername || '').trim().toLowerCase();
@@ -1034,8 +1048,9 @@ async function handleApi(req, res, urlPath, query) {
     }
 
     // GET /api/profiles/:id/export - a portable move pack containing creative
-    // configuration and dedupe/runtime continuity, but never secrets or model
-    // placement. /template strips the registered identity and runtime too.
+    // configuration, a non-secret local-model preference and dedupe/runtime
+    // continuity, but never secrets or execution placement. /template strips
+    // the registered identity and runtime too.
     if (method === 'GET' && (sub === '/export' || sub === '/template')) {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
       return sendJson(res, 200, {
@@ -1077,6 +1092,8 @@ async function handleApi(req, res, urlPath, query) {
       // Never let the client blank an existing token by omission; only overwrite
       // token when a non-empty token is explicitly provided.
       if (body.token === '' || body.token == null) delete body.token;
+      const modelError = await unavailableLocalModel({ ...existing, ...body });
+      if (modelError) return sendJson(res, 409, { error: modelError, code: 'LOCAL_MODEL_MISSING' });
       const p = store.updateProfile(id, body);
       return sendJson(res, 200, { profile: safeProfile(p) });
     }

@@ -158,6 +158,34 @@ async function localPlacementContract(placement) {
     eq(created.json.profile.postsPerHour, 7, placement + ' preserves the selected post cadence');
     eq(created.json.profile.commentsPerHour, 11, placement + ' preserves the selected reply cadence');
 
+    const localA = await requestJson(runner.port, 'POST', '/api/profiles', {
+      fedditUsername: placement + '_local_a',
+      enabled: false,
+      provider: 'ollama',
+      model: 'qwen3:4b-instruct',
+    });
+    const localB = await requestJson(runner.port, 'POST', '/api/profiles', {
+      fedditUsername: placement + '_local_b',
+      enabled: false,
+      provider: 'ollama',
+      model: 'hf.co/mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated-GGUF:Q5_K_M',
+    });
+    eq(localA.json.profile.model, 'qwen3:4b-instruct', placement + ' stores the first bot local model');
+    eq(localB.json.profile.model, 'hf.co/mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated-GGUF:Q5_K_M',
+      placement + ' stores a different local model for another bot');
+
+    const importedMissing = await requestJson(runner.port, 'POST', '/api/profile-import', {
+      format: 'feddit-bot-profile',
+      version: 1,
+      kind: 'template',
+      bot: { persona: 'Imported with a preferred model that this machine may not have.' },
+      executionPreference: { localModel: 'owner/custom-model:Q4' },
+    });
+    eq(importedMissing.status, 201, placement + ' safely imports a missing preferred local model');
+    eq(importedMissing.json.profile.enabled, false, placement + ' keeps an imported bot paused');
+    eq(importedMissing.json.profile.provider, 'ollama', placement + ' retains the portable local provider preference');
+    eq(importedMissing.json.profile.model, 'owner/custom-model:Q4', placement + ' retains the missing model reference for resolution');
+
     if (placement !== 'desktop') return;
 
     const draftId = created.json.profile.id;
@@ -264,6 +292,17 @@ async function hostedPlacementContract() {
     eq(updated.json.profile.botOrigin, 'user', 'public updates cannot change server-managed origin');
     eq(updated.json.profile.hostedOnboardingTurnsCompleted, 0,
       'public updates cannot change server-managed onboarding progress');
+
+    const imported = await requestJson(runner.port, 'POST', '/api/profile-import', {
+      format: 'feddit-bot-profile',
+      version: 1,
+      kind: 'template',
+      bot: { persona: 'Hosted imports keep their creative settings.' },
+      executionPreference: { localModel: 'desktop-only-model' },
+    }, ownerHeaders);
+    eq(imported.status, 201, 'hosted owner can import a portable desktop bot');
+    eq(imported.json.profile.provider, 'dell', 'hosted import uses hosted compute rather than a desktop model');
+    ok(imported.json.profile.model !== 'desktop-only-model', 'hosted import does not expose or apply the desktop model');
   } finally {
     await runner.stop();
   }

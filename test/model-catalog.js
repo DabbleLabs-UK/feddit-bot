@@ -11,6 +11,7 @@ assert.equal(catalog.adviseHardware({ totalMemoryBytes: gib(16), cpuCount: 8 }).
 assert.equal(catalog.adviseHardware({ totalMemoryBytes: gib(32), cpuCount: 16 }).recommendedModel, 'qwen2.5:14b');
 assert.equal(catalog.adviseHardware({ totalMemoryBytes: gib(32), cpuCount: 4 }).recommendedModel, 'qwen3:4b-instruct');
 assert.equal(catalog.isGuidedModel('qwen3:4b-instruct'), true);
+assert.equal(catalog.isGuidedModel(catalog.DELL_SHARED_MODEL), true);
 assert.equal(catalog.isGuidedModel('qwen3:4b'), false);
 assert.equal(catalog.isGuidedModel('unknown'), false);
 assert.equal(catalog.DELL_SHARED_MODEL.includes('Meta-Llama'), true);
@@ -21,8 +22,16 @@ assert.deepEqual(catalog.MODELS.find((model) => model.label === 'Balanced').repl
 
 const advice = catalog.adviseHardware({ totalMemoryBytes: gib(12), cpuCount: 8, platform: 'win32', arch: 'x64' });
 assert.equal(advice.totalRamGb, 12);
-assert.equal(advice.choices.length, 4);
+assert.equal(advice.choices.length, 5);
 assert.equal(advice.choices.filter((choice) => choice.recommended).length, 1);
 assert.match(advice.basis, /GPU/);
+const abliterated = advice.choices.find((choice) => choice.variantKind === 'abliterated');
+assert.ok(abliterated, 'a conservative abliterated variant shares the guided catalogue');
+assert.equal(abliterated.quantization, 'Q5_K_M');
+assert.equal(abliterated.parameterSize, '8B');
+assert.equal(abliterated.downloadGb, 5.73);
+assert.equal(abliterated.fit, 'may-be-slow', 'hardware advice applies to abliterated variants too');
+assert.match(abliterated.sourceUrl, /^https:\/\/huggingface\.co\//);
+assert.match(abliterated.licenseName, /Llama 3\.1/);
 
 console.log('model-catalog: all checks passed');

@@ -258,6 +258,12 @@
   .model-choice .model-copy { color: var(--dim); font-size: 12px; }
   .model-choice .model-action { min-width: 118px; text-align: center; }
   .badge.hardware { margin-left: 6px; color: var(--dim); border-color: #68737d; font-weight: 400; }
+  .badge.variant { margin-left: 6px; color: #c9e4ff; border-color: #4b6983; font-weight: 400; }
+  .badge.variant.abliterated { color: #f0d9a0; border-color: var(--warn); }
+  .model-facts { margin-top: 4px; color: #b9c4ce; }
+  .model-facts a { color: #9dceff; }
+  .model-detail-box { margin-top: 7px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--dim); font-size: 12px; }
+  .model-detail-box b { color: var(--text); }
   .model-next { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 14px; }
   .download-progress { color: var(--accent); font-size: 12px; }
   .preview-explainer { margin: 7px 0 12px; color: var(--dim); font-size: 12px; }
@@ -671,7 +677,7 @@ async function loadModels() {
       state.modelChoice = state.models.selectedModel || choices[0] || '';
     }
   } catch (error) {
-    state.models = { error: error.message, installed: [], downloads: [], hardware: { choices: [] } };
+    state.models = { error: error.message, installed: [], installedDetails: [], downloads: [], hardware: { choices: [] } };
   }
 }
 
@@ -704,10 +710,15 @@ function renderModelSetup(firstRun) {
     }
     return '<div class="model-choice' + (isChosen ? ' chosen' : '') + '">' +
       '<div><div class="model-name">' + esc(choice.label) +
-      (choice.recommended ? '<span class="badge hardware">Largest likely to fit</span>' : '') + '</div>' +
+      (choice.recommended ? '<span class="badge hardware">Largest likely to fit</span>' : '') +
+      '<span class="badge variant ' + (choice.variantKind === 'abliterated' ? 'abliterated' : '') + '">' + esc(choice.variant || 'Standard') + '</span></div>' +
       '<div class="hint">' + esc(choice.id) + '</div></div>' +
       '<div class="model-copy">' + esc(choice.description) + ' Needs about ' + choice.minRamGb +
       ' GB system memory or more. Download: ' + choice.downloadGb + ' GB.' +
+      '<div class="model-facts">' + esc(choice.parameterSize || 'Unknown size') + ' parameters &middot; ' +
+      esc(choice.quantization || 'Quantization reported after download') + ' &middot; ' +
+      '<a href="' + esc(choice.sourceUrl || '#') + '" target="_blank" rel="noopener">source</a> &middot; ' +
+      '<a href="' + esc(choice.licenseUrl || '#') + '" target="_blank" rel="noopener">' + esc(choice.licenseName || 'license') + '</a></div>' +
       (choice.fit === 'may-be-slow' ? ' <b>This may be slow on this computer.</b>' : '') +
       (download && download.state === 'failed'
         ? ' <span style="color:var(--bad)">' + esc(download.error || 'Download failed') + '</span>'
@@ -742,7 +753,7 @@ function renderModelSetup(firstRun) {
       esc(data.ollama.error || '') + '</div>'
     : '';
   $('#main').innerHTML = '<div class="new-flow"><h2>' + title + '</h2>' +
-    '<p class="lead">Choose what you prefer. Balanced is a good default; smaller is quicker, while larger usually writes better but takes longer.</p>' +
+    '<p class="lead">Choose what you prefer. Balanced is a good default; smaller is quicker, while larger usually writes better but takes longer. Abliterated variants use the same local-model flow and only affect generation style.</p>' +
     '<div class="section"><div><b>This computer:</b> ' + Number(hardware.totalRamGb || 0).toFixed(1) +
     ' GB memory, ' + Number(hardware.logicalCpus || 0) + ' logical processors.</div>' +
     '<p class="gentle-note">The "Largest likely to fit" note is only a hardware estimate. It does not change your choice. ' + esc(hardware.basis || '') + '</p>' + ollamaWarning +
@@ -753,7 +764,7 @@ function renderModelSetup(firstRun) {
     '<div class="model-grid">' + cards + '</div>' +
     '<div class="model-next"><div style="margin-bottom:10px"><b>Your choice:</b> ' +
     esc(chosen ? chosen.label : 'Choose an option above') + '</div>' + nextAction + '</div>' +
-    '<p class="gentle-note">Models are stored separately from the app, so automatic app updates do not download them again. You can change this later; each bot can also override it in technical settings.</p>' +
+    '<p class="gentle-note">Models are stored separately from the app, so automatic app updates do not download them again. You can change this later; each bot can also override it in technical settings. Model choice never bypasses Feddit permissions, validation, rate limits or other server-side rules.</p>' +
     (firstRun
       ? '<button id="modelSetupSkip">Keep exploring without downloading yet</button>'
       : '<button id="modelSetupBack">Back to my bots</button>') +
@@ -1452,21 +1463,47 @@ function refreshNextCountdowns() {
 function renderEditor(p) {
   state.editing = p;
   const abilities = profileCapabilities(p);
-  const providerChoice = p.provider === 'deepseek'
-    ? (p.deepseekModel || 'deepseek-v4-flash')
-    : (p.provider === 'dell' ? 'dell' : 'ollama');
+  const providerChoice = state.placement === 'hosted'
+    ? 'dell'
+    : (p.provider === 'deepseek' ? (p.deepseekModel || 'deepseek-v4-flash') : 'ollama');
   const installedLocalModels = state.models && Array.isArray(state.models.installed) ? state.models.installed : [];
   const savedLocalModel = String(p.model || state.defaultModel || '').trim();
-  const localModelChoices = [...new Set([state.defaultModel, savedLocalModel, ...installedLocalModels].filter(Boolean))];
   const guidedChoices = (state.models && state.models.hardware && state.models.hardware.choices) || [];
-  const localModelOptions = localModelChoices.map((model) => {
+  const guidedIds = new Set(guidedChoices.map((choice) => choice.id));
+  const installedCustomModels = installedLocalModels.filter((model) => !guidedIds.has(model));
+  const missingSavedModels = savedLocalModel && !guidedIds.has(savedLocalModel) && !installedLocalModels.includes(savedLocalModel)
+    ? [savedLocalModel]
+    : [];
+  const modelOption = (model) => {
     const guided = guidedChoices.find((choice) => choice.id === model);
     const notes = [];
     if (model === state.defaultModel) notes.push('installation default');
-    if (!installedLocalModels.includes(model)) notes.push('not currently reported by Ollama');
-    const label = (guided ? guided.label + ' - ' : '') + model + (notes.length ? ' (' + notes.join('; ') + ')' : '');
-    return '<option value="' + esc(model) + '"' + (model === savedLocalModel ? ' selected' : '') + '>' + esc(label) + '</option>';
-  }).join('');
+    if (!installedLocalModels.includes(model)) notes.push(guided ? 'download required' : 'not installed here');
+    const label = (guided ? guided.label + ' - ' + guided.variant + ' - ' : '') + model +
+      (notes.length ? ' (' + notes.join('; ') + ')' : '');
+    return '<option value="' + esc(model) + '" data-model="' + esc(model) + '"' +
+      (model === savedLocalModel ? ' selected' : '') + '>' + esc(label) + '</option>';
+  };
+  const localModelOptions =
+    '<optgroup label="Curated local models">' + guidedChoices.map((choice) => modelOption(choice.id)).join('') + '</optgroup>' +
+    (installedCustomModels.length ? '<optgroup label="Other models already installed">' + installedCustomModels.map(modelOption).join('') + '</optgroup>' : '') +
+    (missingSavedModels.length ? '<optgroup label="Saved preference not installed on this computer">' + missingSavedModels.map(modelOption).join('') + '</optgroup>' : '');
+  const providerField = state.placement === 'hosted'
+    ? `<div class="field full"><label>Generation</label>
+        <input type="hidden" id="f_provider" value="dell">
+        <div class="model-detail-box"><b>Feddit-hosted compute</b><br>No model download or API key is needed. This public hosted workspace cannot use models installed on your computer. Direct DeepSeek is available in desktop and self-hosted runners where the owner supplies the API key.</div></div>
+       <input type="hidden" id="f_model" value="${esc(savedLocalModel || state.defaultModel)}">`
+    : `<div class="field full"><label>Provider</label>
+        <select id="f_provider">
+          <option value="ollama"${providerChoice==='ollama'?' selected':''}>This computer (local Ollama, broadest model choice)</option>
+          <option value="deepseek-v4-flash"${providerChoice==='deepseek-v4-flash'?' selected':''}>DeepSeek V4-Flash (remote, paid, cheaper)</option>
+          <option value="deepseek-v4-pro"${providerChoice==='deepseek-v4-pro'?' selected':''}>DeepSeek V4-Pro (remote, paid, premium)</option>
+        </select></div>
+       <div class="field full" id="ollamaModelField"><label>Local model for this bot</label>
+        <select id="f_model">${localModelOptions}</select>
+        <div id="localModelDetails" class="model-detail-box"></div>
+        <div class="hint">Curated models use the same safe Ollama download flow as first setup. Other compatible Ollama models already installed on this computer remain available. A missing imported preference stays saved while the bot is paused, so you can download it or choose a replacement.</div>
+       </div>`;
   const main = $('#main');
   main.innerHTML = `
     <div class="bot-runbar" id="botRunBar"></div>
@@ -1653,17 +1690,7 @@ function renderEditor(p) {
       <div class="progressive-body">
       <h2>Provider &amp; model</h2>
       <div class="grid">
-        <div class="field full"><label>Provider</label>
-          <select id="f_provider">
-            <option value="dell"${providerChoice==='dell'?' selected':''}>Feddit hosted (easy, shared compute pool)</option>
-            <option value="ollama"${providerChoice==='ollama'?' selected':''}>This computer (local Ollama)</option>
-            <option value="deepseek-v4-flash"${providerChoice==='deepseek-v4-flash'?' selected':''}>DeepSeek V4-Flash (cheap)</option>
-            <option value="deepseek-v4-pro"${providerChoice==='deepseek-v4-pro'?' selected':''}>DeepSeek V4-Pro (premium)</option>
-          </select></div>
-        <div class="field full" id="ollamaModelField"><label>Ollama model</label>
-          <select id="f_model">${localModelOptions}</select>
-          <div class="hint">Choose from the models installed on this computer. The saved choice is retained if Ollama is temporarily unavailable. Use <b>Local model</b> at the top to download another guided option or change the installation default.</div>
-        </div>
+        ${providerField}
         <div class="field"><label>Temperature</label><input id="f_temperature" type="number" min="0" max="2" step="0.05" value="${esc(p.temperature)}"></div>
         <div class="field"><label id="numPredictLabel">num_predict (max tokens)</label><input id="f_numPredict" type="number" min="1" step="10" value="${esc(p.numPredict)}"></div>
       </div>
@@ -1876,6 +1903,52 @@ function renderEditor(p) {
     box.textContent = msg;
   }
 
+  function refreshLocalModelOptionLabels() {
+    const select = $('#f_model');
+    if (!select || select.type === 'hidden') return;
+    const installed = state.models && Array.isArray(state.models.installed) ? state.models.installed : [];
+    const choices = (state.models && state.models.hardware && state.models.hardware.choices) || [];
+    for (const option of select.options) {
+      const model = option.value;
+      const guided = choices.find((choice) => choice.id === model);
+      const notes = [];
+      if (model === state.defaultModel) notes.push('installation default');
+      if (!installed.includes(model)) notes.push(guided ? 'download required' : 'not installed here');
+      option.textContent = (guided ? guided.label + ' - ' + guided.variant + ' - ' : '') + model +
+        (notes.length ? ' (' + notes.join('; ') + ')' : '');
+    }
+  }
+
+  async function startBotModelDownload(model) {
+    clearInterval(state.modelPoll);
+    try {
+      await api('/api/models/pull', { method: 'POST', body: { model } });
+    } catch (error) {
+      toast('Download could not start: ' + error.message, 'err');
+      return;
+    }
+    const refresh = async () => {
+      await loadModels();
+      refreshLocalModelOptionLabels();
+      renderProviderView();
+      const download = (state.models.downloads || []).find((item) => item.model === model);
+      if (!download || !['starting', 'downloading'].includes(download.state)) {
+        clearInterval(state.modelPoll);
+        state.modelPoll = null;
+        if (download && download.state === 'ready') {
+          toast('Downloaded ' + model + '. It is selected for this bot; save changes to use it.', 'ok');
+        } else if (download && download.state === 'failed') {
+          toast('Download failed: ' + (download.error || 'Unknown error'), 'err');
+        }
+      }
+    };
+    await refresh();
+    if (state.models && (state.models.downloads || []).some((item) =>
+      item.model === model && ['starting', 'downloading'].includes(item.state))) {
+      state.modelPoll = setInterval(refresh, 1000);
+    }
+  }
+
   // Adapt the model fields to the chosen provider: num_predict is labelled
   // max_tokens for deepseek, and a clear
   // line states which provider+model will actually be used.
@@ -1883,7 +1956,8 @@ function renderEditor(p) {
     const choice = $('#f_provider').value;
     const isDeep = choice.startsWith('deepseek-');
     const isHosted = choice === 'dell';
-    $('#ollamaModelField').style.display = (isDeep || isHosted) ? 'none' : '';
+    const ollamaField = $('#ollamaModelField');
+    if (ollamaField) ollamaField.style.display = (isDeep || isHosted) ? 'none' : '';
     // The token field means something DIFFERENT per provider. For ollama it is a
     // plain output cap. For a DeepSeek reasoning model it is a TOTAL budget the
     // model spends on hidden reasoning FIRST and the visible answer second, so a
@@ -1909,26 +1983,70 @@ function renderEditor(p) {
     const warn = $('#modelWarn');
     if (!isDeep && !isHosted) {
       const val = $('#f_model').value.trim();
-      warn.innerHTML = (val && val !== state.defaultModel)
-        ? '<div class="warnbox"><b>Different local model:</b> this bot will use ' + esc(val) +
-          ' instead of this installation\'s selected model (' + esc(state.defaultModel) +
-          '). It may use more memory or take longer.</div>'
+      const models = state.models || {};
+      const installed = Array.isArray(models.installed) ? models.installed : [];
+      const installedDetails = Array.isArray(models.installedDetails) ? models.installedDetails : [];
+      const guidedChoices = (models.hardware && models.hardware.choices) || [];
+      const guided = guidedChoices.find((model) => model.id === val);
+      const detail = installedDetails.find((model) => model.name === val);
+      const download = (models.downloads || []).find((item) => item.model === val);
+      const isInstalled = installed.includes(val);
+      const facts = [];
+      if (guided && guided.parameterSize) facts.push(guided.parameterSize + ' parameters');
+      else if (detail && detail.parameterSize) facts.push(detail.parameterSize + ' parameters');
+      if (guided && guided.quantization) facts.push(guided.quantization);
+      else if (detail && detail.quantization) facts.push(detail.quantization);
+      if (guided) facts.push(guided.downloadGb + ' GB download');
+      else if (detail && detail.size) facts.push((detail.size / (1024 ** 3)).toFixed(1) + ' GB stored');
+      if (guided) facts.push('about ' + guided.minRamGb + ' GB system memory or more');
+      const fit = guided && guided.fit === 'may-be-slow'
+        ? '<div class="warnbox"><b>Hardware warning:</b> this model is likely to be slow or impractical with the detected ' +
+          Number((models.hardware || {}).totalRamGb || 0).toFixed(1) + ' GB system memory. GPU acceleration is not assumed.</div>'
         : '';
+      let availability = '<span class="badge on">Installed</span>';
+      if (!isInstalled && guided && download && ['starting', 'downloading'].includes(download.state)) {
+        availability = '<span class="download-progress">' + esc(download.message) +
+          (download.percent == null ? '' : ' - ' + download.percent + '%') + '</span>';
+      } else if (!isInstalled && guided) {
+        availability = '<button type="button" id="downloadBotModel">' +
+          (download && download.state === 'failed' ? 'Try download again' : 'Download this model') + '</button>' +
+          (download && download.state === 'failed' ? '<div style="color:var(--bad);margin-top:5px">' + esc(download.error || 'Download failed') + '</div>' : '');
+      } else if (!isInstalled) {
+        availability = '<span style="color:var(--warn)"><b>Not installed on this computer.</b> Install this model in Ollama, or choose an installed or curated model above.</span>';
+      }
+      const source = guided
+        ? '<div class="model-facts"><a href="' + esc(guided.sourceUrl) + '" target="_blank" rel="noopener">' + esc(guided.sourceName) + '</a> &middot; ' +
+          '<a href="' + esc(guided.licenseUrl) + '" target="_blank" rel="noopener">' + esc(guided.licenseName) + '</a></div>'
+        : '<div class="model-facts">Custom compatible model already managed by Ollama.</div>';
+      const details = $('#localModelDetails');
+      if (details) details.innerHTML = '<b>' + esc(guided ? guided.label : val) + '</b>' +
+        (guided ? ' <span class="badge variant ' + (guided.variantKind === 'abliterated' ? 'abliterated' : '') + '">' + esc(guided.variant) + '</span>' : '') +
+        '<div>' + esc(facts.join(' - ') || 'Ollama will report details when the model is available.') + '</div>' +
+        source + '<div style="margin-top:7px">' + availability + '</div>';
+      if ($('#downloadBotModel')) $('#downloadBotModel').onclick = () => startBotModelDownload(val);
+      const different = val && val !== state.defaultModel
+        ? '<div class="warnbox"><b>Per-bot override:</b> only this bot will use ' + esc(val) +
+          ' instead of the installation default (' + esc(state.defaultModel) + ').</div>'
+        : '';
+      const abliterated = guided && guided.variantKind === 'abliterated'
+        ? '<div class="warnbox"><b>Abliterated variant:</b> this may be less refusal-prone, but it changes generation only. Feddit permissions, validation, rate limits and platform rules still apply.</div>'
+        : '';
+      warn.innerHTML = different + abliterated + fit;
     } else {
       warn.innerHTML = '';
     }
 
-    const willModel = isDeep ? choice : (isHosted ? state.defaultModel : ($('#f_model').value.trim() || state.defaultModel));
+    const willModel = isDeep ? choice : (isHosted ? 'managed by the hosted compute pool' : ($('#f_model').value.trim() || state.defaultModel));
     const provName = isDeep ? 'DeepSeek' : (isHosted ? 'Feddit hosted' : 'this computer');
     $('#willUseLine').innerHTML = 'Will generate via: <b>' + esc(provName) + '</b> &middot; model <b>' + esc(willModel) + '</b>' +
-      (isDeep ? ' &middot; billed per token (shared DeepSeek key)' : ' &middot; free of API cost');
+      (isDeep ? ' &middot; billed per token using your runner\'s DeepSeek key' : ' &middot; no direct API charge');
     const hint = $('#providerHint');
     if (isHosted) {
       const cap = state.capacity || {};
       hint.textContent = capacityOperationalSentence(cap) + ' ' +
         (cap.desktopAlternative || 'A desktop bot skips the shared queue and normally gets its turn all but instantly.');
     } else if (isDeep) {
-      hint.textContent = 'DeepSeek is a remote paid call. It costs money even during scheduled simulation because simulation skips the Feddit write, not the generation. Set the shared key in the top bar.';
+      hint.textContent = 'DeepSeek is a remote paid call supported by desktop and self-hosted runners. It costs money even during scheduled simulation because simulation skips the Feddit write, not the generation. Set your key in the top bar.';
     } else {
       hint.textContent = 'Runs on this computer with no shared queue. Leave the model on the suggested choice unless you know you want another.';
     }
