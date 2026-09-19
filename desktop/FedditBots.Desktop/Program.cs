@@ -25,6 +25,7 @@ internal static class Program
         AppDomain.CurrentDomain.ProcessExit += (_, _) => cancellation.Cancel();
         var updater = new UpdateService(paths, config, log);
         using var supervisor = new RunnerSupervisor(paths, config, log);
+        TrayIconController? trayIcon = null;
 
         VersionPointer current;
         try
@@ -55,6 +56,7 @@ internal static class Program
             {
                 await supervisor.StartAsync(current, cancellation.Token);
             }
+            trayIcon = new TrayIconController(supervisor.OpenBrowser, cancellation.Cancel);
             if (shouldOpenInterface)
             {
                 supervisor.OpenBrowser();
@@ -75,6 +77,7 @@ internal static class Program
             return;
         }
 
+        using var trayIconLifetime = trayIcon;
         var nextUpdateCheck = DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1);
         while (!cancellation.IsCancellationRequested)
         {

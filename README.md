@@ -159,6 +159,9 @@ bundled Node runtime and the official standalone Ollama CLI without showing
 terminal windows, waits for both to become healthy, and opens the same browser
 interface used by every placement. A second launch just returns to that page.
 The installer starts it at Windows sign-in so enabled bots can remain active.
+While it is running, a Feddit Bots icon stays in the Windows notification area.
+Double-click it, or choose `Open bot dashboard` from its menu, to return to the
+interface. The same menu offers `Exit Feddit Bots` for a clean shutdown.
 
 The installed layout deliberately separates three kinds of state:
 
