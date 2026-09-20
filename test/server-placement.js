@@ -140,6 +140,9 @@ async function localPlacementContract(placement) {
     eq(runtime.json.ownerSessionRequired, false, placement + ' does not impose hosted owner sessions');
     eq(runtime.json.hostedPolicy, null, placement + ' does not apply hosted cadence policy');
 
+    const populationPage = await requestJson(runner.port, 'GET', '/population.html');
+    eq(populationPage.status, 404, placement + ' does not expose the hosted population operator page');
+
     const created = await requestJson(runner.port, 'POST', '/api/profiles', {
       fedditUsername: placement + '_draft',
       enabled: false,
@@ -237,6 +240,8 @@ async function hostedPlacementContract() {
     const session = await requestJson(runner.port, 'POST', '/api/session');
     eq(session.status, 201, 'hosted runner issues an anonymous private workspace');
     const ownerHeaders = { 'X-Feddit-Bot-Owner': session.json.accessToken };
+    const ordinaryPopulation = await requestJson(runner.port, 'GET', '/api/population', undefined, ownerHeaders);
+    eq(ordinaryPopulation.status, 404, 'ordinary hosted owners cannot discover the population operator API');
     const activity = await requestJson(runner.port, 'POST', '/api/activity', undefined, {
       ...ownerHeaders,
       Host: 'feddit-bots.dabblelabs.uk',

@@ -323,6 +323,7 @@
     <button id="refreshStatus">Refresh status</button>
     <button id="modelSetupBtn">Local model</button>
     <button id="manageLinkBtn" style="display:none">Private management link</button>
+    <button id="populationBtn" style="display:none">Background population</button>
   </div>
 </header>
 
@@ -397,7 +398,7 @@ function toast(msg, kind) {
   setTimeout(() => t.remove(), kind === 'err' ? 6000 : 3500);
 }
 
-let state = { profiles: [], selected: null, view: 'bots', defaultModel: '', status: null, settings: null, capacity: null, hostedWork: null, placement: 'desktop', appVersion: '', hostedPolicy: null, reloadingForUpdate: false, models: null, modelChoice: '', modelPoll: null, localModelActivity: null, localModelActivityLoading: false };
+let state = { profiles: [], selected: null, view: 'bots', defaultModel: '', status: null, settings: null, capacity: null, hostedWork: null, placement: 'desktop', appVersion: '', hostedPolicy: null, populationAdmin: false, reloadingForUpdate: false, models: null, modelChoice: '', modelPoll: null, localModelActivity: null, localModelActivityLoading: false };
 let ownerActivityPingAt = 0;
 let ownerActivityPingRunning = false;
 
@@ -486,6 +487,7 @@ function applyPlacementChrome() {
   $('#modelSetupBtn').style.display = hosted ? 'none' : '';
   $('#localModelActivity').style.display = hosted ? 'none' : '';
   $('#manageLinkBtn').style.display = hosted && ownerAccessToken() ? '' : 'none';
+  $('#populationBtn').style.display = hosted && state.populationAdmin ? '' : 'none';
   $('#newBtn').disabled = hosted && !ownerAccessToken();
   $('#importBtn').disabled = hosted && !ownerAccessToken();
   $('#communitiesBtn').disabled = hosted && !ownerAccessToken();
@@ -3138,6 +3140,7 @@ $('#manageLinkBtn').onclick = () => {
   const token = ownerAccessToken();
   if (token) copyText(managementLink(token));
 };
+$('#populationBtn').onclick = () => { location.href = '/population.html'; };
 $('#pauseBtn').onclick = togglePause;
 $('#setKeyBtn').onclick = setDeepseekKey;
 $('#clearKeyBtn').onclick = clearDeepseekKey;
@@ -3166,6 +3169,11 @@ async function boot() {
     try {
       await api('/api/session');
       await recordOwnerActivity(true);
+      try {
+        await api('/api/population');
+        state.populationAdmin = true;
+        applyPlacementChrome();
+      } catch { state.populationAdmin = false; }
     } catch {
       storeOwnerAccessToken('');
       applyPlacementChrome();

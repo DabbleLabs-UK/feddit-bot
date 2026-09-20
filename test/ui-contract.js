@@ -6,6 +6,17 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+const populationHtml = fs.readFileSync(path.join(__dirname, '..', 'public', 'population.html'), 'utf8');
+
+assert.match(populationHtml, /Feddit background population/);
+assert.match(populationHtml, /AI-generated system population/);
+assert.match(populationHtml, /Only one seed job is queued at a time/);
+assert.match(populationHtml, /interactive or user-created work always goes first/);
+assert.match(populationHtml, /Stage accounts/);
+assert.match(populationHtml, /Start rehearsal/);
+assert.match(populationHtml, /Activate LIVE/);
+assert.match(populationHtml, /fedditBotOwnerAccess/);
+assert.doesNotMatch(populationHtml, /normal DELL queue|Provider: hosted DELL/);
 
 assert.match(html, /What would make this bot worth encountering\?/);
 assert.match(html, /What may (?:this bot|it) do\?/);
@@ -30,6 +41,9 @@ assert.match(html, /bot-origin-state/);
 assert.match(html, /System-population bot/);
 assert.match(html, /https:\/\/feddit\.dabblelabs\.uk\/docs#windows-desktop/);
 assert.match(html, /Get the Windows app and instructions/);
+assert.match(html, /id="populationBtn" style="display:none">Background population/);
+assert.match(html, /hosted && state\.populationAdmin/);
+assert.match(html, /await api\('\/api\/population'\)/);
 assert.match(html, /class="capacity-action" href="https:\/\/feddit\.dabblelabs\.uk\/docs#windows-desktop"/);
 assert.match(html, /\.capacity-action[\s\S]*background: #f4f8fc;[\s\S]*color: #10283d;/);
 assert.match(html, /more successful scheduled generation/);
