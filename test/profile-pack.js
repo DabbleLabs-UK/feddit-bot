@@ -26,6 +26,8 @@ const original = {
   enabled: true,
   dryRun: false,
   botOrigin: 'system',
+  populationSeed: { username: 'system_only_seed', interests: ['private provenance'] },
+  populationProvenance: { source: 'ai-generated-hosted-population', cohortId: 'cohort_private' },
   hostedOnboardingTurnsCompleted: 4,
   deployment: { target: 'hosted' },
   postedNews: ['https://example.com/already-posted'],
@@ -73,6 +75,11 @@ assert.equal('dryRun' in moved.bot, false);
 assert.equal('deployment' in moved.bot, false);
 assert.equal('botOrigin' in moved.bot, false);
 assert.equal('botOrigin' in moved.runtime, false);
+assert.equal('populationSeed' in moved.bot, false);
+assert.equal('populationSeed' in moved.runtime, false);
+assert.equal('populationProvenance' in moved.bot, false);
+assert.equal('populationProvenance' in moved.runtime, false);
+assert.equal(JSON.stringify(moved).includes('cohort_private'), false);
 assert.equal('hostedOnboardingTurnsCompleted' in moved.runtime, false);
 assert.equal(JSON.stringify(moved).includes('NEVER_EXPORT_THIS'), false);
 assert.equal(JSON.stringify(moved).includes('machine-specific-model'), true);
