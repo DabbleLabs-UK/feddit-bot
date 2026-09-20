@@ -376,6 +376,7 @@ lib/worker-auth.js        constant-time bearer authentication for worker request
 lib/cost.js               price table + per-generation USD cost maths + day/month keys
 lib/profile-pack.js       secret-free WHAT profile + explicit private one-time handover format
 lib/social-relationships.js bounded asymmetric interaction continuity + decay/satiation evidence
+lib/autobiographical-memory.js bounded episodes, inferred self-claims and decaying preoccupations
 lib/owners.js             anonymous hosted workspaces: hashed link capabilities + recovery
 lib/scheduler.js          posting loop: per-provider gate, cadence, ceilings, spend guardrail
 lib/providers/index.js    provider facade: routing + ollama single-flight + deepseek concurrency cap
@@ -398,8 +399,8 @@ id, Feddit username, API token, persona system prompt, tone/style
 notes, provider (ollama / DeepSeek tier), model, temperature, num_predict,
 cadence (posts + comments per hour), an enabled flag, and that bot's own
 rehearsal/live publishing choice. Plus a small recent-activity log, per-day
-spend buckets, and bounded asymmetric social continuity derived from actual
-public interactions.
+spend buckets, bounded asymmetric social continuity, and bounded autobiographical
+memory derived from actual public interactions.
 
 The activity log is bounded to 50 entries. Scheduled simulation entries retain
 the complete proposed output (and bounded public source context for replies and
@@ -442,6 +443,18 @@ still optional, another candidate can win, and `WAIT` can end a conversation.
 Successful public replies update the live ledger exactly once; failed or
 uncertain writes do not. Rehearsal has a separate resettable ledger. See
 `docs/social-relationships.md` for representation, bounds and decay.
+
+Autobiographical memory is separate from the owner-written persona. It keeps a
+small episodic record of meaningful public activity, conservative inferred
+self-claims with evidence and confidence, and short-lived topic preoccupations.
+Only lexically or socially relevant items are retrieved into a candidate or
+generation prompt. Memory can add a small amount of within-bot salience but
+cannot affect cadence, hosted admission, fairness, queue priority or platform
+limits. Owner-authored background wins over an incompatible inferred claim, and
+one public self-claim remains tentative until repeated. Live outgoing activity
+is recorded only after Feddit confirms publication; failed or uncertain writes
+create no false memory. Rehearsal has its own resettable memory. See
+`docs/autobiographical-memory.md` for the representation, retrieval and bounds.
 
 Every bot has one configurable community feed. Old separate read and write lists
 are merged as a union, so there are no accidental read-only or write-only homes.
@@ -616,12 +629,16 @@ proved by the stubbed scheduler harnesses listed below (no live calls):
   the bot chooses something else or waits. A successful outgoing public reply is
   recorded once after Feddit confirms it, and durable restart reconciliation
   cannot count it twice;
+- meaningful public episodes, supported self-claims and current preoccupations
+  update the bot's bounded autobiographical memory. Only relevant snippets reach
+  selection or generation, owner-authored persona remains stronger, and stable
+  event identifiers prevent durable replay from counting an event twice;
 - scheduled simulation stores the complete proposed text post, reply or article-link title
   plus bounded public source context in the profile's 50-entry activity history;
   the control panel presents those results directly for evaluation while making
   no Feddit write; its cadence, reply/article dedupe and thread caps are kept in
-  a separate resettable slate, including social continuity, so rehearsal never
-  consumes live continuity;
+  a separate resettable slate, including social and autobiographical continuity,
+  so rehearsal never consumes live continuity;
 - press-now post and comment simulations use the same live targeting, generation,
   simulation cadence and dedupe paths without waiting for the timetable; they force the
   Feddit write boundary off even when that bot is set to live publishing,

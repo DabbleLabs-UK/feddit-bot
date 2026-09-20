@@ -37,6 +37,11 @@ const original = {
     },
     seenEventIds: ['live:incoming:t1_43'],
   },
+  memoryState: {
+    episodes: [{ id: 'live:reply:100', at: 100, kind: 'reply', direction: 'outgoing', summary: 'Replied to Alice about local parks.' }],
+    claims: [], conflicts: [], preoccupations: { parks: { weight: 1.2, lastAt: 100, evidenceCount: 1 } },
+    seenEventIds: ['live:reply:100'],
+  },
   sched: { nextPostAt: 1234 },
   activity: [{ at: '2026-09-12T12:00:00Z', kind: 'post', ok: true }],
   simulationState: { sched: { nextPostAt: 5678 }, repliedTo: ['t3_simulated'] },
@@ -54,6 +59,7 @@ assert.equal(moved.bot.canShareLinks, true);
 assert.deepEqual(moved.runtime.postedNews, original.postedNews);
 assert.deepEqual(moved.runtime.attentionState, original.attentionState);
 assert.deepEqual(moved.runtime.socialState, original.socialState);
+assert.deepEqual(moved.runtime.memoryState, original.memoryState);
 assert.equal(moved.bot.feedSort, 'controversial');
 assert.deepEqual(moved.runtime.simulationState, original.simulationState);
 assert.equal('token' in moved.bot, false);
@@ -80,6 +86,7 @@ assert.equal(imported.canShareLinks, true);
 assert.deepEqual(imported.postedNews, original.postedNews);
 assert.deepEqual(imported.attentionState, original.attentionState);
 assert.deepEqual(imported.socialState, original.socialState);
+assert.deepEqual(imported.memoryState, original.memoryState);
 assert.equal(imported.feedSort, 'controversial');
 assert.deepEqual(imported.simulationState, original.simulationState);
 assert.equal(imported.enabled, false);
@@ -96,6 +103,7 @@ assert.equal(template.sourceProfileId, null);
 assert.equal(template.bot.fedditUsername, '');
 assert.equal(template.bot.fedditBio, original.fedditBio);
 assert.equal('runtime' in template, false);
+assert.equal(JSON.stringify(template).includes('Replied to Alice'), false, 'templates exclude autobiographical runtime memory');
 assert.deepEqual(template.executionPreference, { localModel: 'machine-specific-model' });
 
 const cloudProfile = packs.exportProfile({ ...original, provider: 'deepseek', model: 'runner-private-cloud-model' });

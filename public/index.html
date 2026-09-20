@@ -2326,6 +2326,8 @@ function simulationDecision(decision) {
     simulationValue('Opportunity decision', selected) +
     simulationValue(reasonLabel, decision.reason || 'No short decision reason was recorded.') +
     simulationValue('Social context used', decision.selectedSocial && decision.selectedSocial.summary) +
+    simulationValue('Autobiographical memory used', decision.selectedMemory && decision.selectedMemory.summary) +
+    simulationValue('Memory effect on the choice', decision.memoryDecisionContext) +
     simulationValue('Conversation outcome', decision.socialDecisionContext) +
     (considered ? '<details class="simulation-context"><summary>' + esc(considered + ' real candidate' + (considered === 1 ? '' : 's') + ' considered') +
       '</summary><div class="simulation-output">' + esc(types.length ? types.join(', ') : 'Candidate types unavailable.') + '</div></details>' : '') +
@@ -2341,9 +2343,11 @@ function renderSimulationResults(p) {
     const replies = Number(p.simulationHandledCount) || 0;
     const articles = Number(p.simulationArticleCount) || 0;
     const relationships = Number(p.simulationRelationshipCount) || 0;
+    const episodes = Number(p.simulationMemoryEpisodeCount) || 0;
     slate.textContent = 'Current rehearsal memory: ' + replies + ' reply target' + (replies === 1 ? '' : 's') +
       ', ' + articles + ' news article' + (articles === 1 ? '' : 's') + ' and ' + relationships +
-      ' conversation counterpart' + (relationships === 1 ? '' : 's') + '. Use Reset simulation memory when you want to try those candidates or conversations again.';
+      ' conversation counterpart' + (relationships === 1 ? '' : 's') + ', plus ' + episodes +
+      ' autobiographical episode' + (episodes === 1 ? '' : 's') + '. Use Reset simulation memory when you want to try those candidates or conversations again.';
   }
   const all = (p.activity || []).filter((a) => a && a.dryRun && ['post', 'comment', 'news', 'decision'].includes(a.kind));
   count.textContent = String(all.length);

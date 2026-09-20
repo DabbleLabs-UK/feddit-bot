@@ -19,6 +19,7 @@ const store = require('../lib/store'); // migrateProfiles/referenceName are pure
 const hostedPolicy = require('../lib/hosted-policy');
 const deepseek = require('../lib/providers/deepseek'); // generate() drivable with an injected fetch stub - no network
 const socialRelationships = require('../lib/social-relationships');
+const autobiographicalMemory = require('../lib/autobiographical-memory');
 
 // ---- tiny assert framework --------------------------------------------------
 
@@ -120,6 +121,27 @@ function makeStore(profiles) {
       parent.socialState = result.state;
       return { counted: result.counted, relationship: result.relationship };
     },
+    getMemoryState: (id, options = {}) => {
+      const p = byId.get(id);
+      const state = options.simulation
+        ? (p && p.simulationState ? p.simulationState.memoryState : p && p._testSimulationMemoryState)
+        : p && p.memoryState;
+      return autobiographicalMemory.normalize(state, Number(options.nowMs) || Date.now());
+    },
+    recordMemoryEvent: (id, event, options = {}) => {
+      const p = byId.get(id); if (!p) return null;
+      const existing = options.simulation
+        ? (p.simulationState ? p.simulationState.memoryState : p._testSimulationMemoryState)
+        : p.memoryState;
+      const result = autobiographicalMemory.recordEvent(existing, event, {
+        nowMs: Number(options.nowMs) || Date.now(),
+        ownerText: [p.persona, p.toneNotes].filter(Boolean).join('\n'),
+      });
+      if (options.simulation && p.simulationState) p.simulationState.memoryState = result.state;
+      else if (options.simulation) p._testSimulationMemoryState = result.state;
+      else p.memoryState = result.state;
+      return { counted: result.counted, episode: result.episode, claims: result.claims, conflicts: result.conflicts };
+    },
     hasPostedNews: (id, key) => { const p = byId.get(id); return !!(p && p.postedNews && p.postedNews.includes(key)); },
     recordPostedNews: (id, key) => {
       const p = byId.get(id); if (!p) return;
@@ -213,6 +235,7 @@ function profile(over) {
     repliedTo: [],
     attentionState: over.attentionState || { cursor: { comments: 0, posts: 0 }, seenEventIds: [] },
     socialState: over.socialState || socialRelationships.defaults(),
+    memoryState: over.memoryState || autobiographicalMemory.defaults(),
     // ---- news config + state ----
     botType: over.botType || 'conversational',
     ...(over.canReply !== undefined ? { canReply: over.canReply } : {}),
@@ -563,6 +586,7 @@ async function scenarioReliableAttention() {
     sched: { nextPostAt: null, nextCommentAt: null, backoffUntil: 0, sentPosts: [], sentComments: [] },
     repliedTo: [], attentionState: { cursor: { comments: 0, posts: 0 }, seenEventIds: [] },
     postedNews: [], newsDomainDaily: {}, newsDomainDays: [], threadReplies: {}, threadOrder: [],
+    socialState: socialRelationships.defaults(), memoryState: autobiographicalMemory.defaults(),
   };
   p.simulationState.sched.nextCommentAt = clock.now();
   const store = makeStore([p]);
@@ -583,6 +607,9 @@ async function scenarioReliableAttention() {
     p.simulationState.attentionState.seenEventIds.includes('t1_78'),
   'all delivered events are acknowledged as seen without conflating seen with replied');
   eq(p.attentionState.cursor.comments, 0, 'rehearsal attention does not advance live attention continuity');
+  eq(p.memoryState.episodes.length, 0, 'rehearsal attention does not alter live autobiographical memory');
+  eq(p.simulationState.memoryState.episodes.length, 2,
+    'rehearsal memory records the selected meaningful incoming event and successful simulated reply');
   const simulation = p.activity.find((entry) => entry.simulation && entry.simulation.attention);
   eq(simulation.simulation.attention.type, 'reply_to_own_comment', 'the result records the structural reason for selection');
   ok(simulation.simulation.context.includes('A direct answer.'), 'the generated reply receives bounded event context');

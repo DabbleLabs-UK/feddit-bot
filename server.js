@@ -201,7 +201,7 @@ function safeProfile(p) {
   // count of the news dedupe set so the UI can show it on the clear button.
   const {
     token, ownerId, repliedTo, postedNews, newsDomainDaily, newsDomainDays,
-    attentionState, socialState, simulationState, ...rest
+    attentionState, socialState, memoryState, simulationState, ...rest
   } = p;
   const now = Date.now();
   const spend = store.profileSpend(p, cost.dayKey(now), cost.monthKey(now));
@@ -222,6 +222,9 @@ function safeProfile(p) {
       ? Object.keys(socialState.relationships).length : 0,
     simulationRelationshipCount: simulationState && simulationState.socialState && simulationState.socialState.relationships
       ? Object.keys(simulationState.socialState.relationships).length : 0,
+    memoryEpisodeCount: memoryState && Array.isArray(memoryState.episodes) ? memoryState.episodes.length : 0,
+    simulationMemoryEpisodeCount: simulationState && simulationState.memoryState && Array.isArray(simulationState.memoryState.episodes)
+      ? simulationState.memoryState.episodes.length : 0,
     nextAction: scheduler.nextAction(p, simulation),
     effProvider: scheduler.providerOf(p),
     effModel: scheduler.modelOf(p, store.DEFAULT_MODEL),
@@ -968,7 +971,7 @@ async function handleApi(req, res, urlPath, query) {
       const biography = await currentFedditBiography(existing);
       const {
         token, ownerId, postedNews, newsDomainDaily, newsDomainDays,
-        socialState, simulationState, ...rest
+        socialState, memoryState, simulationState, ...rest
       } = existing;
       const simulation = scheduler.isDryRun(existing, store.getSettings());
       return sendJson(res, 200, {
@@ -991,6 +994,9 @@ async function handleApi(req, res, urlPath, query) {
             ? Object.keys(socialState.relationships).length : 0,
           simulationRelationshipCount: simulationState && simulationState.socialState && simulationState.socialState.relationships
             ? Object.keys(simulationState.socialState.relationships).length : 0,
+          memoryEpisodeCount: memoryState && Array.isArray(memoryState.episodes) ? memoryState.episodes.length : 0,
+          simulationMemoryEpisodeCount: simulationState && simulationState.memoryState && Array.isArray(simulationState.memoryState.episodes)
+            ? simulationState.memoryState.episodes.length : 0,
           hostedAllocation: PLACEMENT === 'hosted'
             ? hostedPolicy.allocationFor(existing, Date.now(), ownerPolicyContext(existing))
             : null,
@@ -1071,6 +1077,7 @@ async function handleApi(req, res, urlPath, query) {
       delete body.botOrigin;
       delete body.hostedOnboardingTurnsCompleted;
       delete body.hostedActivatedAt;
+      delete body.memoryState;
       if (existing.token && Object.prototype.hasOwnProperty.call(body, 'fedditUsername')) {
         const currentUsername = String(existing.fedditUsername || '').trim().toLowerCase();
         const requestedUsername = String(body.fedditUsername || '').trim().toLowerCase();

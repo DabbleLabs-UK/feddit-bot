@@ -11,6 +11,7 @@ const { createScheduler } = require('../lib/scheduler');
 const { createTurnStore } = require('../lib/turn-store');
 const hostedPolicy = require('../lib/hosted-policy');
 const socialRelationships = require('../lib/social-relationships');
+const autobiographicalMemory = require('../lib/autobiographical-memory');
 
 let checks = 0;
 function ok(value, message) {
@@ -68,6 +69,7 @@ function makeProfile(id, dryRun) {
     repliedTo: [],
     attentionState: { cursor: { comments: 0, posts: 0 }, seenEventIds: [] },
     socialState: socialRelationships.defaults(),
+    memoryState: autobiographicalMemory.defaults(),
     spendDaily: {},
     spendDays: [],
   };
@@ -132,6 +134,30 @@ function makeStore(profiles, now) {
       const result = socialRelationships.recordEvent(parent.socialState, event, Number(options.nowMs) || now());
       parent.socialState = result.state;
       return { counted: result.counted, relationship: result.relationship };
+    },
+    getMemoryState(id, options = {}) {
+      const profile = byId.get(id);
+      const parent = options.simulation && profile && profile.simulationState
+        ? profile.simulationState
+        : (options.simulation ? null : profile);
+      return autobiographicalMemory.normalize(parent && parent.memoryState, Number(options.nowMs) || now());
+    },
+    recordMemoryEvent(id, event, options = {}) {
+      const profile = byId.get(id);
+      if (!profile) return null;
+      if (options.simulation && !profile.simulationState) {
+        profile.simulationState = {
+          sched: {}, repliedTo: [], postedNews: [], newsDomainDaily: {}, newsDomainDays: [],
+          threadReplies: {}, threadOrder: [], memoryState: autobiographicalMemory.defaults(),
+        };
+      }
+      const parent = options.simulation ? profile.simulationState : profile;
+      const result = autobiographicalMemory.recordEvent(parent.memoryState, event, {
+        nowMs: Number(options.nowMs) || now(),
+        ownerText: [profile.persona, profile.toneNotes].filter(Boolean).join('\n'),
+      });
+      parent.memoryState = result.state;
+      return { counted: result.counted, episode: result.episode, claims: result.claims, conflicts: result.conflicts };
     },
     getThreadReplyCount(postId, options = {}) {
       const profileId = options.profileId;
@@ -555,10 +581,14 @@ async function run() {
       await settle();
       eq(h.writes.length, 1, 'a live durable turn publishes once after its result arrives');
       eq(restarted.turnStore.get(turn.id).status, 'completed', 'the live turn reaches a terminal completed state');
+      eq(h.profiles[0].memoryState.episodes.length, 1,
+        'a successfully published discussion becomes one live autobiographical episode');
 
       h.restartRuntime().scheduler.reconcileDurableTurns();
       await settle();
       eq(h.writes.length, 1, 'a completed live turn is never published again after restart');
+      eq(h.profiles[0].memoryState.episodes.length, 1,
+        'durable replay cannot double-count a successfully published episode');
     } finally {
       h.cleanup();
     }
@@ -582,6 +612,8 @@ async function run() {
       await settle();
       eq(h.writes.length, 0, 'an interrupted publication boundary is not retried after restart');
       eq(afterPublicationRestart.turnStore.get(turn.id).status, 'publication-uncertain', 'the residual no-idempotency edge is explicit and terminal');
+      eq(h.profiles[0].memoryState.episodes.length, 0,
+        'an uncertain publication boundary creates no false autobiographical episode');
     } finally {
       h.cleanup();
     }
@@ -606,6 +638,8 @@ async function run() {
       await settle();
       eq(h.writes.length, 1, 'a live write is attempted once when Feddit never returns a response');
       eq(restarted.turnStore.get(turn.id).status, 'publication-uncertain', 'a missing Feddit response records the publication boundary as uncertain');
+      eq(h.profiles[0].memoryState.episodes.length, 0,
+        'an ambiguous network publication creates no autobiographical episode');
 
       h.restartRuntime().scheduler.reconcileDurableTurns();
       await settle();
@@ -639,6 +673,13 @@ async function run() {
       eq(h.writes.length, 0, 'a stored successful publication response is reused without another Feddit write');
       eq(afterResponseRestart.turnStore.get(turn.id).status, 'completed', 'post-publication finalisation resumes after restart');
       eq(h.profiles[0].activity.filter((entry) => entry.postId === 777).length, 1, 'the stored publication result is applied to local history once');
+      eq(h.profiles[0].memoryState.episodes.length, 1,
+        'a stored successful publication response creates one autobiographical episode');
+
+      h.restartRuntime().scheduler.reconcileDurableTurns();
+      await settle();
+      eq(h.profiles[0].memoryState.episodes.length, 1,
+        'post-publication finalisation replay cannot duplicate the episode');
     } finally {
       h.cleanup();
     }
@@ -652,6 +693,17 @@ async function run() {
     social.commentsPerHour = 1;
     social.sched.nextPostAt = null;
     social.sched.nextCommentAt = 0;
+    social.memoryState = autobiographicalMemory.recordEvent(social.memoryState, {
+      id: 'seed-alice-camera',
+      direction: 'incoming',
+      kind: 'reply-to-bot',
+      account: 'alice',
+      threadKey: 't3_42',
+      community: 'general',
+      importance: 2,
+      meaningful: true,
+      summary: '@alice previously discussed repairing an analogue camera with the bot.',
+    }, { nowMs: 9_000 }).state;
     const h = harness({
       profiles: [social],
       feedPosts: [{
@@ -667,6 +719,8 @@ async function run() {
       chooseFirstCandidate(h.queue, turn);
       const restarted = h.restartRuntime();
       const content = await queueContentGeneration(restarted, turn.id);
+      ok(restarted.queue.get(content.jobId, true).payload.prompt.includes('RELEVANT AUTOBIOGRAPHICAL MEMORY'),
+        'bounded relevant memory reaches reply generation context');
       completeJob(restarted.queue, content.jobId, 'A successful public reply.');
       restarted.scheduler.reconcileDurableTurns();
       await settle();
@@ -674,11 +728,15 @@ async function run() {
         'the live social test publishes exactly one reply');
       eq(social.socialState.relationships.alice.outgoingCount, 1,
         'a successful public reply records one asymmetric outgoing interaction');
+      eq(social.memoryState.episodes.length, 2,
+        'the confirmed public reply adds one episode beside the seeded memory');
 
       h.restartRuntime().scheduler.reconcileDurableTurns();
       await settle();
       eq(social.socialState.relationships.alice.outgoingCount, 1,
         'durable restart finalisation cannot count the same relationship event twice');
+      eq(social.memoryState.episodes.length, 2,
+        'durable restart finalisation cannot count the same reply episode twice');
     } finally {
       h.cleanup();
     }
@@ -712,6 +770,8 @@ async function run() {
       await settle();
       eq(Object.keys(failedSocial.socialState.relationships).length, 0,
         'a failed public write creates no outgoing relationship event');
+      eq(failedSocial.memoryState.episodes.length, 0,
+        'a failed public write creates no outgoing autobiographical episode');
     } finally {
       h.cleanup();
     }
