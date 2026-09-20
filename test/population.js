@@ -96,7 +96,7 @@ function fakeStore() {
 }
 
 async function run() {
-  eq(storeModule.DATA_SCHEMA_VERSION, 14, 'profile storage schema records population provenance support');
+  eq(storeModule.DATA_SCHEMA_VERSION, 15, 'profile storage schema records population activity ecology');
   const migratedProfiles = storeModule.migrateProfiles([
     { id: 'user', botOrigin: 'user', populationSeed: { username: 'forged' }, populationProvenance: { source: 'forged' } },
     { id: 'system', botOrigin: 'system', populationSeed: { username: 'real_system' }, populationProvenance: { source: 'generated' } },
@@ -105,6 +105,12 @@ async function run() {
   eq(migratedProfiles[0].populationProvenance, null, 'user-created profiles cannot retain system population provenance');
   eq(migratedProfiles[1].populationSeed.username, 'real_system', 'system population seed survives migration');
   eq(migratedProfiles[1].populationProvenance.source, 'generated', 'system population provenance survives migration');
+  eq(migratedProfiles[0].populationActivity, null, 'user-created cadence cannot acquire synthetic ecology state');
+  ok(migratedProfiles[1].populationActivity, 'system migration creates persistent live ecology state');
+  ok(migratedProfiles[1].simulationState.populationActivity,
+    'system migration creates a separate rehearsal ecology state');
+  ok(migratedProfiles[1].populationActivity !== migratedProfiles[1].simulationState.populationActivity,
+    'live and rehearsal ecology use separate persisted objects');
 
   eq(normalizeUsername('  A Real Name!?  '), 'a_real_name', 'username is normalised to the Feddit identity alphabet');
   ok(/^[a-z0-9_-]{3,20}$/.test(normalizeUsername('x')), 'short model names become valid Feddit usernames');
@@ -205,6 +211,8 @@ async function run() {
     const ready = lifecycle.getCohort(cohort.id);
     eq(ready.status, 'ready', 'a complete differentiated cohort becomes ready for inspection');
     eq(ready.candidates[1].duplicateRegenerations, 1, 'duplicate regeneration is visible in provenance');
+    ok(ready.activityDistribution && ready.activityDistribution.bots === 2,
+      'operator cohort output includes bounded ecology observability');
     ok(!fs.readFileSync(path.join(dir, 'lifecycle.json'), 'utf8').includes('RAW-CHAIN-OF-THOUGHT-SENTINEL'),
       'raw model-only fields and hidden reasoning are not persisted');
 
@@ -220,6 +228,11 @@ async function run() {
       'staged bots remain disabled and in rehearsal');
     ok(systemProfiles.every((profile) => profile.populationProvenance.lifecycle === 'staged'),
       'staged profiles retain inspectable AI-population provenance');
+    ok(systemProfiles.every((profile) => profile.populationActivity &&
+      profile.simulationState && profile.simulationState.populationActivity),
+    'staged profiles receive isolated live and rehearsal activity ecology state');
+    ok(new Set(systemProfiles.map((profile) => profile.populationActivity.band)).size > 1,
+      'a cohort begins with heterogeneous activity bands rather than identical defaults');
     ok(systemProfiles.some((profile) => profile.populationProvenance.registrationConflicts === 1),
       'known username collision handling is retained in profile provenance');
     eq(store.profiles.find((profile) => profile.id === 'user-private').botOrigin, 'user',

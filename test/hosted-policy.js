@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const policy = require('../lib/hosted-policy');
+const populationActivity = require('../lib/population-activity');
 
 let checks = 0;
 function eq(actual, expected, message) {
@@ -137,6 +138,36 @@ const reconciledSystem = policy.applyHostedPolicy({}, {
 eq(reconciledSystem.botOrigin, 'system', 'trusted explicit system origin survives hosted reconciliation');
 eq(reconciledSystem.hostedOnboardingTurnsCompleted, 12,
   'trusted system activity evidence survives hosted reconciliation');
+const rareActivity = populationActivity.initialState({}, {
+  nowMs: startedAt,
+  quantile: 0.2,
+  random: () => 0.5,
+});
+const systemStarted = policy.applyHostedPolicy({
+  enabled: true,
+  populationActivity: populationActivity.initialState({}, {
+    nowMs: startedAt,
+    quantile: 0.99,
+    random: () => 0.5,
+  }),
+}, {
+  botOrigin: 'system',
+  enabled: false,
+  canReply: true,
+  canStartDiscussions: false,
+  hostedActivatedAt: null,
+  populationActivity: rareActivity,
+}, startedAt);
+eq(policy.allocationFor(systemStarted, startedAt).phase, 'system-ecology',
+  'system bot cadence comes from the separate population ecology');
+eq(systemStarted.hostedDailyTurns, rareActivity.currentDailyOpportunities,
+  'system bot rate reflects its persistent activity tendency');
+eq(systemStarted.commentsPerHour * 24, rareActivity.currentDailyOpportunities,
+  'system reply cadence receives the ecology opportunity rate');
+eq(systemStarted.populationActivity.band, 'rare',
+  'client input cannot replace the server-managed system activity state');
+eq(Object.prototype.hasOwnProperty.call(systemStarted, 'sched'), false,
+  'system activation lets stochastic ecology seed the first opportunity instead of synchronising a cohort');
 
 eq(policy.admissionFor({ botOrigin: 'user' }, { online: false, queued: 20, running: 1 }).admit,
   true, 'user-created turns remain admissible under congestion');

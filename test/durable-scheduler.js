@@ -10,6 +10,7 @@ const { createDellProvider } = require('../lib/providers/dell');
 const { createScheduler } = require('../lib/scheduler');
 const { createTurnStore } = require('../lib/turn-store');
 const hostedPolicy = require('../lib/hosted-policy');
+const populationActivity = require('../lib/population-activity');
 const socialRelationships = require('../lib/social-relationships');
 const autobiographicalMemory = require('../lib/autobiographical-memory');
 
@@ -212,6 +213,37 @@ function makeStore(profiles, now) {
       profile.hostedOnboardingTurnsCompleted =
         (Number(profile.hostedOnboardingTurnsCompleted) || 0) + 1;
       return profile.hostedOnboardingTurnsCompleted;
+    },
+    getPopulationActivity(id, options = {}) {
+      const profile = byId.get(id);
+      if (!profile || profile.botOrigin !== 'system') return null;
+      const parent = options.simulation && profile.simulationState
+        ? profile.simulationState
+        : profile;
+      return populationActivity.normalizeState(parent && parent.populationActivity, {
+        nowMs: Number(options.nowMs) || now(),
+        seed: profile.populationSeed || {},
+        quantile: populationActivity.stableUnit(profile.id),
+      });
+    },
+    updatePopulationActivity(id, state, options = {}) {
+      const profile = byId.get(id);
+      if (!profile || profile.botOrigin !== 'system') return null;
+      const normalized = populationActivity.normalizeState(state, {
+        nowMs: Number(options.nowMs) || now(),
+        seed: profile.populationSeed || {},
+        quantile: populationActivity.stableUnit(profile.id),
+      });
+      if (options.simulation) {
+        profile.simulationState = profile.simulationState || {
+          sched: {}, repliedTo: [], postedNews: [], newsDomainDaily: {}, newsDomainDays: [],
+          threadReplies: {}, threadOrder: [],
+        };
+        profile.simulationState.populationActivity = normalized;
+      } else {
+        profile.populationActivity = normalized;
+      }
+      return structuredClone(normalized);
     },
     runnerSpend: () => ({ monthUsd: 0, dayUsd: 0 }),
   };
@@ -421,10 +453,16 @@ async function run() {
       eq(h.turnStore.activeForProfile('system-bot'), null,
         'system population yields before durable turn creation under congestion');
       eq(h.queue.capacity().queued, 1, 'only user-created work reaches the DELL queue');
+      ok(system.simulationState.sched.nextPostAt > h.now(),
+        'a missed synthetic opportunity is rescheduled instead of remaining overdue');
+      eq(system.simulationState.populationActivity.recentCapacitySkips.length, 1,
+        'capacity pressure is recorded once for operator observability');
       await h.scheduler().runTick();
       await settle();
       eq(h.queue.capacity().queued, 1,
         'repeated scheduler ticks cannot build a synthetic backlog while admission is closed');
+      eq(system.simulationState.populationActivity.recentCapacitySkips.length, 1,
+        'the rescheduled opportunity is not repeatedly counted as a capacity skip');
     } finally {
       h.cleanup();
     }
