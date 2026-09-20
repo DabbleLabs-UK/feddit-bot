@@ -32,6 +32,16 @@ try {
     id: 'rehearsal:incoming:t1_40', account: 'bob', direction: 'incoming',
     kind: 'reply_to_own_post', threadKey: 't3_20', text: 'music and synthesisers',
   }, options);
+  store.recordMemoryEvent(id, {
+    id: 'live:outgoing:t1_30', direction: 'outgoing', kind: 'reply',
+    importance: 2, meaningful: true, text: 'I enjoy gardening and tomatoes.',
+    summary: 'Replied about gardening and tomatoes.',
+  });
+  store.recordMemoryEvent(id, {
+    id: 'rehearsal:outgoing:t1_40', direction: 'outgoing', kind: 'reply',
+    importance: 2, meaningful: true, text: 'I enjoy music and synthesisers.',
+    summary: 'Replied about music and synthesisers.',
+  }, options);
   store.bumpThreadReply(10);
   store.bumpThreadReply(20, options);
   store.logActivity(id, { kind: 'comment', dryRun: true, ok: true, note: 'simulation card' });
@@ -55,6 +65,10 @@ try {
   assert.equal(store.getSocialState(id).relationships.bob, undefined, 'rehearsal social evidence does not enter live continuity');
   assert.equal(store.getSocialState(id, options).relationships.bob.interactionCount, 1);
   assert.equal(store.getSocialState(id, options).relationships.alice, undefined, 'live social evidence does not enter rehearsal continuity');
+  assert.equal(store.getMemoryState(id).episodes.length, 1);
+  assert.match(store.getMemoryState(id).episodes[0].summary, /gardening/);
+  assert.equal(store.getMemoryState(id, options).episodes.length, 1);
+  assert.match(store.getMemoryState(id, options).episodes[0].summary, /music/);
 
   assert.equal(store.resetSimulation(id), true);
   const reset = store.getProfile(id);
@@ -65,17 +79,20 @@ try {
   assert.deepEqual(reset.postedNews, ['https://example.com/live'], 'live article dedupe is preserved');
   assert.equal(store.getThreadReplyCount(10), 1, 'live thread cap is preserved');
   assert.equal(store.getSocialState(id).relationships.alice.interactionCount, 1, 'live social continuity is preserved');
+  assert.equal(store.getMemoryState(id).episodes.length, 1, 'live autobiographical memory is preserved');
   assert.equal(reset.simulationState.sched.nextPostAt, null, 'simulation cadence is reset');
   assert.deepEqual(reset.simulationState.repliedTo, [], 'simulation reply dedupe is reset');
   assert.deepEqual(reset.simulationState.attentionState, store.attentionDefaults(), 'simulation attention is reset');
   assert.deepEqual(reset.simulationState.postedNews, [], 'simulation article dedupe is reset');
   assert.equal(store.getThreadReplyCount(20, options), 0, 'simulation thread cap is reset');
   assert.deepEqual(store.getSocialState(id, options), store.socialDefaults(), 'simulation social continuity is reset');
+  assert.deepEqual(store.getMemoryState(id, options), store.memoryDefaults(), 'simulation autobiographical memory is reset');
   assert.deepEqual(reset.activity.map((entry) => entry.note), ['live history'], 'only simulation cards are removed');
 
   const migrated = store.migrateProfiles([{ id: 'old' }], 4)[0];
   assert.equal(migrated.feedSort, 'best', 'old profiles get the Best feed view');
   assert.deepEqual(migrated.socialState, store.socialDefaults(), 'old profiles get bounded live social continuity');
+  assert.deepEqual(migrated.memoryState, store.memoryDefaults(), 'old profiles get bounded live autobiographical memory');
   assert.deepEqual(migrated.simulationState, store.simulationDefaults(), 'old profiles get separate simulation state');
 
   console.log('simulation-state: all checks passed');

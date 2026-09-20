@@ -55,6 +55,26 @@ ok(prompt.includes('{"choice":"C1"') && prompt.includes('{"choice":"WAIT"'),
 ok(!prompt.includes('"choice":"C1 or WAIT"'),
   'the response contract never offers the model an ambiguous literal choice value');
 ok(prompt.includes('Do not provide analysis, private reasoning'), 'the prompt requests a short decision rather than chain of thought');
+const rememberedMenu = candidates.bound({
+  ordinary: [{
+    ...item('remembered', 'ordinary_post', 'An analogue photography discussion.', 150),
+    memory: {
+      relevant: true,
+      salienceDelta: 1,
+      summary: 'Remembered a prior discussion about analogue cameras.',
+      prompt: 'Past event: discussed repairing an analogue camera with @alice.',
+      topics: ['analogue', 'camera'],
+      episodeIds: ['episode-1'],
+      claimKeys: [],
+      preoccupations: ['analogue'],
+    },
+  }],
+});
+eq(rememberedMenu[0].salience.level, 'medium',
+  'relevant autobiographical memory can raise salience within one opportunity');
+ok(candidates.prompt(rememberedMenu).includes('BOUNDED RELEVANT MEMORY') &&
+  candidates.prompt(rememberedMenu).includes('discussed repairing an analogue camera'),
+  'relevant memory reaches the bounded candidate-choice prompt');
 const repairPrompt = candidates.repairPrompt(menu, 200_000);
 ok(repairPrompt.includes('previous response could not be read') && repairPrompt.includes('exactly the requested JSON object'),
   'an unreadable candidate choice receives one tightly constrained repair prompt');
@@ -107,5 +127,13 @@ const summary = candidates.publicDecision(
 eq(summary.candidateCount, 6, 'the public decision exposes how many real candidates were considered');
 ok(!Object.prototype.hasOwnProperty.call(summary, 'candidate'),
   'the public decision does not expose the internal candidate payload');
+const memorySummary = candidates.publicDecision(
+  candidates.parseDecision('{"choice":"C1","reason":"It connects to a remembered interest."}', rememberedMenu),
+  rememberedMenu
+);
+ok(memorySummary.selectedMemory && memorySummary.selectedMemory.episodeCount === 1,
+  'decision explainability reports the selected memory without exposing the full candidate');
+ok(/raised this candidate's within-bot salience by 1 bounded step/.test(memorySummary.memoryDecisionContext),
+  'decision explainability states the bounded memory effect without claiming it forced the choice');
 
 console.log('action candidates: ' + checks + ' checks passed');
