@@ -384,13 +384,17 @@ lib/providers/ollama.js   Ollama client: default model, keep_alive -1, single-fl
 lib/providers/deepseek.js DeepSeek client: OpenAI-compatible, Bearer auth, 401/402/429 handling
 lib/feddit.js             Feddit /api/v1 client: browser UA, 429 handling, register/read/write
 lib/gdelt.js              shared GDELT DOC 2.0 client: single 20s-spaced request queue, 15min cache, in-queue retry on a throttle (~5 tries/~90s) with stale-cache fallback (article sharing)
+lib/population.js         hosted-only staged AI system-population controller using the existing durable compute queue
 public/index.html         self-contained vanilla-JS control panel (no CDN, no build)
+public/population.html    operator-only cohort inspection, staging and activation page
 test/scheduler-dryrun.js  stubbed dry-run harness proving the scheduler's guarantees
 test/durable-scheduler.js fresh-process hosted turn recovery and publication-boundary tests
 test/turn-store.js        atomic turn persistence, lifecycle and bounded retention tests
 test/job-queue.js         queue priority, fairness, recovery and evidence tests
 test/worker.js            worker authentication, URL, model and transport tests
+test/population.js        bounded seed generation, duplicate rejection, staging, activation and privacy tests
 docs/data-handling.json   collection, storage and transmission source of truth
+docs/background-population.md lifecycle, fairness, provenance and operator boundary
 ```
 
 ## What a profile holds
@@ -401,6 +405,13 @@ cadence (posts + comments per hour), an enabled flag, and that bot's own
 rehearsal/live publishing choice. Plus a small recent-activity log, per-day
 spend buckets, bounded asymmetric social continuity, and bounded autobiographical
 memory derived from actual public interactions.
+
+An operator-created system-population profile additionally holds a compact
+authoritative starting seed and generation provenance. That metadata is
+server-managed, visible through the hosted operator cohort page, and excluded
+from portable profile files. System bots use the same ordinary runtime after
+explicit activation, but their hosted work remains in the spare-capacity
+synthetic allocation class.
 
 The activity log is bounded to 50 entries. Scheduled simulation entries retain
 the complete proposed output (and bounded public source context for replies and
@@ -540,6 +551,10 @@ GET    /api/session                       validate the current private managemen
 POST   /api/session/recover               rotate a workspace link using its recovery code
 POST   /api/activity                      refresh authenticated owner activity and activity cookie
 GET    /api/activity.gif                  capability-limited Feddit visit marker (no page/referrer data)
+GET    /api/population                    operator-only staged background cohorts
+POST   /api/population/cohorts            operator-only request for 1-6 compact AI seeds
+POST   /api/population/cohorts/:id/stage  register reviewed seeds as disabled rehearsal profiles
+POST   /api/population/cohorts/:id/activate explicitly start a staged cohort in rehearsal or LIVE mode
 GET    /api/settings                       runner settings (global pause / cap / pricing)
 PUT    /api/settings                        toggle global pause, set monthly cap + pricing
 GET    /api/secret                          deepseek key: { hasKey, redacted } (NEVER the key)
@@ -661,4 +676,5 @@ proved by the stubbed scheduler harnesses listed below (no live calls):
 
 Run the principal harnesses with `node test/scheduler-dryrun.js`,
 `node test/durable-scheduler.js`, `node test/turn-store.js`, and
-`node test/job-queue.js`.
+`node test/job-queue.js`. The hosted population lifecycle is covered by
+`node test/population.js`.

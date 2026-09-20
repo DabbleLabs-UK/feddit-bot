@@ -28,6 +28,7 @@ const workerAuth = require('./lib/worker-auth');
 const { createOwnerStore } = require('./lib/owners');
 const modelCatalog = require('./lib/model-catalog');
 const { createModelInstaller } = require('./lib/model-installer');
+const { createPopulationController } = require('./lib/population');
 
 const ollama = providers.ollama; // the ollama provider (status/isBusy/generate)
 
@@ -51,8 +52,23 @@ const hostedPreviewTasks = new Map();
 const hostedSimulationTasks = new Map();
 const ownerStore = createOwnerStore({ file: path.join(store.DATA_DIR, 'owners.json') });
 const OWNER_ACTIVITY_COOKIE = 'feddit_owner_activity';
+const populationAdminOwnerIds = new Set(String(process.env.FEDDIT_POPULATION_ADMIN_OWNER_IDS || '')
+  .split(',').map((value) => value.trim()).filter(Boolean));
 const modelInstaller = createModelInstaller({
   pullModel: ollama.pullModel,
+});
+const populationController = createPopulationController({
+  file: path.join(store.DATA_DIR, 'population.json'),
+  queue: jobQueue,
+  enqueueDell: providers.enqueueDell,
+  profileStore: store,
+  feddit,
+  model: modelCatalog.DELL_SHARED_MODEL,
+  activateProfile(profile, mode) {
+    const patch = { enabled: true, dryRun: mode !== 'live' };
+    applyHostedProfilePolicy(patch, profile);
+    return store.updateProfile(profile.id, patch);
+  },
 });
 
 function activeDefaultModel() {
@@ -140,6 +156,10 @@ function ownerPolicyContext(profile) {
       ? ownerStore.lastActiveAt(profile.ownerId)
       : null,
   };
+}
+
+function isPopulationAdmin(owner) {
+  return PLACEMENT === 'hosted' && owner && populationAdminOwnerIds.has(String(owner.id));
 }
 
 function recordHostedOwnerActivity(req, res, owner, allowIssue) {
@@ -672,6 +692,45 @@ async function handleApi(req, res, urlPath, query) {
     }
   }
 
+  // Hosted operator-only creation of a background population. Authorisation
+  // reuses the existing private workspace capability; the configured owner ID
+  // grants this narrow admin surface without introducing another browser key.
+  if (urlPath === '/api/population' || urlPath.startsWith('/api/population/')) {
+    if (!isPopulationAdmin(requestOwner)) return sendJson(res, 404, { error: 'Not found' });
+    if (method === 'GET' && urlPath === '/api/population') {
+      return sendJson(res, 200, {
+        cohorts: populationController.listCohorts(),
+        capacity: jobQueue.capacity(),
+      });
+    }
+    if (method === 'POST' && urlPath === '/api/population/cohorts') {
+      const body = await readBody(req);
+      try {
+        const cohort = populationController.createCohort(body.count);
+        await populationController.tick();
+        return sendJson(res, 201, { cohort: populationController.getCohort(cohort.id) });
+      } catch (error) {
+        return sendJson(res, 409, { error: error.message });
+      }
+    }
+    const populationRoute = urlPath.match(/^\/api\/population\/cohorts\/([^/]+)\/(stage|activate)$/);
+    if (method === 'POST' && populationRoute) {
+      const cohortId = decodeURIComponent(populationRoute[1]);
+      try {
+        if (populationRoute[2] === 'stage') {
+          return sendJson(res, 200, { cohort: await populationController.stageCohort(cohortId) });
+        }
+        const body = await readBody(req);
+        return sendJson(res, 200, {
+          cohort: populationController.activateCohort(cohortId, body.mode),
+        });
+      } catch (error) {
+        return sendJson(res, 409, { error: error.message });
+      }
+    }
+    return sendJson(res, 404, { error: 'Unknown population route' });
+  }
+
   // Poll one capability-addressed preview job after checking that its profile
   // belongs to the current hosted workspace.
   const hostedJobRoute = urlPath.match(/^\/api\/jobs\/([^/]+)$/);
@@ -887,6 +946,8 @@ async function handleApi(req, res, urlPath, query) {
     }
     delete body.ownerId;
     delete body.botOrigin;
+    delete body.populationSeed;
+    delete body.populationProvenance;
     delete body.hostedOnboardingTurnsCompleted;
     delete body.hostedActivatedAt;
     if (requestOwner) {
@@ -1075,6 +1136,8 @@ async function handleApi(req, res, urlPath, query) {
       delete body.fedditBioError;
       delete body.ownerId;
       delete body.botOrigin;
+      delete body.populationSeed;
+      delete body.populationProvenance;
       delete body.hostedOnboardingTurnsCompleted;
       delete body.hostedActivatedAt;
       delete body.memoryState;
@@ -1515,6 +1578,9 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (req.method === 'GET') {
+    if ((urlPath === '/population' || urlPath === '/population.html') && PLACEMENT !== 'hosted') {
+      return sendJson(res, 404, { error: 'Not found' });
+    }
     serveStatic(req, res, urlPath);
     return;
   }
@@ -1569,6 +1635,11 @@ const schedulerHandle = scheduler.start({
 if (PLACEMENT === 'hosted') {
   const hostedPolicyTimer = setInterval(reconcileHostedProfiles, hostedPolicy.RECONCILE_INTERVAL_MS);
   hostedPolicyTimer.unref();
+  const populationTimer = setInterval(() => {
+    populationController.tick().catch((error) => console.error('[population] ' + error.message));
+  }, 5000);
+  populationTimer.unref();
+  populationController.tick().catch((error) => console.error('[population] ' + error.message));
 }
 // -----------------------------------------------------------------------------
 

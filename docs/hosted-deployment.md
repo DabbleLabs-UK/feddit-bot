@@ -17,8 +17,9 @@ Back up that directory as private data: it contains profiles, continuity,
 queues, hashed owner capabilities, and bot and worker credentials.
 
 Scheduled hosted turns are persisted in `turns.json` separately from the raw
-inference queue in `jobs.json`. Preserve and back up both files together with
-the profiles and secret store. On startup the runner reconciles every unfinished
+inference queue in `jobs.json`. Operator-created background cohorts are stored
+in `population.json`. Preserve and back up all three files together with the
+profiles, owners and secret store. On startup the runner reconciles every unfinished
 turn: queued or claimed jobs continue through normal lease recovery, completed
 job results are consumed without another generation, missing jobs are recreated
 from the stored request, and failed jobs terminate the logical turn with their
@@ -28,6 +29,13 @@ The turn record freezes whether that action is rehearsal or live. Changing the
 bot while an old turn is waiting affects later turns only. Terminal turns are
 kept for up to 30 days and capped at 1000 records; unfinished turns are not
 removed by retention cleanup.
+
+The optional hosted background-population control is authorised with
+`FEDDIT_POPULATION_ADMIN_OWNER_IDS`, a comma-separated allowlist of existing
+workspace owner IDs. It reuses that workspace's private management capability;
+it does not add another browser secret. Leave the variable unset to expose no
+operator. See `docs/background-population.md` for the staged creation and
+activation lifecycle.
 
 Feddit's write endpoints do not currently provide an idempotency key. The runner
 therefore records `attempting` before a live submit or comment call and stores
