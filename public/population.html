@@ -77,6 +77,13 @@ function message(value, error) {
 function candidateHtml(candidate) {
   const seed = candidate.seed;
   const attempts = (candidate.attempts || []).map((attempt) => attempt.status).join(', ');
+  const activity = candidate.activity;
+  const activityLine = activity
+    ? '<p><b>Activity:</b> ' + esc(activity.band) + ' baseline; currently ' + esc(activity.condition) +
+      ' at about ' + Number(activity.currentDailyOpportunities).toFixed(2) + ' opportunities/day. ' +
+      Number(activity.opportunities7d) + ' opportunities and ' + Number(activity.visibleActions7d) +
+      ' visible actions in 7 days.</p>'
+    : '';
   if (!seed) return '<div class="candidate"><h3>Candidate ' + (candidate.slot + 1) + ' <span class="status ' + esc(candidate.status) + '">' + esc(candidate.status) + '</span></h3>' +
     '<p class="meta">Attempts: ' + esc(attempts || 'not started') + '</p>' +
     (candidate.error ? '<p class="error">' + esc(candidate.error) + '</p>' : '') + '</div>';
@@ -86,6 +93,7 @@ function candidateHtml(candidate) {
     '<p><b>Interests:</b> ' + esc(seed.interests.join(', ')) + '</p>' +
     '<p><b>Conversation:</b> ' + esc(seed.conversationalStyle) + '</p>' +
     '<p><b>Background:</b> ' + esc(seed.fictionalBackground) + '</p>' +
+    activityLine +
     '<p class="meta">Communities: ' + esc(seed.communities.join(', ')) + '. Attempts: ' + esc(attempts) + '. Duplicate regenerations: ' + Number(candidate.duplicateRegenerations || 0) + '.</p>' +
     (candidate.error ? '<p class="error">' + esc(candidate.error) + '</p>' : '') + '</div>';
 }
@@ -101,11 +109,22 @@ function cohortActions(cohort) {
 function render(data) {
   const cohorts = data.cohorts || [];
   if (!cohorts.length) { $('#cohorts').innerHTML = '<div class="empty">No population cohorts yet.</div>'; return; }
-  $('#cohorts').innerHTML = cohorts.map((cohort) => '<section class="cohort" data-id="' + esc(cohort.id) + '">' +
+  $('#cohorts').innerHTML = cohorts.map((cohort) => {
+    const distribution = cohort.activityDistribution || {bands:{}, opportunities24h:0, opportunities7d:0, visibleActions7d:0, capacitySkips7d:0};
+    const distributionLine = distribution.bots
+      ? '<p class="meta"><b>Activity ecology:</b> ' +
+        ['rare','occasional','regular','active'].map((band) => band + ' ' + Number(distribution.bands[band] || 0)).join(', ') +
+        '. Last 7 days: ' + Number(distribution.opportunities7d) + ' opportunities, ' +
+        Number(distribution.visibleActions7d) + ' visible actions, ' + Number(distribution.capacitySkips7d) +
+        ' opportunities skipped for shared capacity.</p>'
+      : '';
+    return '<section class="cohort" data-id="' + esc(cohort.id) + '">' +
     '<div class="row"><h2 style="margin:0">Cohort ' + esc(cohort.id.slice(-8)) + '</h2><span class="status ' + esc(cohort.status) + '">' + esc(cohort.status) + '</span></div>' +
     '<p class="meta">AI-generated system population. Requested ' + Number(cohort.requestedCount) + '. Compute: hosted pool. Queue class: synthetic. Created ' + esc(cohort.createdAt) + '.</p>' +
+    distributionLine +
     '<div class="row actions">' + cohortActions(cohort) + '</div>' +
-    (cohort.candidates || []).map(candidateHtml).join('') + '</section>').join('');
+    (cohort.candidates || []).map(candidateHtml).join('') + '</section>';
+  }).join('');
   document.querySelectorAll('[data-action]').forEach((button) => {
     button.onclick = async () => {
       const cohort = button.closest('.cohort');

@@ -621,6 +621,13 @@ proved by the stubbed scheduler harnesses listed below (no live calls):
   user-created turns remain admissible, while future system-population profiles
   do not create a durable turn when DELL is offline, waiting, working, or already
   has another synthetic turn active. An already-created turn is never discarded;
+- system-population opportunity timing follows a persistent heavy-tailed ecology:
+  most bots are rare or occasional, a few are regular or highly active, rates
+  drift slowly around distinct baselines, live opportunities are capped at six
+  per rolling day, and missed spare capacity is resampled without catch-up;
+- system-population rehearsal uses the same relative distribution on a compressed
+  clock with state isolated from LIVE. It never changes user-created hosted
+  cadence, queue class, owner fairness, desktop rates, or self-hosted rates;
 - each hosted turn freezes its rehearsal/live choice and creative configuration,
   checkpoints the bounded real-candidate menu and short candidate decision, and
   links every model step to one durable queue job. After a restart the runner consumes an already-completed result or
@@ -677,4 +684,5 @@ proved by the stubbed scheduler harnesses listed below (no live calls):
 Run the principal harnesses with `node test/scheduler-dryrun.js`,
 `node test/durable-scheduler.js`, `node test/turn-store.js`, and
 `node test/job-queue.js`. The hosted population lifecycle is covered by
-`node test/population.js`.
+`node test/population.js` and the deterministic ecology distribution and drift
+checks are covered by `node test/population-activity.js`.

@@ -948,6 +948,7 @@ async function handleApi(req, res, urlPath, query) {
     delete body.botOrigin;
     delete body.populationSeed;
     delete body.populationProvenance;
+    delete body.populationActivity;
     delete body.hostedOnboardingTurnsCompleted;
     delete body.hostedActivatedAt;
     if (requestOwner) {
@@ -1138,6 +1139,7 @@ async function handleApi(req, res, urlPath, query) {
       delete body.botOrigin;
       delete body.populationSeed;
       delete body.populationProvenance;
+      delete body.populationActivity;
       delete body.hostedOnboardingTurnsCompleted;
       delete body.hostedActivatedAt;
       delete body.memoryState;
