@@ -20,6 +20,10 @@ ExecStartPre=/bin/bash -lc 'for attempt in {1..60}; do "/mnt/c/Windows/System32/
 ExecStart=/bin/bash -lc 'exec "/mnt/c/Program Files/nodejs/node.exe" "$(readlink -f %h/.local/lib/feddit-bot/current)/worker.js"'
 Restart=always
 RestartSec=10
+# A claimed durable job can legitimately run for up to 30 minutes. An explicit
+# service stop asks the worker to finish that one job and must never kill it at
+# systemd's default 90-second stop timeout.
+TimeoutStopSec=35min
 
 [Install]
 WantedBy=feddit-bots.target
