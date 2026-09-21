@@ -933,6 +933,48 @@ async function run() {
     }
   }
 
+  {
+    const profile = makeProfile('accelerated-capacity-yield', true);
+    profile.botOrigin = 'system';
+    profile.ownerId = null;
+    profile.enabled = false;
+    profile.populationSeed = { initiative: 'balanced', persistence: 'steady' };
+    profile.populationActivity = populationActivity.initialState(profile.populationSeed, {
+      nowMs: 10_000,
+      quantile: 0.5,
+    });
+    const h = harness({
+      profiles: [profile],
+      admitHostedTurn: () => ({
+        admit: false,
+        reason: 'synthetic-yields-to-shared-capacity',
+      }),
+    });
+    try {
+      const accelerated = h.scheduler();
+      const dueAt = accelerated.rehearsalNextAt(profile.id, h.now());
+      const result = await accelerated.runAcceleratedRehearsalOpportunity(profile.id, {
+        runId: 'capacity-run',
+        virtualNowMs: Math.max(h.now(), dueAt),
+      });
+      eq(result.skipped, 'capacity-yield',
+        'accelerated rehearsal reports a capacity yield before creating durable work');
+      eq(h.turnStore.listActive().length, 0,
+        'a capacity yield creates no durable turn');
+      eq(h.queue.capacity().queued, 0,
+        'a capacity yield creates no hosted generation job');
+      const events = profile.simulationState.telemetry.events;
+      eq(events.length, 1,
+        'capacity yield telemetry is recorded outside a durable turn scope');
+      eq(events[0].runId, 'capacity-run',
+        'capacity yield telemetry remains attached to the accelerated run');
+      eq(events[0].outcome, 'capacity-skip',
+        'capacity yield telemetry records the capacity-skip outcome');
+    } finally {
+      h.cleanup();
+    }
+  }
+
   console.log('durable scheduler: ' + checks + ' checks passed');
 }
 
