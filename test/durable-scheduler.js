@@ -13,6 +13,7 @@ const hostedPolicy = require('../lib/hosted-policy');
 const populationActivity = require('../lib/population-activity');
 const socialRelationships = require('../lib/social-relationships');
 const autobiographicalMemory = require('../lib/autobiographical-memory');
+const rehearsalObservability = require('../lib/rehearsal-observability');
 
 let checks = 0;
 function ok(value, message) {
@@ -213,6 +214,16 @@ function makeStore(profiles, now) {
       profile.hostedOnboardingTurnsCompleted =
         (Number(profile.hostedOnboardingTurnsCompleted) || 0) + 1;
       return profile.hostedOnboardingTurnsCompleted;
+    },
+    recordSimulationTelemetry(id, event) {
+      const profile = byId.get(id);
+      if (!profile) return null;
+      profile.simulationState = profile.simulationState || {};
+      profile.simulationState.telemetry = rehearsalObservability.record(
+        profile.simulationState.telemetry,
+        event,
+      );
+      return structuredClone(profile.simulationState.telemetry);
     },
     getPopulationActivity(id, options = {}) {
       const profile = byId.get(id);
@@ -865,6 +876,58 @@ async function run() {
       const failed = h.turnStore.get(turn.id);
       eq(failed.status, 'failed', 'a terminal queue failure makes the logical turn terminal failed');
       ok(failed.error.includes('deliberate terminal failure'), 'the durable turn retains the worker failure reason');
+    } finally {
+      h.cleanup();
+    }
+  }
+
+  {
+    const profile = makeProfile('accelerated-system-bot', true);
+    profile.botOrigin = 'system';
+    profile.ownerId = null;
+    profile.enabled = false;
+    profile.populationSeed = { initiative: 'balanced', persistence: 'steady' };
+    profile.populationActivity = populationActivity.initialState(profile.populationSeed, {
+      nowMs: 10_000,
+      quantile: 0.5,
+    });
+    const h = harness({ profiles: [profile] });
+    try {
+      const accelerated = h.scheduler();
+      const dueAt = accelerated.rehearsalNextAt(profile.id, h.now());
+      ok(Number.isFinite(dueAt) && dueAt >= 0,
+        'accelerated rehearsal asks the ordinary cadence stack for the next virtual opportunity');
+      const virtualNowMs = Math.max(h.now(), dueAt);
+      const handedOff = await accelerated.runAcceleratedRehearsalOpportunity(profile.id, {
+        runId: 'bounded-run',
+        virtualNowMs,
+      });
+      await settle();
+      ok(handedOff.handedOff && handedOff.turnId,
+        'accelerated rehearsal creates one durable hosted turn through the ordinary scheduler path');
+      const turn = h.turnStore.get(handedOff.turnId);
+      eq(turn.trigger, 'accelerated-rehearsal', 'the durable turn records its bounded rehearsal trigger');
+      eq(turn.input.virtualNowMs, virtualNowMs, 'the durable turn freezes its private virtual instant');
+      eq(turn.input.rehearsalRunId, 'bounded-run', 'the durable turn carries the bounded run identity');
+      eq(turn.rehearsal, true, 'the accelerated durable turn remains non-publishing');
+      chooseFirstCandidate(h.queue, turn);
+      const content = await queueContentGeneration({
+        scheduler: accelerated,
+        turnStore: h.turnStore,
+      }, turn.id);
+      completeJob(h.queue, content.jobId, 'A simulated title\n\nA simulated body.');
+      accelerated.reconcileDurableTurns();
+      await settle();
+      eq(h.turnStore.get(turn.id).status, 'completed', 'accelerated durable work reaches a terminal state normally');
+      eq(h.writes.length, 0, 'accelerated rehearsal never crosses the LIVE Feddit write boundary');
+      eq(profile.hostedOnboardingTurnsCompleted, 0,
+        'synthetic accelerated work never consumes user-created onboarding priority');
+      const events = profile.simulationState.telemetry.events;
+      eq(events.length, 1, 'one structured observability event is recorded for the opportunity');
+      eq(events[0].runId, 'bounded-run', 'structured evidence remains attached to the correct rehearsal run');
+      ok(!('prompt' in events[0]) && !('reasoning' in events[0]),
+        'accelerated telemetry contains no prompts or hidden reasoning');
+      eq(profile.sched.nextPostAt, 0, 'accelerated cadence never mutates the LIVE scheduler state');
     } finally {
       h.cleanup();
     }

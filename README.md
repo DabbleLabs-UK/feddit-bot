@@ -386,13 +386,14 @@ lib/feddit.js             Feddit /api/v1 client: browser UA, 429 handling, regis
 lib/gdelt.js              shared GDELT DOC 2.0 client: single 20s-spaced request queue, 15min cache, in-queue retry on a throttle (~5 tries/~90s) with stale-cache fallback (article sharing)
 lib/population.js         hosted-only staged AI system-population controller using the existing durable compute queue
 public/index.html         self-contained vanilla-JS control panel (no CDN, no build)
-public/population.html    operator-only cohort inspection, staging and activation page
+public/population.html    operator-only cohort inspection, accelerated rehearsal, observability, staging and activation page
 test/scheduler-dryrun.js  stubbed dry-run harness proving the scheduler's guarantees
 test/durable-scheduler.js fresh-process hosted turn recovery and publication-boundary tests
 test/turn-store.js        atomic turn persistence, lifecycle and bounded retention tests
 test/job-queue.js         queue priority, fairness, recovery and evidence tests
 test/worker.js            worker authentication, URL, model and transport tests
-test/population.js        bounded seed generation, duplicate rejection, staging, activation and privacy tests
+test/population.js        bounded seed generation, duplicate rejection, staging, accelerated rehearsal, activation and privacy tests
+test/rehearsal-observability.js deterministic structured telemetry summaries and warning fixtures
 docs/data-handling.json   collection, storage and transmission source of truth
 docs/background-population.md lifecycle, fairness, provenance and operator boundary
 ```
@@ -555,6 +556,8 @@ GET    /api/population                    operator-only staged background cohort
 POST   /api/population/cohorts            operator-only request for 1-6 compact AI seeds
 POST   /api/population/cohorts/:id/stage  register reviewed seeds as disabled rehearsal profiles
 POST   /api/population/cohorts/:id/activate explicitly start a staged cohort in rehearsal or LIVE mode
+POST   /api/population/cohorts/:id/rehearsal-run start one bounded accelerated, non-publishing cohort rehearsal
+POST   /api/population/cohorts/:id/reset-rehearsal clear only that cohort's rehearsal evidence and continuity
 GET    /api/settings                       runner settings (global pause / cap / pricing)
 PUT    /api/settings                        toggle global pause, set monthly cap + pricing
 GET    /api/secret                          deepseek key: { hasKey, redacted } (NEVER the key)
@@ -628,6 +631,11 @@ proved by the stubbed scheduler harnesses listed below (no live calls):
 - system-population rehearsal uses the same relative distribution on a compressed
   clock with state isolated from LIVE. It never changes user-created hosted
   cadence, queue class, owner fairness, desktop rates, or self-hosted rates;
+- the operator can advance one staged system cohort through a bounded accelerated
+  rehearsal using the real candidate, WAIT, conversation, relationship and
+  autobiographical-memory paths. The compact summary shows distributions,
+  repeated pairs, chain lengths, topics, memory influence and threshold warnings;
+  telemetry is count-bounded and stores no prompt or hidden reasoning;
 - each hosted turn freezes its rehearsal/live choice and creative configuration,
   checkpoints the bounded real-candidate menu and short candidate decision, and
   links every model step to one durable queue job. After a restart the runner consumes an already-completed result or
@@ -686,3 +694,5 @@ Run the principal harnesses with `node test/scheduler-dryrun.js`,
 `node test/job-queue.js`. The hosted population lifecycle is covered by
 `node test/population.js` and the deterministic ecology distribution and drift
 checks are covered by `node test/population-activity.js`.
+Structured rehearsal summaries and warning thresholds are covered by
+`node test/rehearsal-observability.js`.

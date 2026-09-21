@@ -28,6 +28,16 @@ input[type=number] { width:72px; padding:8px; border:1px solid #526373; border-r
 .candidate { margin-top:12px; padding:12px; border:1px solid #2d3944; border-radius:6px; background:#151c22; }
 .candidate h3 { margin:0 0 6px; font-size:15px; }
 .candidate p { margin:5px 0; }
+.rehearsal { margin:14px 0; padding:14px; border:1px solid #42617b; border-radius:7px; background:#13202a; }
+.rehearsal h3,.rehearsal h4 { margin:0 0 8px; }
+.metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:8px; margin:10px 0; }
+.metric { padding:8px; border:1px solid #34485a; border-radius:5px; background:#101920; }
+.metric b { display:block; font-size:17px; }
+.warning { margin:7px 0; padding:8px; border-left:3px solid var(--warn); background:#2a2313; }
+.event-table { width:100%; border-collapse:collapse; font-size:12px; }
+.event-table th,.event-table td { padding:6px; border-top:1px solid #30404d; text-align:left; vertical-align:top; }
+.event-table th { color:var(--muted); }
+.scroll { overflow-x:auto; }
 .error { color:#ff9c9c; }
 .empty { padding:32px; text-align:center; color:var(--muted); }
 #message { min-height:22px; margin:10px 0; }
@@ -97,6 +107,47 @@ function candidateHtml(candidate) {
     '<p class="meta">Communities: ' + esc(seed.communities.join(', ')) + '. Attempts: ' + esc(attempts) + '. Duplicate regenerations: ' + Number(candidate.duplicateRegenerations || 0) + '.</p>' +
     (candidate.error ? '<p class="error">' + esc(candidate.error) + '</p>' : '') + '</div>';
 }
+function countList(items, empty = 'none') {
+  return (items || []).length ? items.map((item) => esc(item.name) + ' ' + Number(item.count)).join(', ') : empty;
+}
+function rehearsalHtml(cohort) {
+  const run = cohort.rehearsalRun;
+  const eligible = ['staged','rehearsal'].includes(cohort.status);
+  if (!run) return eligible ? '<div class="rehearsal"><h3>Accelerated rehearsal</h3>' +
+    '<p class="hint">Run a bounded, non-publishing simulation through the real attention, choice, conversation, relationship and memory stack. LIVE history is untouched.</p>' +
+    '<div class="row"><label>Opportunities <input data-field="opportunities" type="number" min="1" max="60" value="24"></label>' +
+    '<label>Virtual days <input data-field="days" type="number" min="1" max="30" value="7"></label>' +
+    '<button class="primary" data-action="rehearsal-run">Run rehearsal</button></div></div>' : '';
+  const summary = run.summary || {};
+  const progress = Math.min(Number(run.completedOpportunities || 0), Number(run.requestedOpportunities || 0));
+  const percent = Number(run.requestedOpportunities) ? Math.round(progress / Number(run.requestedOpportunities) * 100) : 0;
+  const metrics = [
+    ['Opportunities', Number(summary.opportunities || 0)],
+    ['Visible actions', Number(summary.actions || 0)],
+    ['WAIT', Number(summary.waits || 0)],
+    ['Failures', Number(summary.failures || 0)],
+    ['Capacity skips', Number(summary.capacitySkips || 0)],
+    ['Longest reply chain', Number(summary.chains && summary.chains.longest || 0)],
+  ].map((item) => '<div class="metric"><span class="meta">' + esc(item[0]) + '</span><b>' + item[1] + '</b></div>').join('');
+  const warnings = (summary.warnings || []).length
+    ? summary.warnings.map((item) => '<div class="warning"><b>' + esc(item.label) + '</b><br><span class="meta">' + esc(item.detail) + '</span></div>').join('')
+    : '<p class="meta">No bounded warning threshold has been crossed.</p>';
+  const accounts = (summary.accounts || []).map((account) => '<tr><td>' + esc(account.botName) + '</td><td>' + esc(account.band) + '</td><td>' + Number(account.opportunities) + '</td><td>' + Number(account.actions) + '</td><td>' + Number(account.waits) + '</td><td>' + Number(account.expectedDailyOpportunities).toFixed(2) + '</td></tr>').join('');
+  const events = (summary.notableEvents || []).map((event) => '<tr><td>' + esc(new Date(event.virtualAt).toISOString()) + '</td><td>' + esc(event.botName || event.profileId) + '</td><td>' + esc(event.outcome + (event.action ? ': ' + event.action : '')) + '</td><td>' + esc(event.selectedType || '-') + '</td><td>' + esc(event.targetAccount || '-') + '</td><td>' + esc(event.reason || '-') + '</td></tr>').join('');
+  return '<div class="rehearsal"><div class="row"><h3>Accelerated rehearsal</h3><span class="status ' + esc(run.status) + '">' + esc(run.status) + '</span></div>' +
+    '<p><b>' + progress + ' of ' + Number(run.requestedOpportunities || 0) + ' opportunities (' + percent + '%)</b> across up to ' + Number(run.requestedDays || 0) + ' virtual days.</p>' +
+    (run.note ? '<p class="meta">' + esc(run.note) + '</p>' : '') + '<div class="metrics">' + metrics + '</div>' +
+    '<p class="meta"><b>Candidate types selected:</b> ' + countList(summary.candidateTypes && summary.candidateTypes.selected) + '. <b>Topics:</b> ' + countList(summary.topics) + '.</p>' +
+    '<p class="meta"><b>Conversation pairs:</b> ' + Number(summary.uniquePairs || 0) + ' unique; repeated: ' + countList(summary.repeatedPairs) + '. ' +
+    '<b>Memory:</b> influenced ' + Number(summary.memory && summary.memory.influencedChoices || 0) + ', preoccupation matches ' + Number(summary.memory && summary.memory.preoccupationChoices || 0) + ', conflicts ' + Number(summary.memory && summary.memory.contradictionDetections || 0) + '.</p>' +
+    '<p class="meta"><b>Activity ecology:</b> about ' + Number(summary.activity && summary.activity.observedOpportunitiesPerDay || 0).toFixed(2) + ' observed opportunities/day versus ' + Number(summary.activity && summary.activity.expectedOpportunitiesPerDay || 0).toFixed(2) + ' expected.</p>' +
+    '<h4>Warnings</h4>' + warnings +
+    (accounts ? '<details><summary>Per-account distribution</summary><div class="scroll"><table class="event-table"><thead><tr><th>Bot</th><th>Band</th><th>Opps</th><th>Actions</th><th>WAIT</th><th>Expected/day</th></tr></thead><tbody>' + accounts + '</tbody></table></div></details>' : '') +
+    (events ? '<details><summary>Recent structured events</summary><div class="scroll"><table class="event-table"><thead><tr><th>Virtual time</th><th>Bot</th><th>Outcome</th><th>Candidate</th><th>Target</th><th>Short reason</th></tr></thead><tbody>' + events + '</tbody></table></div></details>' : '') +
+    '<div class="row actions" style="margin-top:10px">' +
+    (run.status === 'running' ? '<button disabled>Rehearsal running</button>' : '<label>Opportunities <input data-field="opportunities" type="number" min="1" max="60" value="24"></label><label>Virtual days <input data-field="days" type="number" min="1" max="30" value="7"></label><button class="primary" data-action="rehearsal-run">Run again</button>') +
+    '<button data-action="reset-rehearsal" ' + (run.status === 'running' ? 'disabled' : '') + '>Reset rehearsal state</button></div></div>';
+}
 function cohortActions(cohort) {
   const stage = ['ready','stage-failed'].includes(cohort.status)
     ? '<button data-action="stage">Stage accounts</button>' : '';
@@ -123,6 +174,7 @@ function render(data) {
     '<p class="meta">AI-generated system population. Requested ' + Number(cohort.requestedCount) + '. Compute: hosted pool. Queue class: synthetic. Created ' + esc(cohort.createdAt) + '.</p>' +
     distributionLine +
     '<div class="row actions">' + cohortActions(cohort) + '</div>' +
+    rehearsalHtml(cohort) +
     (cohort.candidates || []).map(candidateHtml).join('') + '</section>';
   }).join('');
   document.querySelectorAll('[data-action]').forEach((button) => {
@@ -134,8 +186,13 @@ function render(data) {
       button.disabled = true;
       try {
         if (action === 'stage') await api('/api/population/cohorts/' + encodeURIComponent(id) + '/stage', {method:'POST', body:{}});
+        else if (action === 'rehearsal-run') await api('/api/population/cohorts/' + encodeURIComponent(id) + '/rehearsal-run', {method:'POST', body:{
+          opportunities:Number($('[data-field="opportunities"]', cohort).value),
+          days:Number($('[data-field="days"]', cohort).value),
+        }});
+        else if (action === 'reset-rehearsal') await api('/api/population/cohorts/' + encodeURIComponent(id) + '/reset-rehearsal', {method:'POST', body:{}});
         else await api('/api/population/cohorts/' + encodeURIComponent(id) + '/activate', {method:'POST', body:{mode:action}});
-        message(action === 'stage' ? 'Cohort staged.' : 'Cohort set to ' + action + '.');
+        message(action === 'stage' ? 'Cohort staged.' : action === 'rehearsal-run' ? 'Bounded accelerated rehearsal started.' : action === 'reset-rehearsal' ? 'Rehearsal-only state reset. LIVE history was not changed.' : 'Cohort set to ' + action + '.');
         await load();
       } catch (error) { message(error.message, true); button.disabled = false; }
     };

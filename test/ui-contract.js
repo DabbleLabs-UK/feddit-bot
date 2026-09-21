@@ -15,6 +15,12 @@ assert.match(populationHtml, /interactive or user-created work always goes first
 assert.match(populationHtml, /Stage accounts/);
 assert.match(populationHtml, /Start rehearsal/);
 assert.match(populationHtml, /Activate LIVE/);
+assert.match(populationHtml, /Accelerated rehearsal/);
+assert.match(populationHtml, /Run rehearsal/);
+assert.match(populationHtml, /Reset rehearsal state/);
+assert.match(populationHtml, /Per-account distribution/);
+assert.match(populationHtml, /Recent structured events/);
+assert.match(populationHtml, /LIVE history is untouched/);
 assert.match(populationHtml, /fedditBotOwnerAccess/);
 assert.doesNotMatch(populationHtml, /normal DELL queue|Provider: hosted DELL/);
 

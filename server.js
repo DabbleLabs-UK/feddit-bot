@@ -62,6 +62,7 @@ const populationController = createPopulationController({
   queue: jobQueue,
   enqueueDell: providers.enqueueDell,
   profileStore: store,
+  turnStore,
   feddit,
   model: modelCatalog.DELL_SHARED_MODEL,
   activateProfile(profile, mode) {
@@ -713,7 +714,7 @@ async function handleApi(req, res, urlPath, query) {
         return sendJson(res, 409, { error: error.message });
       }
     }
-    const populationRoute = urlPath.match(/^\/api\/population\/cohorts\/([^/]+)\/(stage|activate)$/);
+    const populationRoute = urlPath.match(/^\/api\/population\/cohorts\/([^/]+)\/(stage|activate|rehearsal-run|reset-rehearsal)$/);
     if (method === 'POST' && populationRoute) {
       const cohortId = decodeURIComponent(populationRoute[1]);
       try {
@@ -721,6 +722,14 @@ async function handleApi(req, res, urlPath, query) {
           return sendJson(res, 200, { cohort: await populationController.stageCohort(cohortId) });
         }
         const body = await readBody(req);
+        if (populationRoute[2] === 'rehearsal-run') {
+          const cohort = populationController.startRehearsalRun(cohortId, body);
+          await populationController.tick();
+          return sendJson(res, 202, { cohort: populationController.getCohort(cohort.id) });
+        }
+        if (populationRoute[2] === 'reset-rehearsal') {
+          return sendJson(res, 200, { cohort: populationController.resetRehearsal(cohortId) });
+        }
         return sendJson(res, 200, {
           cohort: populationController.activateCohort(cohortId, body.mode),
         });
@@ -1634,6 +1643,7 @@ const schedulerHandle = scheduler.start({
   getDeepseekKey: () => secrets.getDeepseekKey(),
   log: (message) => console.log('[scheduler] ' + message),
 });
+populationController.setScheduler(schedulerHandle);
 if (PLACEMENT === 'hosted') {
   const hostedPolicyTimer = setInterval(reconcileHostedProfiles, hostedPolicy.RECONCILE_INTERVAL_MS);
   hostedPolicyTimer.unref();

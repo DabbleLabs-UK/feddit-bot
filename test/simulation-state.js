@@ -46,6 +46,10 @@ try {
   store.bumpThreadReply(20, options);
   store.logActivity(id, { kind: 'comment', dryRun: true, ok: true, note: 'simulation card' });
   store.logActivity(id, { kind: 'comment', dryRun: false, ok: true, note: 'live history' });
+  store.recordSimulationTelemetry(id, {
+    id: 'run:one', runId: 'run', at: 1, virtualAt: 2, profileId: id,
+    botName: 'simulation_test', outcome: 'wait', action: 'wait', reason: 'Nothing fit.',
+  });
 
   assert.equal(store.getProfile(id).sched.nextPostAt, 111);
   assert.equal(store.getProfile(id).simulationState.sched.nextPostAt, 222);
@@ -69,6 +73,8 @@ try {
   assert.match(store.getMemoryState(id).episodes[0].summary, /gardening/);
   assert.equal(store.getMemoryState(id, options).episodes.length, 1);
   assert.match(store.getMemoryState(id, options).episodes[0].summary, /music/);
+  assert.equal(store.getSimulationTelemetry(id).events.length, 1, 'bounded rehearsal telemetry is stored only in simulation state');
+  assert.equal('telemetry' in store.getProfile(id), false, 'no rehearsal telemetry field is added to LIVE profile state');
 
   assert.equal(store.resetSimulation(id), true);
   const reset = store.getProfile(id);
@@ -87,6 +93,7 @@ try {
   assert.equal(store.getThreadReplyCount(20, options), 0, 'simulation thread cap is reset');
   assert.deepEqual(store.getSocialState(id, options), store.socialDefaults(), 'simulation social continuity is reset');
   assert.deepEqual(store.getMemoryState(id, options), store.memoryDefaults(), 'simulation autobiographical memory is reset');
+  assert.deepEqual(store.getSimulationTelemetry(id).events, [], 'simulation observability is reset');
   assert.deepEqual(reset.activity.map((entry) => entry.note), ['live history'], 'only simulation cards are removed');
 
   const migrated = store.migrateProfiles([{ id: 'old' }], 4)[0];

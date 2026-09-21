@@ -17,6 +17,7 @@ const {
   uniqueUsername,
 } = require('../lib/population');
 const storeModule = require('../lib/store');
+const rehearsalObservability = require('../lib/rehearsal-observability');
 
 let checks = 0;
 function eq(actual, expected, message) {
@@ -92,11 +93,32 @@ function fakeStore() {
       profile.activity = [...(profile.activity || []), structuredClone(entry)];
       return structuredClone(profile);
     },
+    recordSimulationTelemetry(id, event) {
+      const profile = profiles.find((item) => item.id === id);
+      if (!profile) return null;
+      profile.simulationState = profile.simulationState || {};
+      profile.simulationState.telemetry = rehearsalObservability.record(
+        profile.simulationState.telemetry,
+        event,
+      );
+      return structuredClone(profile.simulationState.telemetry);
+    },
+    resetSimulation(id) {
+      const profile = profiles.find((item) => item.id === id);
+      if (!profile) return null;
+      const populationActivity = profile.simulationState && profile.simulationState.populationActivity;
+      profile.simulationState = {
+        sched: {}, repliedTo: [], postedNews: [], threadReplies: {},
+        telemetry: rehearsalObservability.defaults(),
+        populationActivity,
+      };
+      return structuredClone(profile);
+    },
   };
 }
 
 async function run() {
-  eq(storeModule.DATA_SCHEMA_VERSION, 15, 'profile storage schema records population activity ecology');
+  eq(storeModule.DATA_SCHEMA_VERSION, 16, 'profile storage schema records bounded rehearsal observability');
   const migratedProfiles = storeModule.migrateProfiles([
     { id: 'user', botOrigin: 'user', populationSeed: { username: 'forged' }, populationProvenance: { source: 'forged' } },
     { id: 'system', botOrigin: 'system', populationSeed: { username: 'real_system' }, populationProvenance: { source: 'generated' } },
@@ -168,13 +190,42 @@ async function run() {
       },
     };
     const activations = [];
+    const turnStore = { get() { return null; } };
+    let rehearsalOpportunity = 0;
+    let rehearsalStore = null;
+    const rehearsalScheduler = {
+      rehearsalNextAt(profileId, virtualNowMs) {
+        return Number(virtualNowMs) + 60 * 60 * 1000;
+      },
+      async runAcceleratedRehearsalOpportunity(profileId, runOptions) {
+        rehearsalOpportunity++;
+        rehearsalStore.recordSimulationTelemetry(profileId, {
+          id: 'test-opportunity-' + rehearsalOpportunity,
+          runId: runOptions.runId,
+          at: 1_000 + rehearsalOpportunity,
+          virtualAt: runOptions.virtualNowMs,
+          profileId,
+          botName: profileId,
+          outcome: rehearsalOpportunity % 2 ? 'action' : 'wait',
+          action: rehearsalOpportunity % 2 ? 'comment' : 'wait',
+          consideredTypes: { ordinary_post: 1 },
+          selectedType: rehearsalOpportunity % 2 ? 'ordinary_post' : '',
+          targetAccount: rehearsalOpportunity % 2 ? 'peer-bot' : '',
+          topics: ['test-topic'],
+          reason: 'Bounded rehearsal test opportunity.',
+        });
+        return { ok: true, acted: true, action: rehearsalOpportunity % 2 ? 'comment' : 'wait' };
+      },
+    };
     const options = {
-      file, queue, enqueueDell, profileStore: store, feddit, model: 'shared-test-model',
+      file, queue, enqueueDell, profileStore: store, turnStore, scheduler: rehearsalScheduler,
+      feddit, model: 'shared-test-model',
       activateProfile(profile, mode) {
         activations.push({ id: profile.id, mode });
         return store.updateProfile(profile.id, { enabled: true, dryRun: mode !== 'live' });
       },
     };
+    rehearsalStore = store;
     const controller = createPopulationController(options);
     const created = controller.createCohort(99);
     eq(created.requestedCount, MAX_COHORT_SIZE, 'cohort size is bounded even for an excessive request');
@@ -245,6 +296,29 @@ async function run() {
       return current.enabled === true && current.dryRun === true;
     }),
       'rehearsal activation leaves publishing disabled for every staged bot');
+    const startedRun = restarted.startRehearsalRun(cohort.id, { opportunities: 3, days: 2 });
+    eq(startedRun.rehearsalRun.status, 'running', 'operator can start a bounded accelerated rehearsal');
+    eq(startedRun.rehearsalRun.requestedOpportunities, 3, 'operator opportunity limit is persisted');
+    ok(systemProfiles.every((profile) => store.profiles.find((item) => item.id === profile.id).enabled === false),
+      'ordinary scheduling is temporarily disabled so it cannot race accelerated rehearsal');
+    await restarted.tick();
+    await restarted.tick();
+    await restarted.tick();
+    const completedRun = restarted.getCohort(cohort.id);
+    eq(completedRun.rehearsalRun.status, 'completed', 'rehearsal stops at the requested opportunity bound');
+    eq(completedRun.rehearsalRun.summary.opportunities, 3, 'operator summary is built from structured cohort telemetry');
+    eq(completedRun.rehearsalRun.summary.actions, 2, 'summary separates actions from WAIT outcomes');
+    ok(systemProfiles.every((profile) => store.profiles.find((item) => item.id === profile.id).enabled === true),
+      'ordinary rehearsal enablement is restored after the accelerated run');
+    store.profiles.find((profile) => profile.id === systemProfiles[0].id).repliedTo = ['live-sentinel'];
+    const reset = restarted.resetRehearsal(cohort.id);
+    eq(reset.rehearsalRun, null, 'operator can reset the isolated rehearsal run');
+    eq(store.profiles.find((profile) => profile.id === systemProfiles[0].id).repliedTo, ['live-sentinel'],
+      'resetting rehearsal leaves LIVE continuity untouched');
+    ok(systemProfiles.every((profile) => {
+      const current = store.profiles.find((item) => item.id === profile.id);
+      return current.simulationState.telemetry.events.length === 0;
+    }), 'resetting rehearsal clears bounded telemetry for every cohort member');
     const live = restarted.activateCohort(cohort.id, 'live');
     eq(live.status, 'live', 'LIVE is a separate explicit activation');
     ok(systemProfiles.every((profile) => {
