@@ -882,6 +882,47 @@ async function run() {
   }
 
   {
+    const profile = makeProfile('split-cadence-system-bot', true);
+    profile.botOrigin = 'system';
+    profile.ownerId = null;
+    profile.enabled = false;
+    profile.canReply = true;
+    profile.commentsPerHour = 1;
+    profile.populationSeed = { initiative: 'balanced', persistence: 'steady' };
+    profile.populationActivity = populationActivity.initialState(profile.populationSeed, {
+      nowMs: 10_000,
+      quantile: 0.5,
+    });
+    profile.simulationState = {
+      sched: {
+        nextPostAt: null,
+        nextCommentAt: null,
+        sentPosts: [],
+        sentComments: [],
+        backoffUntil: 0,
+      },
+      populationActivity: populationActivity.rehearsalFromLive(profile.populationActivity, {
+        nowMs: 10_000,
+        random: () => 0.5,
+      }),
+    };
+    const h = harness({ profiles: [profile] });
+    try {
+      h.scheduler().rehearsalNextAt(profile.id, h.now());
+      const schedule = profile.simulationState.sched;
+      const postDelay = schedule.nextPostAt - h.now();
+      const commentDelay = schedule.nextCommentAt - h.now();
+      ok(postDelay > commentDelay,
+        'a dual-capability system bot receives a slower post clock than comment clock: ' +
+        JSON.stringify({ postDelay, commentDelay, schedule }));
+      ok(Math.abs(postDelay / commentDelay - 2) < 1e-9,
+        'the scheduler wires one-third post and two-thirds comment shares into one ecology rate');
+    } finally {
+      h.cleanup();
+    }
+  }
+
+  {
     const profile = makeProfile('accelerated-system-bot', true);
     profile.botOrigin = 'system';
     profile.ownerId = null;

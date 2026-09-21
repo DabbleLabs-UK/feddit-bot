@@ -88,6 +88,22 @@ const liveWait = activity.nextDelayMs(quiet, { nowMs: now, random: () => 0.5 });
 ok(rehearsalWait < liveWait,
   'rehearsal compresses time while preserving the same relative ecology');
 
+const fullCadence = activity.nextDelayMs(active, { nowMs: now, random: () => 0.5 });
+const postCadence = activity.nextDelayMs(active, {
+  nowMs: now,
+  random: () => 0.5,
+  opportunityShare: 1 / 3,
+});
+const commentCadence = activity.nextDelayMs(active, {
+  nowMs: now,
+  random: () => 0.5,
+  opportunityShare: 2 / 3,
+});
+ok(Math.abs((1 / postCadence) + (1 / commentCadence) - (1 / fullCadence)) < 1e-12,
+  'post and comment clocks combine to one configured ecology rate');
+ok(postCadence > commentCadence && commentCadence > fullCadence,
+  'the one-third post and two-thirds comment shares preserve their intended ordering');
+
 let driftingQuiet = quiet;
 let driftingActive = active;
 const driftRandom = seeded(19);

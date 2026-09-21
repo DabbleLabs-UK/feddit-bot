@@ -97,6 +97,24 @@ function run() {
   ], { runId: 'run-1' });
   ok(waiting.warnings.some((item) => item.code === 'excessive-wait'), 'a mostly-WAIT fixture triggers the WAIT warning');
 
+  const accelerated = observability.summarize([
+    profile('accelerated', 'active', 4, Array.from({ length: 20 }, (_, i) => event('accelerated-' + i, 'accelerated', i, {
+      virtualAt: 60_000 + i * 50 * 60 * 1000,
+    }))),
+  ], { runId: 'run-1' });
+  eq(accelerated.activity.expectedRehearsalOpportunitiesPerDay, 16,
+    'activity evidence exposes the four-times accelerated rehearsal expectation');
+  ok(!accelerated.warnings.some((item) => item.code === 'excessive-activity'),
+    'accelerated cadence is not compared against the unscaled live expectation');
+
+  const trulyExcessive = observability.summarize([
+    profile('too-fast', 'active', 4, Array.from({ length: 20 }, (_, i) => event('too-fast-' + i, 'too-fast', i, {
+      virtualAt: 60_000 + i * 20 * 60 * 1000,
+    }))),
+  ], { runId: 'run-1' });
+  ok(trulyExcessive.warnings.some((item) => item.code === 'excessive-activity'),
+    'activity far above the accelerated expectation still raises a warning');
+
   const normalized = observability.record(observability.defaults(), {
     id: 'private-shape', runId: 'run-1', at: 1, virtualAt: 1, profileId: 'a',
     outcome: 'action', prompt: 'must not persist', reasoning: 'must not persist', reason: 'short public reason',
