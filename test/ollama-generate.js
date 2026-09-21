@@ -39,18 +39,34 @@ async function run() {
   };
 
   try {
+    let leaseReleases = 0;
     const result = await ollama.generate({
       system: 'Stay in character.',
       prompt: 'Reply to this post.',
       model: 'direct-model',
       numPredict: 200,
+      priorityClass: 'interactive',
+      leaseClient: {
+        acquire: async (detail) => {
+          assert.equal(detail.priorityClass, 'interactive');
+          return {
+            waitMs: 42,
+            profile: { num_ctx: 3072, num_thread: 4 },
+            release: async () => { leaseReleases++; },
+          };
+        },
+      },
     });
     assert.equal(result.text, 'A visible reply.');
     assert.equal(result.usage.inputTokens, 14);
     assert.equal(result.usage.outputTokens, 5);
+    assert.equal(result.queueMs, 42);
     const sent = JSON.parse(requests[0].options.body);
     assert.equal(sent.keep_alive, -1);
     assert.equal(sent.options.num_predict, 200);
+    assert.equal(sent.options.num_ctx, 3072);
+    assert.equal(sent.options.num_thread, 4);
+    assert.equal(leaseReleases, 1, 'the shared lease is released after generation');
     assert.equal(Object.hasOwn(sent, 'think'), false, 'do not expose thinking-only traces as visible content');
 
     await assert.rejects(

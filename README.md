@@ -114,6 +114,7 @@ also receives the public HTTPS base URL and then makes outbound requests only:
 export FEDDIT_RUNNER_URL=https://feddit-bots.dabblelabs.uk
 export FEDDIT_WORKER_KEY='set-this-outside-the-repo'
 export FEDDIT_WORKER_ID=dell
+export SHARED_OLLAMA_ARBITER_URL=http://127.0.0.1:11435
 node worker.js
 ```
 
@@ -285,12 +286,16 @@ To avoid disrupting Cy, **ollama profiles**:
 2. **Send `keep_alive: -1` on every Ollama request**, so we never reset the
    model's residency timer and never trigger an eviction.
 3. **Enforce single-flight**: at most one ollama generation is ever in flight
-   from this process. Ollama serialises requests into one queue; a second
-   generation while Cy is mid-token would starve the live site. A
-   `test-generate` while one is running returns HTTP 409.
-4. **Keep `num_predict` small (~200 by default)** so each generation is short.
+   from this process. On DELL, the loopback-only shared Ollama arbiter also
+   serialises Feddit with Cy and supplies their common `num_ctx=3072`,
+   `num_thread=4` execution profile. A `test-generate` while one local Feddit
+   generation is running still returns HTTP 409.
+4. **Preserve queue priority**: interactive work precedes user-created work;
+   synthetic/background bots yield to both and to Cy.
+5. **Keep `num_predict` small (~200 by default)** so each generation is short.
 
-This gate is **per-provider**: it protects Cy from ollama profiles only. A
+The cross-project arbiter applies only on the shared DELL host. The local
+single-flight gate remains a second safety boundary for each Feddit process. A
 DeepSeek profile is a remote call - it is neither blocked by, nor blocks, the
 ollama gate, so a busy ollama never stalls the DeepSeek bots (and several
 DeepSeek generations may run at once, capped at 3).

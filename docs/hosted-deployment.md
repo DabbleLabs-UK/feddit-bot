@@ -88,6 +88,11 @@ is intentional: Windows Node can reach the existing Windows Ollama listener on
 keeps the existing Windows service available and does not launch a duplicate
 when the desktop Ollama app already owns the port.
 
+The worker also depends on Infra's loopback-only
+`shared-ollama-arbiter.service`. It grants crash-safe leases across CY and
+Feddit, supplies the shared `num_ctx=3072`, `num_thread=4` runtime profile, and
+does not proxy prompts or generated output.
+
 Install the repository payload below
 `~/.local/lib/feddit-bot/releases/<release>` and point
 `~/.local/lib/feddit-bot/current` at that immutable release. Put the two service

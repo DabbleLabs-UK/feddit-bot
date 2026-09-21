@@ -55,6 +55,12 @@ function cleanPayload(payload, models) {
   };
 }
 
+function sharedPriority(job) {
+  if (job && (job.priority === 'interactive' || job.allocationClass === 'interactive')) return 'interactive';
+  if (job && (job.allocationClass === 'synthetic' || job.priority === 'background')) return 'synthetic';
+  return 'user';
+}
+
 function createWorker(options = {}) {
   const runnerUrl = cleanRunnerUrl(options.runnerUrl);
   const key = String(options.key || '');
@@ -110,6 +116,7 @@ function createWorker(options = {}) {
     let renewTimer = null;
     try {
       const payload = cleanPayload(job.payload, models);
+      payload.priorityClass = sharedPriority(job);
       renewTimer = setInterval(() => {
         request('api/worker/jobs/' + encodeURIComponent(job.id) + '/renew', workerDetails(true))
           .catch((err) => logger.warn('Could not renew job ' + job.id + ': ' + err.message));
@@ -194,6 +201,7 @@ module.exports = {
   cleanRunnerUrl,
   parseAllowedModels,
   cleanPayload,
+  sharedPriority,
   createWorker,
 };
 

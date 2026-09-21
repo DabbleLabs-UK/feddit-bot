@@ -1,7 +1,7 @@
 [Unit]
 Description=Feddit outbound DELL inference worker
-Wants=network-online.target feddit-ollama.service
-After=network-online.target feddit-ollama.service
+Wants=network-online.target feddit-ollama.service shared-ollama-arbiter.service
+After=network-online.target feddit-ollama.service shared-ollama-arbiter.service
 PartOf=feddit-bots.target
 
 [Service]
@@ -9,9 +9,11 @@ Type=simple
 EnvironmentFile=%h/.config/feddit-bot/worker.env
 # WSL passes only explicitly named Linux environment variables into Windows
 # processes. Values remain in the restricted EnvironmentFile above.
-Environment=WSLENV=FEDDIT_RUNNER_URL:FEDDIT_WORKER_KEY:FEDDIT_WORKER_ID:FEDDIT_WORKER_MODELS
+Environment=SHARED_OLLAMA_ARBITER_URL=http://127.0.0.1:11435
+Environment=WSLENV=FEDDIT_RUNNER_URL:FEDDIT_WORKER_KEY:FEDDIT_WORKER_ID:FEDDIT_WORKER_MODELS:SHARED_OLLAMA_ARBITER_URL
 WorkingDirectory=%h/.local/lib/feddit-bot/current
 ExecStartPre=/bin/bash -lc 'for attempt in {1..60}; do "/mnt/c/Windows/System32/curl.exe" -fsS --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1'
+ExecStartPre=/bin/bash -lc 'for attempt in {1..60}; do "/mnt/c/Windows/System32/curl.exe" -fsS --max-time 2 http://127.0.0.1:11435/health >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1'
 # Resolve the Linux release symlink before crossing into Windows. Windows Node
 # can read a real WSL path, but it cannot traverse a Linux symlink over the WSL
 # UNC bridge.

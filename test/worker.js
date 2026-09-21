@@ -7,6 +7,7 @@ const {
   parseAllowedModels,
   cleanPayload,
   createWorker,
+  sharedPriority,
 } = require('../worker');
 const { authorised, bearerToken } = require('../lib/worker-auth');
 
@@ -50,6 +51,7 @@ async function run() {
   checks++;
 
   const calls = [];
+  const generated = [];
   const fetchImpl = async (url, options) => {
     const body = JSON.parse(options.body);
     calls.push({ url: url.toString(), options, body });
@@ -57,6 +59,8 @@ async function run() {
       return response(200, {
         job: {
           id: 'j_test',
+          priority: 'background',
+          allocationClass: 'synthetic',
           payload: { prompt: 'Say hi.', model: ollama.DEFAULT_MODEL },
         },
       });
@@ -70,13 +74,16 @@ async function run() {
     key: 'worker-secret',
     workerId: 'dell-test',
     fetchImpl,
-    generate: async (payload) => ({
-      provider: 'ollama',
-      model: payload.model,
-      text: 'Hi.',
-      ms: 3,
-      usage: { inputTokens: 2, outputTokens: 1, cachedInputTokens: 0 },
-    }),
+    generate: async (payload) => {
+      generated.push(payload);
+      return {
+        provider: 'ollama',
+        model: payload.model,
+        text: 'Hi.',
+        ms: 3,
+        usage: { inputTokens: 2, outputTokens: 1, cachedInputTokens: 0 },
+      };
+    },
     logger: {
       log: (message) => logs.push(message),
       warn: (message) => logs.push(message),
@@ -89,6 +96,8 @@ async function run() {
   eq(calls[0].options.headers.Authorization, 'Bearer worker-secret', 'worker authenticates every request');
   eq(calls[1].body.result.text, 'Hi.', 'generated result returned to public runner');
   eq(calls[1].body.workerId, 'dell-test', 'completion identifies lease holder');
+  eq(generated[0].priorityClass, 'synthetic', 'background system work yields in the shared Ollama queue');
+  eq(sharedPriority({ priority: 'interactive', allocationClass: 'user' }), 'interactive', 'interactive work keeps first priority');
   ok(logs.some((message) => message.includes('Completed')), 'completion logged without secret');
   ok(logs.every((message) => !message.includes('worker-secret')), 'worker key never logged');
 
