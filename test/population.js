@@ -7,10 +7,12 @@ const path = require('node:path');
 
 const {
   MAX_COHORT_SIZE,
+  MAX_COHORT_DIRECTION_LENGTH,
   SIMILARITY_THRESHOLD,
   closestSeed,
   createPopulationController,
   generationPrompt,
+  normalizeCohortDirection,
   normalizeSeed,
   normalizeUsername,
   seedSimilarity,
@@ -233,13 +235,17 @@ async function run() {
     // Use a smaller isolated cohort for a readable sequential lifecycle.
     fs.rmSync(file, { force: true });
     const lifecycle = createPopulationController({ ...options, file: path.join(dir, 'lifecycle.json') });
-    const cohort = lifecycle.createCohort(2);
+    const cohortDirection = 'Give the cohort an affinity for f/shittyaskfeddit and playful, confidently unhelpful replies.';
+    const cohort = lifecycle.createCohort(2, cohortDirection);
     await lifecycle.tick();
     eq(requests.length, 1, 'only one population generation is queued at a time');
     eq(requests[0].priority, 'background', 'population generation uses background queue priority');
     eq(requests[0].allocationClass, 'synthetic', 'population generation uses the protected synthetic class');
     eq(requests[0].provider, 'dell', 'population generation uses the existing hosted provider path');
     eq(requests[0].model, 'shared-test-model', 'population generation uses the configured shared hosted model');
+    ok(requests[0].prompt.includes(cohortDirection), 'the bounded operator direction reaches the seed-generation prompt');
+    ok(requests[0].prompt.includes('shittyaskfeddit'), 'the requested real community is available to population generation');
+    ok(requests[0].prompt.includes('distinctly for this candidate'), 'shared direction still requires differentiated candidates');
     ok(!requests[0].prompt.includes('PRIVATE-WORKSPACE-SENTINEL'), 'generation prompt excludes private user profile data');
     ok(!requests[0].system.includes('PRIVATE-WORKSPACE-SENTINEL'), 'system prompt excludes private user profile data');
     await lifecycle.tick();
@@ -261,6 +267,7 @@ async function run() {
     await lifecycle.tick();
     const ready = lifecycle.getCohort(cohort.id);
     eq(ready.status, 'ready', 'a complete differentiated cohort becomes ready for inspection');
+    eq(ready.direction, cohortDirection, 'cohort direction remains visible after generation');
     eq(ready.candidates[1].duplicateRegenerations, 1, 'duplicate regeneration is visible in provenance');
     ok(ready.activityDistribution && ready.activityDistribution.bots === 2,
       'operator cohort output includes bounded ecology observability');
@@ -279,6 +286,8 @@ async function run() {
       'staged bots remain disabled and in rehearsal');
     ok(systemProfiles.every((profile) => profile.populationProvenance.lifecycle === 'staged'),
       'staged profiles retain inspectable AI-population provenance');
+    ok(systemProfiles.every((profile) => profile.persona.includes(cohortDirection)),
+      'the creative direction remains part of every staged bot\'s private behavioural prompt');
     ok(systemProfiles.every((profile) => profile.populationActivity &&
       profile.simulationState && profile.simulationState.populationActivity),
     'staged profiles receive isolated live and rehearsal activity ecology state');
@@ -333,6 +342,9 @@ async function run() {
 
   const standalonePrompt = generationPrompt({ cohortId: 'public-only', slot: 0, attempt: 1 });
   ok(standalonePrompt.includes('Available public communities'), 'generation is grounded only in an explicit public community allowlist');
+  eq(normalizeCohortDirection('  a   focused\ncohort  '), 'a focused cohort', 'cohort direction is whitespace-normalised');
+  eq(normalizeCohortDirection('x'.repeat(MAX_COHORT_DIRECTION_LENGTH + 20)).length,
+    MAX_COHORT_DIRECTION_LENGTH, 'cohort direction has a hard storage and prompt bound');
   console.log('background population: ' + checks + ' checks passed');
 }
 

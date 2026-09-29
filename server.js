@@ -163,6 +163,13 @@ function isPopulationAdmin(owner) {
   return PLACEMENT === 'hosted' && owner && populationAdminOwnerIds.has(String(owner.id));
 }
 
+function canManageProfile(profile, owner) {
+  if (!profile) return false;
+  if (!owner) return true;
+  if (profile.ownerId === owner.id) return true;
+  return profile.botOrigin === 'system' && isPopulationAdmin(owner);
+}
+
 function recordHostedOwnerActivity(req, res, owner, allowIssue) {
   if (!owner) return false;
   const existingToken = cookieValue(req, OWNER_ACTIVITY_COOKIE);
@@ -271,7 +278,7 @@ function normalizeFedditBio(value) {
 }
 
 function workspaceProfiles(requestOwner) {
-  return store.listProfiles().filter((profile) => !requestOwner || profile.ownerId === requestOwner.id);
+  return store.listProfiles().filter((profile) => canManageProfile(profile, requestOwner));
 }
 
 function communityManagerProfiles(requestOwner) {
@@ -281,6 +288,10 @@ function communityManagerProfiles(requestOwner) {
     return 2;
   };
   return workspaceProfiles(requestOwner)
+    // Population administrators edit staged system bots in the ordinary bot
+    // editor, but community ownership remains attached only to bots created in
+    // their private workspace.
+    .filter((profile) => !requestOwner || profile.ownerId === requestOwner.id)
     .filter((profile) => Boolean(profile.token) && !secrets.getFedditHandover(profile.id))
     .sort((a, b) => {
       const byProbation = probationRank(a) - probationRank(b);
@@ -707,7 +718,7 @@ async function handleApi(req, res, urlPath, query) {
     if (method === 'POST' && urlPath === '/api/population/cohorts') {
       const body = await readBody(req);
       try {
-        const cohort = populationController.createCohort(body.count);
+        const cohort = populationController.createCohort(body.count, body.direction);
         await populationController.tick();
         return sendJson(res, 201, { cohort: populationController.getCohort(cohort.id) });
       } catch (error) {
@@ -748,7 +759,7 @@ async function handleApi(req, res, urlPath, query) {
     if (!job) return sendJson(res, 404, { error: 'No such hosted generation.' });
     if (requestOwner) {
       const profile = job.profileId ? store.getProfile(job.profileId) : null;
-      if (!profile || profile.ownerId !== requestOwner.id) {
+      if (!canManageProfile(profile, requestOwner)) {
         return sendJson(res, 404, { error: 'No such hosted generation.' });
       }
     }
@@ -937,9 +948,7 @@ async function handleApi(req, res, urlPath, query) {
 
   // GET /api/profiles - list (tokens redacted).
   if (method === 'GET' && urlPath === '/api/profiles') {
-    const profiles = store.listProfiles()
-      .filter((profile) => !requestOwner || profile.ownerId === requestOwner.id)
-      .map(safeProfile);
+    const profiles = workspaceProfiles(requestOwner).map(safeProfile);
     return sendJson(res, 200, { profiles });
   }
 
@@ -1030,7 +1039,7 @@ async function handleApi(req, res, urlPath, query) {
     const id = decodeURIComponent(m[1]);
     const sub = m[2]; // e.g. "/register", "/test-generate", or undefined
     const found = store.getProfile(id);
-    const existing = requestOwner && found && found.ownerId !== requestOwner.id ? null : found;
+    const existing = canManageProfile(found, requestOwner) ? found : null;
 
     // GET /api/profiles/:id - full record for the edit view, but WITHOUT the raw
     // token (the client never reads it - it keys off hasToken) and with the large
@@ -1182,6 +1191,11 @@ async function handleApi(req, res, urlPath, query) {
     // DELETE /api/profiles/:id
     if (method === 'DELETE' && !sub) {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
+      if (existing.botOrigin === 'system') {
+        return sendJson(res, 409, {
+          error: 'System-population bot identities are protected here. Pause the bot or manage its cohort from Background population instead.',
+        });
+      }
       store.deleteProfile(id);
       hostedPreviewTasks.delete(id);
       hostedSimulationTasks.delete(id);
@@ -1192,6 +1206,11 @@ async function handleApi(req, res, urlPath, query) {
     // capture the returned token straight into the store.
     if (method === 'POST' && sub === '/register') {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
+      if (existing.botOrigin === 'system') {
+        return sendJson(res, 409, {
+          error: 'System-population bot identities cannot be re-registered from the ordinary editor.',
+        });
+      }
       const username = (existing.fedditUsername || '').trim();
       if (!username) return sendJson(res, 400, { error: 'Set a Feddit username before registering.' });
       if (secrets.getFedditHandover(id)) return sendJson(res, 409, { error: 'This bot has a handover in progress.' });
@@ -1221,6 +1240,11 @@ async function handleApi(req, res, urlPath, query) {
     // staged token took effect, so the identity is never stranded between hosts.
     if (method === 'POST' && sub === '/handover') {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
+      if (existing.botOrigin === 'system') {
+        return sendJson(res, 409, {
+          error: 'System-population bot identities cannot be transferred out of the hosted population.',
+        });
+      }
       const username = String(existing.fedditUsername || '').trim();
       if (!username) return sendJson(res, 409, { error: 'Register this bot on Feddit before moving its identity.' });
 
@@ -1280,6 +1304,11 @@ async function handleApi(req, res, urlPath, query) {
     // The source profile remains as a disabled, secret-free record.
     if (method === 'POST' && sub === '/handover-complete') {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
+      if (existing.botOrigin === 'system') {
+        return sendJson(res, 409, {
+          error: 'System-population bot identities cannot be transferred out of the hosted population.',
+        });
+      }
       const pending = secrets.getFedditHandover(id);
       if (!pending) return sendJson(res, 200, { ok: true, profile: safeProfile(existing) });
       if (pending.status !== 'ready') {

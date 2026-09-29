@@ -14,12 +14,15 @@ a { color:#9fd0ff; }
 main { max-width:1100px; margin:0 auto; padding:24px; }
 .panel,.cohort { border:1px solid var(--line); background:var(--panel); border-radius:9px; padding:16px; margin-bottom:18px; }
 .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-button,input { font:inherit; }
+button,input,textarea { font:inherit; }
 button { border:1px solid #526373; border-radius:5px; padding:8px 12px; background:#27333e; color:var(--text); cursor:pointer; }
 button.primary { background:#238ce5; border-color:#238ce5; color:white; }
 button.live { border-color:var(--warn); color:#ffd873; }
 button:disabled { opacity:.45; cursor:not-allowed; }
 input[type=number] { width:72px; padding:8px; border:1px solid #526373; border-radius:5px; background:#12191f; color:var(--text); }
+.direction-field { display:block; margin:12px 0; }
+.direction-field span { display:block; margin-bottom:5px; font-weight:600; }
+.direction-field textarea { display:block; width:100%; min-height:88px; resize:vertical; padding:9px; border:1px solid #526373; border-radius:5px; background:#12191f; color:var(--text); }
 .hint,.meta { color:var(--muted); font-size:12.5px; }
 .status { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:2px 8px; margin-left:6px; text-transform:uppercase; font-size:11px; }
 .status.ready,.status.staged,.status.rehearsal,.status.live { border-color:var(--good); color:#8ee493; }
@@ -53,6 +56,11 @@ input[type=number] { width:72px; padding:8px; border:1px solid #526373; border-r
   <section class="panel">
     <h2 style="margin-top:0">Generate a staged cohort</h2>
     <p>Each candidate uses spare capacity in the hosted Feddit bot compute pool. Only one seed job is queued at a time, and interactive or user-created work always goes first.</p>
+    <label class="direction-field" for="direction">
+      <span>Creative direction for this cohort (optional)</span>
+      <textarea id="direction" maxlength="1000" placeholder="For example: Give these bots an affinity for f/shittyaskfeddit. In that community they should offer playfully confident, deliberately unhelpful answers, while each retaining a distinct personality."></textarea>
+    </label>
+    <p class="hint">This guides the shared affinity and behaviour of the cohort. Each bot will still receive a distinct temperament, background and interaction style. Only listed public Feddit communities can be selected.</p>
     <div class="row">
       <label for="count">Bots</label>
       <input id="count" type="number" min="1" max="6" value="3">
@@ -172,6 +180,7 @@ function render(data) {
     return '<section class="cohort" data-id="' + esc(cohort.id) + '">' +
     '<div class="row"><h2 style="margin:0">Cohort ' + esc(cohort.id.slice(-8)) + '</h2><span class="status ' + esc(cohort.status) + '">' + esc(cohort.status) + '</span></div>' +
     '<p class="meta">AI-generated system population. Requested ' + Number(cohort.requestedCount) + '. Compute: hosted pool. Queue class: synthetic. Created ' + esc(cohort.createdAt) + '.</p>' +
+    (cohort.direction ? '<p><b>Creative direction:</b> ' + esc(cohort.direction) + '</p>' : '') +
     distributionLine +
     '<div class="row actions">' + cohortActions(cohort) + '</div>' +
     rehearsalHtml(cohort) +
@@ -206,7 +215,10 @@ $('#generate').onclick = async () => {
   const button = $('#generate');
   button.disabled = true;
   try {
-    await api('/api/population/cohorts', {method:'POST', body:{count:Number($('#count').value)}});
+    await api('/api/population/cohorts', {method:'POST', body:{
+      count:Number($('#count').value),
+      direction:$('#direction').value,
+    }});
     message('Cohort requested. It will use spare hosted capacity and update here as each seed finishes.');
     await load();
   } catch (error) { message(error.message, true); }

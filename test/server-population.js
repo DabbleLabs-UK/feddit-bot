@@ -67,6 +67,28 @@ async function run() {
       lastActiveAt: null,
     }],
   }, null, 2));
+  const systemProfileId = 'p_population_fixture';
+  fs.writeFileSync(path.join(dataDir, 'profiles.json'), JSON.stringify({
+    schemaVersion: 16,
+    profiles: [{
+      id: systemProfileId,
+      createdAt: new Date().toISOString(),
+      fedditUsername: 'population_fixture',
+      botOrigin: 'system',
+      persona: 'Generated starting persona.',
+      toneNotes: 'Generated starting tone.',
+      readFeddits: ['askfeddit'],
+      postFeddits: ['askfeddit'],
+      canReply: true,
+      canStartDiscussions: true,
+      canShareLinks: false,
+      enabled: false,
+      dryRun: true,
+      populationSeed: { temperament: 'curious' },
+      populationProvenance: { cohortId: 'cohort_fixture' },
+    }],
+    settings: {},
+  }, null, 2));
   const port = await unusedPort();
   const child = spawn(process.execPath, ['server.js'], {
     cwd: ROOT,
@@ -112,14 +134,59 @@ async function run() {
     eq(ordinarySession.status, 201, 'fixture can create an ordinary hosted owner');
     const ordinary = await request(port, 'GET', '/api/population', undefined, ordinarySession.json.accessToken);
     eq(ordinary.status, 404, 'ordinary hosted owners cannot discover the operator API');
+    const ordinaryProfiles = await request(port, 'GET', '/api/profiles', undefined, ordinarySession.json.accessToken);
+    eq(ordinaryProfiles.json.profiles.length, 0, 'ordinary hosted owners cannot see system-population profiles');
 
     const initial = await request(port, 'GET', '/api/population', undefined, accessToken);
     eq(initial.status, 200, 'configured existing owner can inspect population state');
     eq(initial.json.cohorts, [], 'population begins with no implicit synthetic bots');
 
-    const created = await request(port, 'POST', '/api/population/cohorts', { count: 2 }, accessToken);
+    const adminProfiles = await request(port, 'GET', '/api/profiles', undefined, accessToken);
+    eq(adminProfiles.status, 200, 'population operator can open the ordinary bot list');
+    eq(adminProfiles.json.profiles.map((profile) => profile.id), [systemProfileId],
+      'staged population bots appear in the operator ordinary bot list');
+    const editable = await request(port, 'PUT', '/api/profiles/' + systemProfileId, {
+      persona: 'Operator-edited persona.',
+      toneNotes: 'Operator-edited tone.',
+      readFeddits: ['shittyaskfeddit'],
+      postFeddits: ['shittyaskfeddit'],
+      canReply: true,
+      canStartDiscussions: false,
+      canShareLinks: true,
+      enabled: false,
+      dryRun: true,
+      botOrigin: 'user',
+      populationSeed: { temperament: 'overwritten' },
+    }, accessToken);
+    eq(editable.status, 200, 'population operator can edit a staged bot through the ordinary profile API');
+    eq(editable.json.profile.persona, 'Operator-edited persona.', 'ordinary editor saves a system bot persona');
+    eq(editable.json.profile.toneNotes, 'Operator-edited tone.', 'ordinary editor saves system bot tone notes');
+    eq(editable.json.profile.readFeddits, ['shittyaskfeddit'], 'ordinary editor saves system bot communities');
+    eq(editable.json.profile.canShareLinks, true, 'ordinary editor saves system bot abilities');
+    eq(editable.json.profile.botOrigin, 'system', 'ordinary editor cannot replace system origin');
+    eq(editable.json.profile.populationSeed.temperament, 'curious', 'ordinary editor cannot replace seed provenance');
+    const biography = await request(port, 'PUT', '/api/profiles/' + systemProfileId + '/biography', {
+      bio: 'A distinct public biography for this population bot.',
+    }, accessToken);
+    eq(biography.status, 200, 'population operator can edit the public biography');
+    eq(biography.json.profile.fedditBio, 'A distinct public biography for this population bot.',
+      'population bot biography remains separate from its persona');
+
+    const deleteProtected = await request(port, 'DELETE', '/api/profiles/' + systemProfileId, undefined, accessToken);
+    eq(deleteProtected.status, 409, 'ordinary editor cannot delete a system-population identity');
+    const registerProtected = await request(port, 'POST', '/api/profiles/' + systemProfileId + '/register', {}, accessToken);
+    eq(registerProtected.status, 409, 'ordinary editor cannot re-register a system-population identity');
+    const handoverProtected = await request(port, 'POST', '/api/profiles/' + systemProfileId + '/handover', {}, accessToken);
+    eq(handoverProtected.status, 409, 'ordinary editor cannot transfer a system-population identity');
+    const ordinaryProfile = await request(port, 'GET', '/api/profiles/' + systemProfileId, undefined,
+      ordinarySession.json.accessToken);
+    eq(ordinaryProfile.status, 404, 'system-population profile remains isolated from ordinary workspaces');
+
+    const direction = 'Prefer f/shittyaskfeddit and answer with playful, deliberately misplaced confidence.';
+    const created = await request(port, 'POST', '/api/population/cohorts', { count: 2, direction }, accessToken);
     eq(created.status, 201, 'operator can request a bounded staged cohort');
     eq(created.json.cohort.requestedCount, 2, 'operator request preserves the bounded cohort size');
+    eq(created.json.cohort.direction, direction, 'operator request preserves the bounded creative direction');
     eq(created.json.cohort.status, 'generating', 'generation alone does not stage or activate accounts');
 
     const jobs = JSON.parse(fs.readFileSync(path.join(dataDir, 'jobs.json'), 'utf8')).jobs;
@@ -127,6 +194,7 @@ async function run() {
     eq(jobs[0].source, 'feddit-population', 'durable job records system-population provenance');
     eq(jobs[0].priority, 'background', 'durable seed job uses background priority');
     eq(jobs[0].allocationClass, 'synthetic', 'durable seed job cannot overtake user work');
+    ok(jobs[0].payload.prompt.includes(direction), 'durable seed job receives the creative direction');
     ok(!JSON.stringify(jobs[0].payload).includes('private_user_bot'), 'population job contains no private user profile data');
   } finally {
     if (child.exitCode == null) child.kill();

@@ -9,6 +9,9 @@ const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'),
 const populationHtml = fs.readFileSync(path.join(__dirname, '..', 'public', 'population.html'), 'utf8');
 
 assert.match(populationHtml, /Feddit background population/);
+assert.match(populationHtml, /Creative direction for this cohort/);
+assert.match(populationHtml, /f\/shittyaskfeddit/);
+assert.match(populationHtml, /cohort\.direction/);
 assert.match(populationHtml, /AI-generated system population/);
 assert.match(populationHtml, /Only one seed job is queued at a time/);
 assert.match(populationHtml, /interactive or user-created work always goes first/);
@@ -198,6 +201,10 @@ assert.match(html, /Download a safe copy/);
 assert.match(html, /Move bot identity/);
 assert.match(html, /Resume bot handover/);
 assert.match(html, /Finish handover here/);
+assert.match(html, /const systemPopulationBot = p\.botOrigin === 'system'/);
+assert.match(html, /Population identity protected/);
+assert.match(html, /Manage its cohort/);
+assert.match(html, /Registration and identity recovery are managed by the population system/);
 assert.match(html, /\/api\/profiles\/' \+ encodeURIComponent\(id\) \+ '\/export'/);
 assert.match(html, /\/api\/profile-import/);
 assert.match(html, /\/api\/handover-import/);

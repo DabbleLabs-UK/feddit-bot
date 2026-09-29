@@ -1507,6 +1507,7 @@ function renderEditor(p) {
         <div class="hint">Curated models use the same safe Ollama download flow as first setup. Other compatible Ollama models already installed on this computer remain available. A missing imported preference stays saved while the bot is paused, so you can download it or choose a replacement.</div>
        </div>`;
   const main = $('#main');
+  const systemPopulationBot = p.botOrigin === 'system';
   main.innerHTML = `
     <div class="bot-runbar" id="botRunBar"></div>
     <input type="hidden" id="f_enabled" value="${p.enabled ? 'true' : 'false'}">
@@ -1746,9 +1747,11 @@ function renderEditor(p) {
     <div class="row" style="margin: 6px 0 30px">
       <button class="primary" id="saveBtn">Save changes</button>
       <button id="exportBtn">Download a safe copy</button>
-      ${(p.hasToken || p.handoverPending) ? '<button id="handoverBtn">' + (p.handoverPending ? 'Resume bot handover' : 'Move bot identity') + '</button>' : ''}
-      ${p.handoverPending ? '<button id="handoverCompleteBtn">Finish handover here</button>' : ''}
-      <button class="danger" id="deleteBtn" style="margin-left:auto">Delete profile</button>
+      ${!systemPopulationBot && (p.hasToken || p.handoverPending) ? '<button id="handoverBtn">' + (p.handoverPending ? 'Resume bot handover' : 'Move bot identity') + '</button>' : ''}
+      ${!systemPopulationBot && p.handoverPending ? '<button id="handoverCompleteBtn">Finish handover here</button>' : ''}
+      ${systemPopulationBot
+        ? '<span class="hint" style="margin-left:auto">Population identity protected. <a href="/population.html">Manage its cohort</a></span>'
+        : '<button class="danger" id="deleteBtn" style="margin-left:auto">Delete profile</button>'}
     </div>
     ${p.handoverPending ? '<div class="warnbox" style="margin-top:-20px;margin-bottom:24px"><b>This source is paused for handover.</b> Resume to download the private file again. After it is imported on the destination, finish here to erase this runner\'s transfer copy.</div>' : ''}
   `;
@@ -1832,7 +1835,7 @@ function renderEditor(p) {
   $('#exportBtn').onclick = () => exportProfile(p.id, p.referenceName);
   if ($('#handoverBtn')) $('#handoverBtn').onclick = () => handoverProfile(p.id, p.referenceName, p.handoverPending);
   if ($('#handoverCompleteBtn')) $('#handoverCompleteBtn').onclick = () => completeHandover(p.id);
-  $('#deleteBtn').onclick = () => deleteProfile(p.id, p.referenceName);
+  if ($('#deleteBtn')) $('#deleteBtn').onclick = () => deleteProfile(p.id, p.referenceName);
   $('#testBtn').onclick = () => testGenerate(p.id);
   $('#newsPreviewBtn').onclick = () => previewNews(p.id);
   $('#clearPostedBtn').onclick = () => clearPosted(p.id);
@@ -2079,7 +2082,13 @@ function renderTokenArea(p) {
   if (p.hasToken) {
     area.innerHTML = '<div class="tokline">This identity is <b>registered on Feddit</b> as <b>' +
       esc(p.referenceName || p.fedditUsername) + '</b> and holds a bearer token (hidden). ' +
-      'To re-register, delete and recreate the profile.</div>';
+      (p.botOrigin === 'system'
+        ? 'Its identity is protected; edit its biography, persona, abilities, communities and activity settings here.'
+        : 'To re-register, delete and recreate the profile.') + '</div>';
+    return;
+  }
+  if (p.botOrigin === 'system') {
+    area.innerHTML = '<div class="tokline">This staged population identity is protected. Registration and identity recovery are managed by the population system.</div>';
     return;
   }
   const field = $('#f_fedditUsername');
