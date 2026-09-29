@@ -122,13 +122,16 @@ function fakeStore() {
 async function run() {
   eq(storeModule.DATA_SCHEMA_VERSION, 16, 'profile storage schema records bounded rehearsal observability');
   const migratedProfiles = storeModule.migrateProfiles([
-    { id: 'user', botOrigin: 'user', populationSeed: { username: 'forged' }, populationProvenance: { source: 'forged' } },
-    { id: 'system', botOrigin: 'system', populationSeed: { username: 'real_system' }, populationProvenance: { source: 'generated' } },
+    { id: 'user', botOrigin: 'user', populationArchivedAt: '2026-09-30T00:00:00.000Z', populationSeed: { username: 'forged' }, populationProvenance: { source: 'forged' } },
+    { id: 'system', botOrigin: 'system', populationArchivedAt: '2026-09-30T00:00:00.000Z', populationSeed: { username: 'real_system' }, populationProvenance: { source: 'generated' } },
   ], 13);
   eq(migratedProfiles[0].populationSeed, null, 'user-created profiles cannot retain system population seed metadata');
   eq(migratedProfiles[0].populationProvenance, null, 'user-created profiles cannot retain system population provenance');
   eq(migratedProfiles[1].populationSeed.username, 'real_system', 'system population seed survives migration');
   eq(migratedProfiles[1].populationProvenance.source, 'generated', 'system population provenance survives migration');
+  eq(migratedProfiles[0].populationArchivedAt, null, 'ordinary profiles cannot acquire population archive state');
+  eq(migratedProfiles[1].populationArchivedAt, '2026-09-30T00:00:00.000Z',
+    'system population archive state survives migration');
   eq(migratedProfiles[0].populationActivity, null, 'user-created cadence cannot acquire synthetic ecology state');
   ok(migratedProfiles[1].populationActivity, 'system migration creates persistent live ecology state');
   ok(migratedProfiles[1].simulationState.populationActivity,
@@ -336,6 +339,45 @@ async function run() {
     }),
       'live activation hands each bot to the ordinary publishing scheduler');
     eq(activations.length, 4, 'each explicit cohort mode applies through the ordinary profile activation path');
+
+    const removableId = systemProfiles[0].id;
+    const archived = restarted.archiveProfile(removableId);
+    eq(archived.enabled, false, 'archiving pauses a population bot');
+    ok(archived.populationArchivedAt, 'archiving records a reversible archive timestamp');
+    eq(restarted.getCohort(cohort.id).candidates.find((item) => item.profileId === removableId).status,
+      'archived', 'cohort provenance records the archived lifecycle');
+    eq(restarted.listArchivedProfiles().map((item) => item.id), [removableId],
+      'archived bots are available to the separate restore controls');
+
+    const restored = restarted.restoreProfile(removableId);
+    eq(restored.populationArchivedAt, null, 'restoring clears the archive marker');
+    eq(restored.enabled, false, 'restoring does not silently resume scheduling');
+    eq(restored.dryRun, true, 'restoring returns the bot in rehearsal mode');
+    eq(restarted.getCohort(cohort.id).candidates.find((item) => item.profileId === removableId).status,
+      'staged', 'restoring returns cohort provenance to staged');
+    assert.throws(() => restarted.forgetProfile(removableId, {
+      confirmUsername: restored.fedditUsername,
+      confirmation: 'PERMANENTLY FORGET',
+    }), /Archive this bot first/, 'permanent forget is unavailable before archive');
+    checks++;
+
+    restarted.archiveProfile(removableId);
+    assert.throws(() => restarted.forgetProfile(removableId, {
+      confirmUsername: restored.fedditUsername,
+      confirmation: 'not the phrase',
+    }), /exact bot name/, 'permanent forget requires the exact confirmation phrase');
+    checks++;
+    eq(restarted.forgetProfile(removableId, {
+      confirmUsername: restored.fedditUsername,
+      confirmation: 'PERMANENTLY FORGET',
+    }), true, 'an archived bot can be permanently forgotten after both confirmations');
+    eq(store.getProfile(removableId), null, 'permanent forget deletes the local runner profile and token record');
+    const forgottenCandidate = restarted.getCohort(cohort.id).candidates.find((item) =>
+      item.forgottenUsername === restored.fedditUsername);
+    eq(forgottenCandidate.status, 'forgotten', 'cohort history retains a non-controlling forgotten marker');
+    eq(forgottenCandidate.profileId, null, 'forgotten cohort history no longer points at a runner profile');
+    eq(store.profiles.filter((profile) => profile.botOrigin === 'system').length, 1,
+      'forgetting one bot leaves the rest of the cohort intact');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

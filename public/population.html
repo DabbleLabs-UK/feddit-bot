@@ -27,7 +27,8 @@ input[type=number] { width:72px; padding:8px; border:1px solid #526373; border-r
 .status { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:2px 8px; margin-left:6px; text-transform:uppercase; font-size:11px; }
 .status.ready,.status.staged,.status.rehearsal,.status.live { border-color:var(--good); color:#8ee493; }
 .status.generating { border-color:var(--warn); color:#ffd873; }
-.status.failed,.status.stage-failed,.status.registration-uncertain { border-color:var(--bad); color:#ff9797; }
+.status.archived { border-color:#7ca9d1; color:#a9d4ff; }
+.status.failed,.status.stage-failed,.status.registration-uncertain,.status.forgotten { border-color:var(--bad); color:#ff9797; }
 .candidate { margin-top:12px; padding:12px; border:1px solid #2d3944; border-radius:6px; background:#151c22; }
 .candidate h3 { margin:0 0 6px; font-size:15px; }
 .candidate p { margin:5px 0; }
@@ -70,6 +71,7 @@ input[type=number] { width:72px; padding:8px; border:1px solid #526373; border-r
     <p class="hint">Generation does not register or activate anything. Review the compact seeds, then stage them as disabled rehearsal profiles. Starting rehearsal still publishes nothing. LIVE activation is a separate explicit action.</p>
     <div id="message"></div>
   </section>
+  <section class="panel" id="archivedPanel" hidden></section>
   <div id="cohorts"><div class="empty">Loading population state...</div></div>
 </main>
 <script>
@@ -105,6 +107,9 @@ function candidateHtml(candidate) {
   if (!seed) return '<div class="candidate"><h3>Candidate ' + (candidate.slot + 1) + ' <span class="status ' + esc(candidate.status) + '">' + esc(candidate.status) + '</span></h3>' +
     '<p class="meta">Attempts: ' + esc(attempts || 'not started') + '</p>' +
     (candidate.error ? '<p class="error">' + esc(candidate.error) + '</p>' : '') + '</div>';
+  const controls = candidate.profileId && !candidate.archived
+    ? '<div class="row actions"><button data-profile-action="archive" data-profile-id="' + esc(candidate.profileId) + '" data-profile-name="' + esc(seed.username) + '">Archive from bot dashboard</button></div>'
+    : (candidate.archived ? '<p class="meta">Archived from the ordinary bot dashboard. Restore or permanently forget it in Archived bots above.</p>' : '');
   return '<div class="candidate"><h3>' + esc(seed.username) + ' <span class="status ' + esc(candidate.status) + '">' + esc(candidate.status) + '</span></h3>' +
     '<p>' + esc(seed.biography) + '</p>' +
     '<p><b>Temperament:</b> ' + esc(seed.temperament) + '</p>' +
@@ -113,7 +118,45 @@ function candidateHtml(candidate) {
     '<p><b>Background:</b> ' + esc(seed.fictionalBackground) + '</p>' +
     activityLine +
     '<p class="meta">Communities: ' + esc(seed.communities.join(', ')) + '. Attempts: ' + esc(attempts) + '. Duplicate regenerations: ' + Number(candidate.duplicateRegenerations || 0) + '.</p>' +
-    (candidate.error ? '<p class="error">' + esc(candidate.error) + '</p>' : '') + '</div>';
+    (candidate.error ? '<p class="error">' + esc(candidate.error) + '</p>' : '') + controls + '</div>';
+}
+
+function renderArchived(items) {
+  const panel = $('#archivedPanel');
+  if (!items.length) { panel.hidden = true; panel.innerHTML = ''; return; }
+  panel.hidden = false;
+  panel.innerHTML = '<h2 style="margin-top:0">Archived bots</h2>' +
+    '<p>These bots are paused and hidden from the ordinary dashboard. Restoring is safe and returns a bot in paused rehearsal mode.</p>' +
+    '<p class="hint"><b>Permanently forget</b> is different: it deletes this runner\'s profile and protected token. It does not erase the bot account or its existing posts and comments from Feddit, and this interface will no longer be able to control that identity.</p>' +
+    items.map((item) => '<div class="candidate"><div class="row"><h3 style="margin:0">' + esc(item.username) + '</h3><span class="status archived">archived</span></div>' +
+      '<p class="meta">Archived ' + esc(item.archivedAt) + (item.cohortId ? '. Cohort ' + esc(item.cohortId.slice(-8)) : '') + '.</p>' +
+      '<div class="row actions"><button data-profile-action="restore" data-profile-id="' + esc(item.id) + '" data-profile-name="' + esc(item.username) + '">Restore to bot dashboard</button>' +
+      '<button data-profile-action="forget" data-profile-id="' + esc(item.id) + '" data-profile-name="' + esc(item.username) + '">Permanently forget...</button></div></div>').join('');
+}
+
+function bindProfileActions() {
+  document.querySelectorAll('[data-profile-action]').forEach((button) => {
+    button.onclick = async () => {
+      const action = button.dataset.profileAction;
+      const id = button.dataset.profileId;
+      const name = button.dataset.profileName || id;
+      let body = {};
+      if (action === 'archive') {
+        if (!confirm('Archive "' + name + '"? It will be paused and hidden from the ordinary dashboard.')) return;
+      } else if (action === 'forget') {
+        const typed = prompt('This permanently deletes the runner profile and protected token. Existing Feddit posts, comments and the account itself remain, but this interface loses control of it.\n\nType the exact bot name to continue:\n' + name);
+        if (typed !== name) { if (typed != null) message('The bot name did not match. Nothing was removed.', true); return; }
+        if (!confirm('Final confirmation: permanently forget "' + name + '" and lose this runner\'s control token?')) return;
+        body = {confirmUsername:name, confirmation:'PERMANENTLY FORGET'};
+      }
+      button.disabled = true;
+      try {
+        await api('/api/population/profiles/' + encodeURIComponent(id) + '/' + action, {method:'POST', body});
+        message(action === 'archive' ? name + ' was paused and archived.' : action === 'restore' ? name + ' was restored in paused rehearsal mode.' : name + ' was permanently forgotten by this runner.');
+        await load();
+      } catch (error) { message(error.message, true); button.disabled = false; }
+    };
+  });
 }
 function countList(items, empty = 'none') {
   return (items || []).length ? items.map((item) => esc(item.name) + ' ' + Number(item.count)).join(', ') : empty;
@@ -167,7 +210,8 @@ function cohortActions(cohort) {
 }
 function render(data) {
   const cohorts = data.cohorts || [];
-  if (!cohorts.length) { $('#cohorts').innerHTML = '<div class="empty">No population cohorts yet.</div>'; return; }
+  renderArchived(data.archivedProfiles || []);
+  if (!cohorts.length) { $('#cohorts').innerHTML = '<div class="empty">No population cohorts yet.</div>'; bindProfileActions(); return; }
   $('#cohorts').innerHTML = cohorts.map((cohort) => {
     const distribution = cohort.activityDistribution || {bands:{}, opportunities24h:0, opportunities7d:0, visibleActions7d:0, capacitySkips7d:0};
     const distributionLine = distribution.bots
@@ -206,6 +250,7 @@ function render(data) {
       } catch (error) { message(error.message, true); button.disabled = false; }
     };
   });
+  bindProfileActions();
 }
 async function load() {
   try { render(await api('/api/population')); }

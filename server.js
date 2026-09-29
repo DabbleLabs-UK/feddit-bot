@@ -278,7 +278,8 @@ function normalizeFedditBio(value) {
 }
 
 function workspaceProfiles(requestOwner) {
-  return store.listProfiles().filter((profile) => canManageProfile(profile, requestOwner));
+  return store.listProfiles().filter((profile) =>
+    canManageProfile(profile, requestOwner) && !profile.populationArchivedAt);
 }
 
 function communityManagerProfiles(requestOwner) {
@@ -712,6 +713,7 @@ async function handleApi(req, res, urlPath, query) {
     if (method === 'GET' && urlPath === '/api/population') {
       return sendJson(res, 200, {
         cohorts: populationController.listCohorts(),
+        archivedProfiles: populationController.listArchivedProfiles(),
         capacity: jobQueue.capacity(),
       });
     }
@@ -744,6 +746,24 @@ async function handleApi(req, res, urlPath, query) {
         return sendJson(res, 200, {
           cohort: populationController.activateCohort(cohortId, body.mode),
         });
+      } catch (error) {
+        return sendJson(res, 409, { error: error.message });
+      }
+    }
+    const populationProfileRoute = urlPath.match(/^\/api\/population\/profiles\/([^/]+)\/(archive|restore|forget)$/);
+    if (method === 'POST' && populationProfileRoute) {
+      const profileId = decodeURIComponent(populationProfileRoute[1]);
+      try {
+        const body = await readBody(req);
+        const action = populationProfileRoute[2];
+        if (action === 'archive') {
+          return sendJson(res, 200, { profile: populationController.archiveProfile(profileId) });
+        }
+        if (action === 'restore') {
+          return sendJson(res, 200, { profile: populationController.restoreProfile(profileId) });
+        }
+        populationController.forgetProfile(profileId, body);
+        return sendJson(res, 200, { ok: true });
       } catch (error) {
         return sendJson(res, 409, { error: error.message });
       }
@@ -967,6 +987,7 @@ async function handleApi(req, res, urlPath, query) {
     delete body.populationSeed;
     delete body.populationProvenance;
     delete body.populationActivity;
+    delete body.populationArchivedAt;
     delete body.hostedOnboardingTurnsCompleted;
     delete body.hostedActivatedAt;
     if (requestOwner) {
@@ -1158,6 +1179,7 @@ async function handleApi(req, res, urlPath, query) {
       delete body.populationSeed;
       delete body.populationProvenance;
       delete body.populationActivity;
+      delete body.populationArchivedAt;
       delete body.hostedOnboardingTurnsCompleted;
       delete body.hostedActivatedAt;
       delete body.memoryState;

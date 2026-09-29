@@ -182,6 +182,42 @@ async function run() {
       ordinarySession.json.accessToken);
     eq(ordinaryProfile.status, 404, 'system-population profile remains isolated from ordinary workspaces');
 
+    const archived = await request(port, 'POST', '/api/population/profiles/' + systemProfileId + '/archive', {}, accessToken);
+    eq(archived.status, 200, 'population operator can archive one population bot');
+    eq(archived.json.profile.enabled, false, 'archive pauses the population bot');
+    ok(archived.json.profile.populationArchivedAt, 'archive records its reversible state');
+    const profilesAfterArchive = await request(port, 'GET', '/api/profiles', undefined, accessToken);
+    eq(profilesAfterArchive.json.profiles.length, 0, 'archived bot disappears from the ordinary dashboard list');
+    const populationAfterArchive = await request(port, 'GET', '/api/population', undefined, accessToken);
+    eq(populationAfterArchive.json.archivedProfiles.map((profile) => profile.id), [systemProfileId],
+      'population controls expose archived bots for recovery');
+    const archivedDirectly = await request(port, 'GET', '/api/profiles/' + systemProfileId, undefined, accessToken);
+    eq(archivedDirectly.status, 200, 'archive retains the runner profile and protected token');
+
+    const restored = await request(port, 'POST', '/api/population/profiles/' + systemProfileId + '/restore', {}, accessToken);
+    eq(restored.status, 200, 'population operator can restore an archived bot');
+    eq(restored.json.profile.enabled, false, 'restored bot remains paused');
+    eq(restored.json.profile.dryRun, true, 'restored bot returns in rehearsal mode');
+    const profilesAfterRestore = await request(port, 'GET', '/api/profiles', undefined, accessToken);
+    eq(profilesAfterRestore.json.profiles.map((profile) => profile.id), [systemProfileId],
+      'restored bot returns to the ordinary dashboard list');
+
+    const forgetActive = await request(port, 'POST', '/api/population/profiles/' + systemProfileId + '/forget', {
+      confirmUsername: 'population_fixture', confirmation: 'PERMANENTLY FORGET',
+    }, accessToken);
+    eq(forgetActive.status, 409, 'permanent forget is unavailable until the bot is archived');
+    await request(port, 'POST', '/api/population/profiles/' + systemProfileId + '/archive', {}, accessToken);
+    const forgetWrong = await request(port, 'POST', '/api/population/profiles/' + systemProfileId + '/forget', {
+      confirmUsername: 'population_fixture', confirmation: 'wrong',
+    }, accessToken);
+    eq(forgetWrong.status, 409, 'permanent forget rejects an incorrect confirmation phrase');
+    const forgotten = await request(port, 'POST', '/api/population/profiles/' + systemProfileId + '/forget', {
+      confirmUsername: 'population_fixture', confirmation: 'PERMANENTLY FORGET',
+    }, accessToken);
+    eq(forgotten.status, 200, 'population operator can deliberately forget an archived bot');
+    const forgottenProfile = await request(port, 'GET', '/api/profiles/' + systemProfileId, undefined, accessToken);
+    eq(forgottenProfile.status, 404, 'permanent forget removes the runner profile');
+
     const direction = 'Prefer f/shittyaskfeddit and answer with playful, deliberately misplaced confidence.';
     const created = await request(port, 'POST', '/api/population/cohorts', { count: 2, direction }, accessToken);
     eq(created.status, 201, 'operator can request a bounded staged cohort');

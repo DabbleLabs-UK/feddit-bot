@@ -1750,7 +1750,7 @@ function renderEditor(p) {
       ${!systemPopulationBot && (p.hasToken || p.handoverPending) ? '<button id="handoverBtn">' + (p.handoverPending ? 'Resume bot handover' : 'Move bot identity') + '</button>' : ''}
       ${!systemPopulationBot && p.handoverPending ? '<button id="handoverCompleteBtn">Finish handover here</button>' : ''}
       ${systemPopulationBot
-        ? '<span class="hint" style="margin-left:auto">Population identity protected. <a href="/population.html">Manage its cohort</a></span>'
+        ? '<button id="archivePopulationBtn" style="margin-left:auto">Archive from dashboard</button><span class="hint"><a href="/population.html">Population controls</a></span>'
         : '<button class="danger" id="deleteBtn" style="margin-left:auto">Delete profile</button>'}
     </div>
     ${p.handoverPending ? '<div class="warnbox" style="margin-top:-20px;margin-bottom:24px"><b>This source is paused for handover.</b> Resume to download the private file again. After it is imported on the destination, finish here to erase this runner\'s transfer copy.</div>' : ''}
@@ -1835,6 +1835,7 @@ function renderEditor(p) {
   $('#exportBtn').onclick = () => exportProfile(p.id, p.referenceName);
   if ($('#handoverBtn')) $('#handoverBtn').onclick = () => handoverProfile(p.id, p.referenceName, p.handoverPending);
   if ($('#handoverCompleteBtn')) $('#handoverCompleteBtn').onclick = () => completeHandover(p.id);
+  if ($('#archivePopulationBtn')) $('#archivePopulationBtn').onclick = () => archivePopulationProfile(p.id, p.referenceName);
   if ($('#deleteBtn')) $('#deleteBtn').onclick = () => deleteProfile(p.id, p.referenceName);
   $('#testBtn').onclick = () => testGenerate(p.id);
   $('#newsPreviewBtn').onclick = () => previewNews(p.id);
@@ -2669,6 +2670,19 @@ async function deleteProfile(id, name) {
     await loadProfiles();
     toast('Deleted.', 'ok');
   } catch (e) { toast('Delete failed: ' + e.message, 'err'); }
+}
+
+async function archivePopulationProfile(id, name) {
+  if (!confirm('Archive "' + (name || id) + '"? It will be paused and removed from this dashboard. You can restore it from Background population.')) return;
+  try {
+    await api('/api/population/profiles/' + encodeURIComponent(id) + '/archive', { method: 'POST', body: {} });
+    state.selected = null;
+    state.editing = null;
+    $('#main').innerHTML = '<div class="empty">Bot archived. Select another profile, or restore it from Background population.</div>';
+    await loadProfiles();
+    if (state.profiles.length) await selectProfile(state.profiles[0].id);
+    toast('Population bot archived and paused.', 'ok');
+  } catch (e) { toast('Archive failed: ' + e.message, 'err'); }
 }
 
 async function waitForHostedJob(jobId, outputElement) {
