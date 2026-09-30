@@ -86,7 +86,7 @@ internal sealed class RunnerSupervisor : IDisposable
                     }
                 }
             }
-            catch (Exception error) when (error is not OperationCanceledException)
+            catch (Exception error) when (ShouldLogAndRetry(error, cancellationToken))
             {
                 _log.Write("Waiting for runner idle state: " + error.Message);
             }
@@ -114,7 +114,7 @@ internal sealed class RunnerSupervisor : IDisposable
                 return;
             }
         }
-        catch (Exception error) when (error is not OperationCanceledException)
+        catch (Exception error) when (ShouldLogAndRetry(error, cancellationToken))
         {
             _log.Write("No existing Ollama service responded: " + error.Message);
         }
@@ -143,7 +143,7 @@ internal sealed class RunnerSupervisor : IDisposable
                 using var response = await _http.GetAsync("http://127.0.0.1:11434/api/tags", cancellationToken);
                 if (response.IsSuccessStatusCode) return;
             }
-            catch (Exception error) when (error is not OperationCanceledException)
+            catch (Exception error) when (ShouldLogAndRetry(error, cancellationToken))
             {
                 _log.Write("Waiting for Ollama: " + error.Message);
             }
@@ -166,7 +166,7 @@ internal sealed class RunnerSupervisor : IDisposable
                 var version = document.RootElement.GetProperty("appVersion").GetString();
                 if (version == expectedVersion) return true;
             }
-            catch (Exception error) when (error is not OperationCanceledException)
+            catch (Exception error) when (ShouldLogAndRetry(error, cancellationToken))
             {
                 _log.Write("Waiting for runner health: " + error.Message);
             }
@@ -185,6 +185,14 @@ internal sealed class RunnerSupervisor : IDisposable
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
         return process;
+    }
+
+    internal static bool ShouldLogAndRetry(Exception error, CancellationToken cancellationToken)
+    {
+        // HttpClient reports its own request timeout as TaskCanceledException,
+        // which is also an OperationCanceledException. Only let cancellation
+        // escape when the desktop application's token was actually cancelled.
+        return error is not OperationCanceledException || !cancellationToken.IsCancellationRequested;
     }
 
     private static void ValidatePayload(string payload)

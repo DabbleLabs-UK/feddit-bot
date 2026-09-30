@@ -17,6 +17,20 @@ Check(!LaunchIntent.ShouldOpenInterface(["--background"]), "Windows login startu
 Check(TrayIconController.OpenMenuText == "Open bot dashboard", "the notification-area menu exposes the dashboard");
 Check(TrayIconController.ExitMenuText == "Exit Feddit Bots", "the notification-area menu offers a clean exit");
 
+using (var running = new CancellationTokenSource())
+{
+    Check(
+        RunnerSupervisor.ShouldLogAndRetry(new TaskCanceledException("HTTP timeout"), running.Token),
+        "an HttpClient timeout is treated as a retryable probe failure");
+}
+using (var shuttingDown = new CancellationTokenSource())
+{
+    shuttingDown.Cancel();
+    Check(
+        !RunnerSupervisor.ShouldLogAndRetry(new TaskCanceledException("application shutdown"), shuttingDown.Token),
+        "application shutdown cancellation is allowed to stop the launcher");
+}
+
 using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
 var unsigned = new UpdateManifest
 {
