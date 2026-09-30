@@ -79,10 +79,10 @@ input[type=number] { width:72px; padding:8px; border:1px solid #526373; border-r
     <p class="hint">Generation does not register or activate anything. Review the compact seeds, then stage them as disabled rehearsal profiles. Starting rehearsal still publishes nothing. LIVE activation is a separate explicit action.</p>
     <div id="message"></div>
   </section>
+  <div id="cohorts"><div class="empty">Loading population state...</div></div>
   <section class="panel" id="hiddenCohortsPanel" hidden></section>
   <section class="panel" id="detachedProfilesPanel" hidden></section>
   <section class="panel" id="archivedPanel" hidden></section>
-  <div id="cohorts"><div class="empty">Loading population state...</div></div>
 </main>
 <script>
 'use strict';
@@ -119,7 +119,7 @@ function candidateHtml(candidate) {
     (candidate.error ? '<p class="error">' + esc(candidate.error) + '</p>' : '') + '</div>';
   const controls = candidate.profileId && !candidate.archived
     ? '<div class="row actions"><button data-profile-action="archive" data-profile-id="' + esc(candidate.profileId) + '" data-profile-name="' + esc(seed.username) + '">Archive from bot dashboard</button></div>'
-    : (candidate.archived ? '<p class="meta">Archived from the ordinary bot dashboard. Restore or permanently forget it in Archived bots above.</p>' : '');
+    : (candidate.archived ? '<p class="meta">Archived from the ordinary bot dashboard. Restore or permanently forget it in Archived bots at the bottom of this page.</p>' : '');
   return '<div class="candidate"><h3>' + esc(seed.username) + ' <span class="status ' + esc(candidate.status) + '">' + esc(candidate.status) + '</span></h3>' +
     '<p>' + esc(seed.biography) + '</p>' +
     '<p><b>Temperament:</b> ' + esc(seed.temperament) + '</p>' +

@@ -221,6 +221,12 @@ assert.match(populationHtml, /PERMANENTLY FORGET/);
 assert.match(populationHtml, /Bots without a cohort record/);
 assert.match(populationHtml, /Archive all/);
 assert.match(populationHtml, /\/api\/population\/profiles\/archive-detached/);
+assert.ok(populationHtml.indexOf('id="cohorts"') < populationHtml.indexOf('id="hiddenCohortsPanel"'),
+  'active cohort list appears before hidden cohort records');
+assert.ok(populationHtml.indexOf('id="cohorts"') < populationHtml.indexOf('id="detachedProfilesPanel"'),
+  'active cohort list appears before detached population bots');
+assert.ok(populationHtml.indexOf('id="cohorts"') < populationHtml.indexOf('id="archivedPanel"'),
+  'active cohort list appears before archived bots');
 assert.match(html, /\/api\/profiles\/' \+ encodeURIComponent\(id\) \+ '\/export'/);
 assert.match(html, /\/api\/profile-import/);
 assert.match(html, /\/api\/handover-import/);
