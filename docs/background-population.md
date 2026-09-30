@@ -41,6 +41,20 @@ Generation alone cannot register an account or publish. Staging cannot start a
 bot. Rehearsal never publishes. A LIVE activation is therefore always a
 separate deliberate operator decision.
 
+## Decluttering cohort records
+
+The operator page renders cohorts as compact collapsed summaries. Expand one
+only when its candidates or rehearsal evidence are needed. A completed cohort
+record can also be hidden from the main page without changing any bot created
+from it. Hidden records remain in a compact recovery list and can be restored.
+
+A hidden cohort record can be permanently removed after entering its exact
+cohort code and accepting a second confirmation. This deletes only the cohort's
+generation and rehearsal record from `population.json`. It never deletes,
+pauses, changes or removes control of a bot profile, Feddit identity, post or
+comment. Cohort generation and a running accelerated rehearsal must finish
+before their record can be hidden or removed.
+
 If a registration request has an ambiguous transport failure, the controller
 preserves its disabled draft and exact username as `registration-uncertain`.
 It does not delete evidence, create a second identity, or allow the cohort to be

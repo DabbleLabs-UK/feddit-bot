@@ -571,6 +571,9 @@ POST   /api/population/cohorts/:id/stage  register reviewed seeds as disabled re
 POST   /api/population/cohorts/:id/activate explicitly start a staged cohort in rehearsal or LIVE mode
 POST   /api/population/cohorts/:id/rehearsal-run start one bounded accelerated, non-publishing cohort rehearsal
 POST   /api/population/cohorts/:id/reset-rehearsal clear only that cohort's rehearsal evidence and continuity
+POST   /api/population/cohorts/:id/hide-record hide a completed cohort record without changing its bots
+POST   /api/population/cohorts/:id/restore-record restore a hidden cohort record to the operator page
+POST   /api/population/cohorts/:id/forget-record permanently remove a hidden cohort record after two confirmations
 POST   /api/population/profiles/:id/archive pause and hide one system bot from the ordinary dashboard
 POST   /api/population/profiles/:id/restore return one archived system bot in paused rehearsal mode
 POST   /api/population/profiles/:id/forget permanently remove an archived runner profile after two confirmations

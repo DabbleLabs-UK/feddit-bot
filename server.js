@@ -713,6 +713,7 @@ async function handleApi(req, res, urlPath, query) {
     if (method === 'GET' && urlPath === '/api/population') {
       return sendJson(res, 200, {
         cohorts: populationController.listCohorts(),
+        hiddenCohorts: populationController.listHiddenCohorts(),
         archivedProfiles: populationController.listArchivedProfiles(),
         capacity: jobQueue.capacity(),
       });
@@ -727,7 +728,7 @@ async function handleApi(req, res, urlPath, query) {
         return sendJson(res, 409, { error: error.message });
       }
     }
-    const populationRoute = urlPath.match(/^\/api\/population\/cohorts\/([^/]+)\/(stage|activate|rehearsal-run|reset-rehearsal)$/);
+    const populationRoute = urlPath.match(/^\/api\/population\/cohorts\/([^/]+)\/(stage|activate|rehearsal-run|reset-rehearsal|hide-record|restore-record|forget-record)$/);
     if (method === 'POST' && populationRoute) {
       const cohortId = decodeURIComponent(populationRoute[1]);
       try {
@@ -735,6 +736,16 @@ async function handleApi(req, res, urlPath, query) {
           return sendJson(res, 200, { cohort: await populationController.stageCohort(cohortId) });
         }
         const body = await readBody(req);
+        if (populationRoute[2] === 'hide-record') {
+          return sendJson(res, 200, { cohort: populationController.hideCohort(cohortId) });
+        }
+        if (populationRoute[2] === 'restore-record') {
+          return sendJson(res, 200, { cohort: populationController.restoreCohort(cohortId) });
+        }
+        if (populationRoute[2] === 'forget-record') {
+          populationController.forgetCohortRecord(cohortId, body);
+          return sendJson(res, 200, { ok: true });
+        }
         if (populationRoute[2] === 'rehearsal-run') {
           const cohort = populationController.startRehearsalRun(cohortId, body);
           await populationController.tick();

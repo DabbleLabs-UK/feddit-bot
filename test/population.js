@@ -378,6 +378,31 @@ async function run() {
     eq(forgottenCandidate.profileId, null, 'forgotten cohort history no longer points at a runner profile');
     eq(store.profiles.filter((profile) => profile.botOrigin === 'system').length, 1,
       'forgetting one bot leaves the rest of the cohort intact');
+
+    const hidden = restarted.hideCohort(cohort.id);
+    ok(hidden.hiddenAt, 'hiding a cohort records a reversible page-declutter timestamp');
+    eq(restarted.listCohorts(), [], 'hidden cohorts leave the ordinary population page list');
+    eq(restarted.listHiddenCohorts().map((item) => item.id), [cohort.id],
+      'hidden cohort records remain available to restore');
+    const restoredCohort = restarted.restoreCohort(cohort.id);
+    eq(restoredCohort.hiddenAt, null, 'restoring a cohort clears its hidden marker');
+    eq(restarted.listCohorts().map((item) => item.id), [cohort.id],
+      'restored cohort returns to the ordinary population page list');
+    assert.throws(() => restarted.forgetCohortRecord(cohort.id, {
+      confirmCohort: cohort.id.slice(-8), confirmation: 'PERMANENTLY REMOVE RECORD',
+    }), /Hide this cohort record first/, 'visible cohort records cannot be permanently removed');
+    checks++;
+    restarted.hideCohort(cohort.id);
+    assert.throws(() => restarted.forgetCohortRecord(cohort.id, {
+      confirmCohort: cohort.id.slice(-8), confirmation: 'wrong',
+    }), /exact cohort code/, 'cohort record removal requires the exact confirmation phrase');
+    checks++;
+    eq(restarted.forgetCohortRecord(cohort.id, {
+      confirmCohort: cohort.id.slice(-8), confirmation: 'PERMANENTLY REMOVE RECORD',
+    }), true, 'a hidden cohort record can be permanently removed after both confirmations');
+    eq(restarted.getCohort(cohort.id), null, 'permanent record removal deletes cohort evidence');
+    eq(store.profiles.filter((profile) => profile.botOrigin === 'system').length, 1,
+      'removing a cohort record does not delete its remaining bot profiles');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

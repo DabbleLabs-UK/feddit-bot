@@ -89,6 +89,24 @@ async function run() {
     }],
     settings: {},
   }, null, 2));
+  fs.writeFileSync(path.join(dataDir, 'population.json'), JSON.stringify({
+    version: 1,
+    cohorts: [{
+      id: 'cohort_fixture',
+      status: 'staged',
+      requestedCount: 1,
+      direction: 'Fixture cohort for record lifecycle checks.',
+      createdAt: '2026-09-30T00:00:00.000Z',
+      updatedAt: '2026-09-30T00:00:00.000Z',
+      candidates: [{
+        slot: 0,
+        status: 'staged',
+        profileId: systemProfileId,
+        seed: { username: 'population_fixture', interests: ['testing'] },
+        attempts: [],
+      }],
+    }],
+  }, null, 2));
   const port = await unusedPort();
   const child = spawn(process.execPath, ['server.js'], {
     cwd: ROOT,
@@ -139,7 +157,9 @@ async function run() {
 
     const initial = await request(port, 'GET', '/api/population', undefined, accessToken);
     eq(initial.status, 200, 'configured existing owner can inspect population state');
-    eq(initial.json.cohorts, [], 'population begins with no implicit synthetic bots');
+    eq(initial.json.cohorts.map((cohort) => cohort.id), ['cohort_fixture'],
+      'population API exposes the visible fixture cohort');
+    eq(initial.json.hiddenCohorts, [], 'population begins with no hidden cohort records');
 
     const adminProfiles = await request(port, 'GET', '/api/profiles', undefined, accessToken);
     eq(adminProfiles.status, 200, 'population operator can open the ordinary bot list');
@@ -217,6 +237,31 @@ async function run() {
     eq(forgotten.status, 200, 'population operator can deliberately forget an archived bot');
     const forgottenProfile = await request(port, 'GET', '/api/profiles/' + systemProfileId, undefined, accessToken);
     eq(forgottenProfile.status, 404, 'permanent forget removes the runner profile');
+
+    const hiddenCohort = await request(port, 'POST', '/api/population/cohorts/cohort_fixture/hide-record', {}, accessToken);
+    eq(hiddenCohort.status, 200, 'operator can hide a completed cohort record');
+    const populationAfterHide = await request(port, 'GET', '/api/population', undefined, accessToken);
+    eq(populationAfterHide.json.cohorts, [], 'hidden cohort leaves the ordinary population list');
+    eq(populationAfterHide.json.hiddenCohorts.map((cohort) => cohort.id), ['cohort_fixture'],
+      'hidden cohort remains available in the compact recovery list');
+    const restoredCohort = await request(port, 'POST', '/api/population/cohorts/cohort_fixture/restore-record', {}, accessToken);
+    eq(restoredCohort.status, 200, 'operator can restore a hidden cohort record');
+    const removeVisible = await request(port, 'POST', '/api/population/cohorts/cohort_fixture/forget-record', {
+      confirmCohort: 'fixture', confirmation: 'PERMANENTLY REMOVE RECORD',
+    }, accessToken);
+    eq(removeVisible.status, 409, 'operator must hide a cohort before permanently removing its record');
+    await request(port, 'POST', '/api/population/cohorts/cohort_fixture/hide-record', {}, accessToken);
+    const removeWrong = await request(port, 'POST', '/api/population/cohorts/cohort_fixture/forget-record', {
+      confirmCohort: 'fixture', confirmation: 'wrong',
+    }, accessToken);
+    eq(removeWrong.status, 409, 'cohort record removal rejects the wrong confirmation phrase');
+    const removedCohort = await request(port, 'POST', '/api/population/cohorts/cohort_fixture/forget-record', {
+      confirmCohort: '_fixture', confirmation: 'PERMANENTLY REMOVE RECORD',
+    }, accessToken);
+    eq(removedCohort.status, 200, 'operator can permanently remove a hidden cohort record');
+    const populationAfterRemoval = await request(port, 'GET', '/api/population', undefined, accessToken);
+    eq(populationAfterRemoval.json.cohorts, [], 'removed cohort no longer appears as visible');
+    eq(populationAfterRemoval.json.hiddenCohorts, [], 'removed cohort no longer appears as hidden');
 
     const direction = 'Prefer f/shittyaskfeddit and answer with playful, deliberately misplaced confidence.';
     const created = await request(port, 'POST', '/api/population/cohorts', { count: 2, direction }, accessToken);
