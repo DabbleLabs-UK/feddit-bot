@@ -715,6 +715,7 @@ async function handleApi(req, res, urlPath, query) {
         cohorts: populationController.listCohorts(),
         hiddenCohorts: populationController.listHiddenCohorts(),
         archivedProfiles: populationController.listArchivedProfiles(),
+        detachedProfiles: populationController.listDetachedProfiles(),
         capacity: jobQueue.capacity(),
       });
     }
@@ -757,6 +758,14 @@ async function handleApi(req, res, urlPath, query) {
         return sendJson(res, 200, {
           cohort: populationController.activateCohort(cohortId, body.mode),
         });
+      } catch (error) {
+        return sendJson(res, 409, { error: error.message });
+      }
+    }
+    if (method === 'POST' && urlPath === '/api/population/profiles/archive-detached') {
+      try {
+        const profiles = populationController.archiveDetachedProfiles();
+        return sendJson(res, 200, { archived: profiles.length });
       } catch (error) {
         return sendJson(res, 409, { error: error.message });
       }

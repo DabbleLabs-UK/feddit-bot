@@ -52,8 +52,11 @@ A hidden cohort record can be permanently removed after entering its exact
 cohort code and accepting a second confirmation. This deletes only the cohort's
 generation and rehearsal record from `population.json`. It never deletes,
 pauses, changes or removes control of a bot profile, Feddit identity, post or
-comment. Cohort generation and a running accelerated rehearsal must finish
-before their record can be hidden or removed.
+comment. Bots whose cohort records have been removed appear in a separate
+"Bots without a cohort record" panel. They can be archived individually or in
+one reversible bulk action, which pauses them and removes them from the ordinary
+bot dashboard. Cohort generation and a running accelerated rehearsal must
+finish before their record can be hidden or removed.
 
 If a registration request has an ambiguous transport failure, the controller
 preserves its disabled draft and exact username as `registration-uncertain`.

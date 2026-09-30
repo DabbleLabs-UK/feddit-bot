@@ -80,6 +80,7 @@ input[type=number] { width:72px; padding:8px; border:1px solid #526373; border-r
     <div id="message"></div>
   </section>
   <section class="panel" id="hiddenCohortsPanel" hidden></section>
+  <section class="panel" id="detachedProfilesPanel" hidden></section>
   <section class="panel" id="archivedPanel" hidden></section>
   <div id="cohorts"><div class="empty">Loading population state...</div></div>
 </main>
@@ -141,6 +142,28 @@ function renderArchived(items) {
       '<p class="meta">Archived ' + esc(item.archivedAt) + (item.cohortId ? '. Cohort ' + esc(item.cohortId.slice(-8)) : '') + '.</p>' +
       '<div class="row actions"><button data-profile-action="restore" data-profile-id="' + esc(item.id) + '" data-profile-name="' + esc(item.username) + '">Restore to bot dashboard</button>' +
       '<button data-profile-action="forget" data-profile-id="' + esc(item.id) + '" data-profile-name="' + esc(item.username) + '">Permanently forget...</button></div></div>').join('');
+}
+
+function renderDetachedProfiles(items) {
+  const panel = $('#detachedProfilesPanel');
+  if (!items.length) { panel.hidden = true; panel.innerHTML = ''; return; }
+  panel.hidden = false;
+  panel.innerHTML = '<h2 style="margin-top:0">Bots without a cohort record</h2>' +
+    '<p>These population bots remain because removing a cohort record does not destroy bot identities or control tokens. Archive them to pause them and remove them from the ordinary bot dashboard.</p>' +
+    '<p class="hint">Archiving is reversible. Permanent forgetting remains available individually from Archived bots and still requires the exact bot name plus a second confirmation.</p>' +
+    '<div class="row actions"><button id="archiveDetached">Archive all ' + Number(items.length) + ' detached bots</button></div>' +
+    items.map((item) => '<div class="candidate"><div class="row"><h3 style="margin:0">' + esc(item.username) + '</h3><span class="status">detached</span></div>' +
+      '<p class="meta">Former cohort ' + esc(String(item.cohortId).slice(-8)) + '. ' + (item.enabled ? 'Currently enabled.' : 'Currently paused.') + '</p>' +
+      '<div class="row actions"><button data-profile-action="archive" data-profile-id="' + esc(item.id) + '" data-profile-name="' + esc(item.username) + '">Archive from bot dashboard</button></div></div>').join('');
+  $('#archiveDetached').onclick = async () => {
+    if (!confirm('Archive all ' + items.length + ' population bots whose cohort records have been removed? They will be paused and hidden from the ordinary bot dashboard. This is reversible.')) return;
+    $('#archiveDetached').disabled = true;
+    try {
+      const result = await api('/api/population/profiles/archive-detached', {method:'POST', body:{}});
+      message(Number(result.archived) + ' detached population bots were paused and archived.');
+      await load();
+    } catch (error) { message(error.message, true); $('#archiveDetached').disabled = false; }
+  };
 }
 
 function renderHiddenCohorts(items) {
@@ -265,6 +288,7 @@ function render(data) {
   const openCohorts = new Set(existingCohorts.filter((item) => item.open).map((item) => item.dataset.id));
   const firstCohortRender = existingCohorts.length === 0;
   renderHiddenCohorts(data.hiddenCohorts || []);
+  renderDetachedProfiles(data.detachedProfiles || []);
   renderArchived(data.archivedProfiles || []);
   if (!cohorts.length) {
     $('#cohorts').innerHTML = '<div class="empty">No visible population cohorts. Hidden records can be restored above.</div>';

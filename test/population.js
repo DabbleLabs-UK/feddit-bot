@@ -403,6 +403,15 @@ async function run() {
     eq(restarted.getCohort(cohort.id), null, 'permanent record removal deletes cohort evidence');
     eq(store.profiles.filter((profile) => profile.botOrigin === 'system').length, 1,
       'removing a cohort record does not delete its remaining bot profiles');
+    eq(restarted.listDetachedProfiles().length, 1,
+      'a remaining bot whose cohort record was removed is exposed as detached');
+    eq(restarted.archiveDetachedProfiles().length, 1,
+      'all detached population bots can be archived in one reversible operation');
+    eq(restarted.listDetachedProfiles(), [],
+      'archived detached bots no longer clutter the detached recovery list');
+    const detachedArchived = store.profiles.find((profile) => profile.botOrigin === 'system');
+    eq(detachedArchived.enabled, false, 'bulk archive pauses a detached population bot');
+    ok(detachedArchived.populationArchivedAt, 'bulk archive preserves the detached bot behind an archive marker');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -262,6 +262,11 @@ async function run() {
     const populationAfterRemoval = await request(port, 'GET', '/api/population', undefined, accessToken);
     eq(populationAfterRemoval.json.cohorts, [], 'removed cohort no longer appears as visible');
     eq(populationAfterRemoval.json.hiddenCohorts, [], 'removed cohort no longer appears as hidden');
+    eq(populationAfterRemoval.json.detachedProfiles, [],
+      'population response exposes an empty detached profile list when no linked profile remains');
+    const archiveDetached = await request(port, 'POST', '/api/population/profiles/archive-detached', {}, accessToken);
+    eq(archiveDetached.status, 200, 'operator can invoke the bounded bulk detached-profile archive route');
+    eq(archiveDetached.json.archived, 0, 'bulk detached archive reports when there was nothing to archive');
 
     const direction = 'Prefer f/shittyaskfeddit and answer with playful, deliberately misplaced confidence.';
     const created = await request(port, 'POST', '/api/population/cohorts', { count: 2, direction }, accessToken);
