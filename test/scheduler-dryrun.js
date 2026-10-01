@@ -577,8 +577,13 @@ function makeProviders(opts) {
       const prov = gopts.provider === 'deepseek' ? 'deepseek' : 'ollama';
       const s = prov === 'deepseek' ? d : o;
       s.inFlight++; s.max = Math.max(s.max, s.inFlight); s.calls++;
-      await Promise.resolve(); // yield so any real concurrency would be observed
-      s.inFlight--;
+      try {
+        await Promise.resolve(); // yield so any real concurrency would be observed
+        const scriptedError = cfg.errorFor ? cfg.errorFor(gopts, n) : null;
+        if (scriptedError) throw scriptedError;
+      } finally {
+        s.inFlight--;
+      }
       // A scripted responder lets a test force a specific title (e.g. a verbatim
       // headline echo) to exercise the anti-verbatim / similarity regeneration.
       const content = cfg.textFor
@@ -1083,6 +1088,47 @@ async function scenarioIndependentAbilities() {
     ok(p.sched.nextPostAt > clock.now() && p.sched.nextCommentAt > clock.now(), 'waiting reschedules every due kind');
     ok((p.activity || []).some((entry) => entry.simulation && entry.simulation.action === 'wait'),
       'the reason for waiting is visible in simulation results');
+  }
+
+  // A local transport failure is a safe WAIT: no write is attempted, the due
+  // opportunity moves forward once, and the bot can act normally next time.
+  {
+    const clock = makeClock(1_925_000);
+    const p = profile({
+      id: 'failed-local-generation', fedditUsername: 'failed_local_generation',
+      mode: 'comment', commentsPerHour: 60, readFeddits: ['botlife'],
+      canReply: true, canStartDiscussions: false, canShareLinks: false,
+    });
+    p.sched.nextCommentAt = clock.now();
+    const store = makeStore([p]);
+    store.updateSettings({ dryRun: false });
+    const failure = Object.assign(new Error('Ollama connection reset'), {
+      code: 'OLLAMA_CONNECTION_RESET', failureClass: 'connection-reset',
+    });
+    const providers = makeProviders({
+      errorFor: (_opts, index) => index === 0 ? failure : null,
+      textFor: (opts) => opts.kind === 'scheduled-decision'
+        ? JSON.stringify({ choice: 'C1', reason: 'This discussion fits.' })
+        : 'A safe later reply.',
+    });
+    const world = { feddits: { botlife: [{ id: 91, feddit: 'botlife', title: 'A real target', author: 'other' }] }, comments: {} };
+    const client = makeFeddit(world);
+    const sched = scheduler.createScheduler({
+      store, providers, feddit: client,
+      now: clock.now, random: () => 0, getDeepseekKey: KEY,
+    });
+
+    const failed = await sched.runTick();
+    eq(failed.results[0].action, 'wait', 'a failed local decision ends as a safe wait');
+    eq(client.calls.comment.length, 0, 'a failed generation publishes nothing');
+    ok(p.sched.nextCommentAt > clock.now(), 'a failed generation preserves a future scheduled opportunity');
+    const retryAt = p.sched.nextCommentAt;
+
+    clock.set(retryAt);
+    const recovered = await sched.runTick();
+    eq(recovered.results[0].action, 'comment', 'the same bot can act at its next opportunity');
+    eq(client.calls.comment.length, 1, 'recovery publishes exactly once with no duplicate retry');
+    ok(p.sched.nextCommentAt > clock.now(), 'recovery schedules forward without a catch-up storm');
   }
 
   // A reply-only opportunity must not claim that article or discussion choices

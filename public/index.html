@@ -258,7 +258,11 @@
   .local-model-history { margin: 7px 0 0 21px; }
   .local-model-history summary { cursor: pointer; color: var(--accent); }
   .local-model-history ul { margin: 6px 0 0; padding-left: 18px; color: var(--dim); }
-  .local-model-history li { margin: 3px 0; }
+  .local-model-history li { margin: 5px 0; }
+  .local-model-safe-outcome { color: #c6dbc8; margin-top: 2px; }
+  .local-model-technical { margin-top: 3px; }
+  .local-model-technical summary { color: #a9c7df; }
+  .local-model-technical div { margin-top: 3px; color: var(--dim); overflow-wrap: anywhere; }
   .willuse { font-size: 12.5px; color: var(--text); margin-top: 6px; }
   .willuse b { color: var(--accent); }
   .spendline { font-size: 12px; color: var(--dim); margin-top: 6px; }
@@ -655,6 +659,43 @@ function activityDescription(item) {
   return parts.join(' &middot; ');
 }
 
+function localFailureLabel(item) {
+  const labels = {
+    'ollama-unavailable': 'Ollama unavailable',
+    'connection-reset': 'Ollama connection reset',
+    'connection-lost': 'Ollama connection lost',
+    'total-timeout': 'generation timed out',
+    'stalled-stream': 'model stopped responding',
+    'incomplete-response': 'incomplete model response',
+    'malformed-response': 'malformed model response',
+    'ollama-api-error': 'Ollama stopped generation',
+    'http-error': 'Ollama request rejected',
+    'transport-error': 'Ollama transport failure',
+    'lease-lost': 'shared local-model slot lost',
+    'local-slot-busy': 'local generation already active',
+    'empty-model-response': 'model produced no usable answer',
+    'unknown-failure': 'generation failed',
+  };
+  return labels[item.failureClass] || 'generation failed';
+}
+
+function localFailureTechnical(item) {
+  const parts = [];
+  if (item.profileId && item.profileId !== item.botName) parts.push('profile ' + esc(item.profileId));
+  if (item.failureCode) parts.push('code ' + esc(item.failureCode));
+  if (item.transportCode) parts.push('transport ' + esc(item.transportCode));
+  if (item.httpStatus) parts.push('HTTP ' + esc(item.httpStatus));
+  if (item.phase) parts.push('phase ' + esc(item.phase));
+  if (item.responseStarted) parts.push('HTTP response started');
+  if (item.streamStarted) parts.push('model stream started');
+  if (item.bytesReceived) parts.push(esc(item.bytesReceived) + ' response bytes');
+  parts.push(esc(item.repairAttemptCount || 0) + ' automatic retry/repair attempt(s)');
+  if (item.totalTimeoutMs) parts.push('total limit ' + activityDuration(item.totalTimeoutMs));
+  if (item.idleTimeoutMs) parts.push('post-progress stall limit ' + activityDuration(item.idleTimeoutMs));
+  if (item.error) parts.push(esc(item.error));
+  return parts.join(' &middot; ');
+}
+
 function renderLocalModelActivity() {
   const panel = $('#localModelActivity');
   if (state.placement === 'hosted') { panel.style.display = 'none'; return; }
@@ -685,9 +726,11 @@ function renderLocalModelActivity() {
   } else if (recent.length) {
     const last = recent[0];
     const ago = Math.max(0, Date.now() - Number(last.finishedAt || Date.now()));
-    headline = last.status === 'failed' ? 'Local model idle - last generation failed' : 'Local model idle';
+    headline = last.status === 'failed' ? 'Local model idle - ' + localFailureLabel(last) : 'Local model idle';
     detail = 'Last: ' + esc(last.botName || 'unknown bot') + ' &middot; ' + activityDescription(last) +
-      ' &middot; took ' + activityDuration(last.durationMs) + ' &middot; finished ' + activityDuration(ago) + ' ago.';
+      (last.model ? ' &middot; model ' + esc(last.model) : '') +
+      ' &middot; took ' + activityDuration(last.durationMs) + ' &middot; finished ' + activityDuration(ago) + ' ago.' +
+      (last.status === 'failed' ? ' Nothing was published; future scheduled turns continue normally.' : '');
     marker = '<span class="dot ' + (last.status === 'failed' ? 'bad' : 'good') + '"></span>';
     if (last.status === 'failed') panel.className += ' failed';
   }
@@ -696,10 +739,17 @@ function renderLocalModelActivity() {
     ? '<details class="local-model-history"' + (wasOpen ? ' open' : '') + '><summary>Recent local model generations (' + recent.length + ')</summary><ul>' +
       recent.map((item) => {
         const when = item.finishedAt ? new Date(item.finishedAt).toLocaleTimeString() : '';
-        const result = item.status === 'failed' ? 'failed' : 'completed';
-        const error = item.error ? ' - ' + esc(item.error) : '';
+        const result = item.status === 'failed' ? localFailureLabel(item) : 'completed';
+        const safe = item.status === 'failed'
+          ? '<div class="local-model-safe-outcome">Nothing was published. Future scheduled turns continue normally.</div>'
+          : '';
+        const technical = item.status === 'failed'
+          ? '<details class="local-model-technical"><summary>Technical details</summary><div>' +
+            localFailureTechnical(item) + '</div></details>'
+          : '';
         return '<li><span class="mono">' + esc(when) + '</span> - <b>' + esc(item.botName || 'unknown bot') + '</b>: ' +
-          activityDescription(item) + ' - ' + result + ' in ' + activityDuration(item.durationMs) + error + '</li>';
+          activityDescription(item) + (item.model ? ' - model ' + esc(item.model) : '') +
+          ' - ' + result + ' in ' + activityDuration(item.durationMs) + safe + technical + '</li>';
       }).join('') + '</ul></details>'
     : '';
 
