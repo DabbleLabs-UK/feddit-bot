@@ -69,7 +69,7 @@ async function run() {
         assert.equal(detail.priorityClass, 'interactive');
         return {
           waitMs: 42,
-          profile: { num_ctx: 3072, num_thread: 4 },
+          profile: { num_ctx: 3072, num_thread: 6 },
           release: async () => { leaseReleases++; },
         };
       },
@@ -84,7 +84,7 @@ async function run() {
   assert.equal(sent.stream, true);
   assert.equal(sent.options.num_predict, 200);
   assert.equal(sent.options.num_ctx, 3072);
-  assert.equal(sent.options.num_thread, 4);
+  assert.equal(sent.options.num_thread, 6, 'DELL uses the arbiter thread count');
   assert.equal(leaseReleases, 1, 'the shared lease is released after generation');
   assert.equal(Object.hasOwn(sent, 'think'), false, 'do not expose thinking-only traces as visible content');
 
@@ -99,6 +99,19 @@ async function run() {
     (error) => error.code === 'EMPTY_RESPONSE' && /reached its reply limit/i.test(error.message),
   );
   assert.equal(ollama.isBusy(), false, 'single-flight gate is released after an empty response');
+
+  let localRequest;
+  await ollama.generate({
+    model: 'local-model',
+    leaseClient: null,
+    chatTransport: async (body) => {
+      localRequest = body;
+      return { message: { content: 'Local reply.' }, done: true };
+    },
+  });
+  assert.equal(localRequest.options.num_thread, 4, 'LENO leaves CPU capacity for interactive apps');
+  assert.equal(Object.hasOwn(localRequest.options, 'num_ctx'), false, 'LENO context size is unchanged');
+  assert.equal(localRequest.keep_alive, -1, 'model residency is unchanged');
 
   assert.ok(ollama.DEFAULT_GENERATION_TIMEOUT_MS >= 10 * 60 * 1000,
     'the local generation default allows slow CPU models more than two minutes');
