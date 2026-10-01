@@ -51,7 +51,7 @@ function makeStore(profiles) {
     monthlyCapUsd: 5, pricing: cost.defaultPricing(),
   };
   const byId = new Map(profiles.map((p) => [p.id, p]));
-  const schedDefaults = () => ({ nextPostAt: null, nextCommentAt: null, backoffUntil: 0, sentPosts: [], sentComments: [] });
+  const schedDefaults = () => ({ nextPostAt: null, nextArticleAt: null, nextCommentAt: null, backoffUntil: 0, sentPosts: [], sentComments: [] });
   function profileSpend(profile, dayKey, monthKey) {
     const daily = (profile && profile.spendDaily) || {};
     let todayUsd = 0, todayGens = 0, monthUsd = 0, monthGens = 0;
@@ -252,6 +252,7 @@ function profile(over) {
     linkNoContext: over.linkNoContext || 'headline',
     probation: over.probation || { onProbation: null, checkedAt: 0 },
     postsPerHour: over.postsPerHour || 0,
+    articlePostsPerHour: over.articlePostsPerHour || 0,
     commentsPerHour: over.commentsPerHour || 0,
     provider: over.provider || 'ollama',
     model: 'stub-model',
@@ -261,7 +262,7 @@ function profile(over) {
     enabled: over.enabled !== false,
     ...(over.dryRun !== undefined ? { dryRun: over.dryRun } : {}),
     activity: [],
-    sched: over.sched || { nextPostAt: null, nextCommentAt: null, backoffUntil: 0, sentPosts: [], sentComments: [] },
+    sched: over.sched || { nextPostAt: null, nextArticleAt: null, nextCommentAt: null, backoffUntil: 0, sentPosts: [], sentComments: [] },
     repliedTo: [],
     attentionState: over.attentionState || { cursor: { comments: 0, posts: 0 }, seenEventIds: [] },
     activeThreadState: over.activeThreadState || { consideredEventIds: [] },
@@ -1206,13 +1207,13 @@ async function scenarioIndependentAbilities() {
     });
     await feedClient.fetchItems([feedUrl]);
     const p = profile({
-      id: 'article-choice', mode: 'post', postsPerHour: 60,
+      id: 'article-choice', mode: 'post', postsPerHour: 0, articlePostsPerHour: 60,
       provider: 'dell',
       postFeddits: ['general'], canReply: false, canStartDiscussions: false,
       canShareLinks: true, newsUseAllFeeds: false,
       newsFeedSelection: [feedUrl], newsQuery: 'bus', newsUseGdelt: false,
     });
-    p.sched.nextPostAt = clock.now();
+    p.sched.nextArticleAt = clock.now();
     const store = makeStore([p]);
     const providers = makeProviders({ textFor: (opts, index) => {
       if (index === 0) return 'I think the bus story sounds relevant.';
@@ -2381,6 +2382,24 @@ function scenarioProfileMigration() {
   eq(JSON.stringify(store.migrateProfiles([])), '[]', 'migrateProfiles([]) is empty, no crash');
   eq(JSON.stringify(store.migrateProfiles(null)), '[]', 'migrateProfiles(null) is empty, no crash');
 
+  const threeRate = {
+    canReply: true,
+    canStartDiscussions: true,
+    canShareLinks: true,
+    postsPerHour: 0.5,
+    articlePostsPerHour: 0.25,
+    commentsPerHour: 1,
+    sched: { nextPostAt: 3000, nextArticleAt: 1000, nextCommentAt: 2000 },
+  };
+  eq(scheduler.nextAction(threeRate).next.kind, 'link',
+    'independent article timer can be the next scheduled action');
+  threeRate.sched.nextArticleAt = 4000;
+  eq(scheduler.nextAction(threeRate).next.kind, 'comment',
+    'moving only the article timer leaves the text and reply timers independent');
+  threeRate.sched.nextCommentAt = 5000;
+  eq(scheduler.nextAction(threeRate).next.kind, 'post',
+    'the text-post timer remains independently eligible');
+
   // ---- Title voice merge (Problem 2 migration) -----------------------------
   // The old split newsTitleStyle x newsTitleFaithfulness (which could be set to
   // contradictory values) collapses onto the single newsTitleVoice preset, and
@@ -2864,8 +2883,8 @@ async function scenarioFeeds() {
     });
     // Feeds-ONLY (GDELT off). Keyword 'rocket' should keep the rocket story and
     // drop the cooking one, then route to the default target f/general.
-    const p = profile({ id: 'feednews', botType: 'news', mode: 'post', postsPerHour: 60, provider: 'dell', canReply: false, canStartDiscussions: false, canShareLinks: true, newsUseGdelt: false, newsQuery: 'rocket', newsUseAllFeeds: false, newsFeedSelection: [SHIPPED], postFeddits: ['general'], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
-    p.sched.nextPostAt = clock.now();
+    const p = profile({ id: 'feednews', botType: 'news', mode: 'post', postsPerHour: 0, articlePostsPerHour: 60, provider: 'dell', canReply: false, canStartDiscussions: false, canShareLinks: true, newsUseGdelt: false, newsQuery: 'rocket', newsUseAllFeeds: false, newsFeedSelection: [SHIPPED], postFeddits: ['general'], newsMaxAgeHours: 24, newsMinGapMinutes: 0 });
+    p.sched.nextArticleAt = clock.now();
     const store = makeStore([p]);
     const fed = makeFeddit({ feddits: {}, comments: {} });
     const providers = makeProviders({ textFor: (_opts, index) => (
@@ -2888,7 +2907,7 @@ async function scenarioFeeds() {
 
     // Second tick post-restart: rocket is deduped, cooking is filtered by keyword
     // -> nothing to post (proves dedupe + keyword filter both hold on the feeds path).
-    clock.advance(60_000); p.sched.nextPostAt = clock.now();
+    clock.advance(60_000); p.sched.nextArticleAt = clock.now();
     const sched2 = scheduler.createScheduler({ store, providers: makeProviders(), feddit: makeFeddit({ feddits: {}, comments: {} }), gdelt: null, feeds: inst, now: clock.now, random: () => 0, getDeepseekKey: KEY });
     const r2 = await sched2.runTick();
     const a2 = r2.results.find((x) => x && x.action === 'wait');

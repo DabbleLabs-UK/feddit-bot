@@ -55,6 +55,7 @@ function makeProfile(id, dryRun) {
     canStartDiscussions: true,
     canShareLinks: false,
     postsPerHour: 1,
+    articlePostsPerHour: 0,
     commentsPerHour: 0,
     postFeddits: ['general'],
     readFeddits: ['general'],
@@ -62,6 +63,7 @@ function makeProfile(id, dryRun) {
     probation: { onProbation: false, checkedAt: 1 },
     sched: {
       nextPostAt: 0,
+      nextArticleAt: null,
       nextCommentAt: null,
       sentPosts: [],
       sentComments: [],
@@ -91,6 +93,7 @@ function makeStore(profiles, now) {
     DEFAULT_MODEL: 'test-model',
     schedDefaults: () => ({
       nextPostAt: null,
+      nextArticleAt: null,
       nextCommentAt: null,
       sentPosts: [],
       sentComments: [],

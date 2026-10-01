@@ -20,6 +20,7 @@ const original = {
   readFeddits: [],
   feedSort: 'controversial',
   postsPerHour: 0.5,
+  articlePostsPerHour: 0.25,
   provider: 'ollama',
   model: 'machine-specific-model',
   deepseekModel: 'paid-machine-policy',
@@ -58,6 +59,8 @@ assert.equal(moved.bot.fedditBio, original.fedditBio);
 assert.equal(moved.bot.canReply, true);
 assert.equal(moved.bot.canStartDiscussions, true);
 assert.equal(moved.bot.canShareLinks, true);
+assert.equal(moved.bot.postsPerHour, 0.5);
+assert.equal(moved.bot.articlePostsPerHour, 0.25);
 assert.deepEqual(moved.runtime.postedNews, original.postedNews);
 assert.deepEqual(moved.runtime.attentionState, original.attentionState);
 assert.deepEqual(moved.runtime.socialState, original.socialState);
@@ -90,6 +93,8 @@ assert.equal(imported.fedditBio, original.fedditBio);
 assert.equal(imported.canReply, true);
 assert.equal(imported.canStartDiscussions, true);
 assert.equal(imported.canShareLinks, true);
+assert.equal(imported.postsPerHour, 0.5);
+assert.equal(imported.articlePostsPerHour, 0.25);
 assert.deepEqual(imported.postedNews, original.postedNews);
 assert.deepEqual(imported.attentionState, original.attentionState);
 assert.deepEqual(imported.socialState, original.socialState);
@@ -108,10 +113,15 @@ assert.equal('newsMinGapMinutes' in moved.bot, false, 'new profile packs export 
 const legacyPack = structuredClone(moved);
 legacyPack.bot.canShareLinks = true;
 legacyPack.bot.postsPerHour = 4;
+delete legacyPack.bot.articlePostsPerHour;
 legacyPack.bot.newsMinGapMinutes = 60;
 const importedLegacyCadence = packs.importPatch(legacyPack);
-assert.equal(importedLegacyCadence.postsPerHour, 1,
-  'old portable article gaps are conservatively folded into posts per hour');
+assert.equal(importedLegacyCadence.postsPerHour, 3,
+  'an old mixed portable profile retains the non-article remainder as text activity');
+assert.equal(importedLegacyCadence.articlePostsPerHour, 1,
+  'an old portable article gap recovers its reliable article ceiling');
+assert.equal(importedLegacyCadence.postsPerHour + importedLegacyCadence.articlePostsPerHour, 4,
+  'portable profile migration never increases aggregate top-level activity');
 assert.equal('newsMinGapMinutes' in importedLegacyCadence, false,
   'old portable article gaps do not survive as a second cadence');
 

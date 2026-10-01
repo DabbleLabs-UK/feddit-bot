@@ -139,11 +139,21 @@ const legacyArticleCadence = store.migrateProfiles([{
   mode: 'post',
   postsPerHour: 6,
   newsMinGapMinutes: 30,
+  sched: { nextPostAt: 123456, nextArticleAt: null },
+  simulationState: { sched: { nextPostAt: 654321, nextArticleAt: null } },
 }], 18)[0];
-assert.equal(legacyArticleCadence.postsPerHour, 2,
-  'the old 30-minute article gap becomes a safe 2-post-per-hour unified ceiling');
+assert.equal(legacyArticleCadence.postsPerHour, 0,
+  'a legacy link-only bot does not gain text-post activity');
+assert.equal(legacyArticleCadence.articlePostsPerHour, 2,
+  'the old 30-minute article gap becomes a safe 2-article-per-hour cadence');
 assert.equal('newsMinGapMinutes' in legacyArticleCadence, false,
   'the retired parallel article cadence field is removed');
+assert.equal(legacyArticleCadence.sched.nextArticleAt, 123456,
+  'a link-only bot keeps its existing live due time on the article timer');
+assert.equal(legacyArticleCadence.sched.nextPostAt, null,
+  'the obsolete link-only text timer is cleared');
+assert.equal(legacyArticleCadence.simulationState.sched.nextArticleAt, 654321,
+  'a link-only bot keeps its rehearsal due time on the article timer');
 
 const slowerLegacyArticle = store.migrateProfiles([{
   id: 'slower-legacy-article',
@@ -153,8 +163,10 @@ const slowerLegacyArticle = store.migrateProfiles([{
   postsPerHour: 0.05,
   newsMinGapMinutes: 30,
 }], 18)[0];
-assert.equal(slowerLegacyArticle.postsPerHour, 0.05,
-  'a low existing post rate is never raised by the migration');
+assert.equal(slowerLegacyArticle.postsPerHour, 0,
+  'a link-only bot keeps no text-post cadence');
+assert.equal(slowerLegacyArticle.articlePostsPerHour, 0.05,
+  'a low existing article rate is never raised by the migration');
 
 const ordinaryCadence = store.migrateProfiles([{
   id: 'ordinary-cadence',
@@ -166,7 +178,51 @@ const ordinaryCadence = store.migrateProfiles([{
   newsMinGapMinutes: 1,
 }], 18)[0];
 assert.equal(ordinaryCadence.postsPerHour, 0.2, 'ordinary post cadence is unchanged');
+assert.equal(ordinaryCadence.articlePostsPerHour, 0, 'ordinary bots gain no article cadence');
 assert.equal(ordinaryCadence.commentsPerHour, 1, 'reply cadence remains independent');
 assert.equal('newsMinGapMinutes' in ordinaryCadence, false, 'obsolete fields are purged from every profile');
+
+const schema19Mixed = store.migrateProfiles([{
+  id: 'schema-19-mixed',
+  canReply: true,
+  canStartDiscussions: true,
+  canShareLinks: true,
+  postsPerHour: 0.4,
+  commentsPerHour: 0.7,
+}], 19)[0];
+assert.equal(schema19Mixed.postsPerHour, 0.2,
+  'an unrecoverable schema-19 mixed cadence is conservatively split into text posts');
+assert.equal(schema19Mixed.articlePostsPerHour, 0.2,
+  'an unrecoverable schema-19 mixed cadence is conservatively split into article posts');
+assert.equal(schema19Mixed.postsPerHour + schema19Mixed.articlePostsPerHour, 0.4,
+  'migration never increases the former aggregate posting cadence');
+
+const legacyMixed = store.migrateProfiles([{
+  id: 'legacy-mixed',
+  canReply: true,
+  canStartDiscussions: true,
+  canShareLinks: true,
+  postsPerHour: 6,
+  newsMinGapMinutes: 30,
+}], 18)[0];
+assert.equal(legacyMixed.articlePostsPerHour, 2,
+  'an older mixed record recovers its reliable article ceiling');
+assert.equal(legacyMixed.postsPerHour, 4,
+  'the remaining old shared rate is available to text posts');
+assert.equal(legacyMixed.postsPerHour + legacyMixed.articlePostsPerHour, 6,
+  'recovering an old article ceiling does not increase aggregate posting cadence');
+
+const unlimitedLegacyMixed = store.migrateProfiles([{
+  id: 'legacy-mixed-zero-gap',
+  canReply: false,
+  canStartDiscussions: true,
+  canShareLinks: true,
+  postsPerHour: 0.5,
+  newsMinGapMinutes: 0,
+}], 18)[0];
+assert.equal(unlimitedLegacyMixed.postsPerHour, 0,
+  'an explicit zero legacy gap does not invent a hidden 30-minute limit');
+assert.equal(unlimitedLegacyMixed.articlePostsPerHour, 0.5,
+  'an explicit zero legacy gap safely keeps the old aggregate rate on article activity');
 
 console.log('model-migration: all checks passed');

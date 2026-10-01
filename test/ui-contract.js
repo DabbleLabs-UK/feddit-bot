@@ -92,8 +92,8 @@ assert.match(html, /system-population bots never overtake user-created bots/);
 assert.match(html, /opportunities, not promised posts/i);
 assert.match(html, /policy\.populationMax/);
 assert.match(html, /instead of the population ecology\\'s ' \+ policy\.populationMax \+ '-per-day ceiling/);
-assert.match(html, /follows the separate custom post and reply frequencies below/);
-assert.match(html, /separate post and reply frequencies above are the real scheduling target/);
+assert.match(html, /follows the separate custom text-post, article-link and reply frequencies below/);
+assert.match(html, /separate text-post, article-link and reply frequencies above are the real scheduling target/);
 assert.match(html, /Population ecology allowance: at most ' \+ policy\.populationMax \+ ' scheduled hosted opportunities a day/);
 assert.match(html, /Feddit-hosted allowance: at most 6 scheduled hosted generations a day for this user-created bot/);
 assert.doesNotMatch(html, /at most 6 scheduled hosted generations a day per bot/);
@@ -287,18 +287,32 @@ assert.match(html, /@media \(max-width: 760px\)[\s\S]*body \{ display: block; ov
 assert.match(html, /@media \(max-width: 760px\)[\s\S]*\.plist \{ min-height: 0; overflow: visible; \}/);
 assert.match(html, /@media \(max-width: 760px\)[\s\S]*\.main \{ min-height: 65vh; overflow: visible;[^}]*\}/);
 assert.match(html, /id="f_postsPerHour"/);
+assert.match(html, /Regular\/text posts per hour/);
+assert.match(html, /id="f_articlePostsPerHour"/);
+assert.match(html, /News\/article posts per hour/);
 assert.match(html, /id="f_commentsPerHour"/);
-assert.match(html, /Article link posts per hour/);
+assert.match(html, /Comments\/replies per hour/);
 assert.doesNotMatch(html, /f_newsMinGapMinutes|Minimum gap between posts/);
 assert.doesNotMatch(schedulerSource, /newsMinGapMinutes|news-minimum-gap/,
-  'article links use the shared post cadence without a second scheduler throttle');
+  'the removed minimum-gap throttle stays out of the scheduler');
+assert.match(html, /const manualNewsPreviewSection = state\.developerTools \?/,
+  'manual news preview is gated behind Developer tools');
+assert.match(html, /<script src="\/ui-disclosure\.js"><\/script>/,
+  'the shared accessible disclosure helper is loaded');
+assert.match(html, /<script src="\/ui-activity\.js"><\/script>/,
+  'the ability-aware activity visibility helper is loaded');
+assert.match(html, /initializeSectionDisclosures\(main, p\)/,
+  'bot detail cards are converted to the consistent disclosure pattern');
+assert.match(html, /class="card-disclosure-toggle"/);
+assert.match(html, /aria-expanded="true"/,
+  'the primary bot-status disclosure starts expanded');
 assert.match(html, /id="f_newsMaxAgeHours"/);
 assert.match(html, /id="f_newsMaxPerDomainPerDay"/);
 assert.match(html, /id="f_newsDomainDenylist"/);
 assert.match(html, /\[hidden\]\s*\{\s*display:\s*none\s*!important;\s*\}/);
 assert.match(populationHtml, /\[hidden\]\s*\{\s*display:none\s*!important;\s*\}/);
 assert.match(html, /state\.placement === 'hosted' && !systemPopulationBot \? ' hidden' : ''/);
-assert.match(html, /You can replace it with separate post and reply frequencies below/);
+assert.match(html, /You can replace it with separate text-post, article-link and reply frequencies below/);
 assert.match(html, /These are target frequencies for this population bot/);
 assert.match(html, /Local model working for/);
 assert.match(html, /High CPU use is expected while this is shown/);

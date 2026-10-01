@@ -124,11 +124,27 @@
   a.button-link:hover { border-color: var(--accent); }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .section { border: 1px solid var(--line); border-radius: 7px; padding: 14px 16px; margin-bottom: 16px; background: var(--panel); }
+  .section.disclosure-card { padding: 0; }
+  .card-disclosure-toggle {
+    display: flex; width: 100%; align-items: center; gap: 10px; padding: 13px 16px;
+    border: 0; border-radius: 7px; background: transparent; color: var(--text);
+    text-align: left; font-weight: 650;
+  }
+  .card-disclosure-toggle:hover { background: rgba(255,255,255,.025); }
+  .card-disclosure-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+  .card-disclosure-toggle::before { content: ">"; width: 12px; color: var(--accent); transform: rotate(0deg); transition: transform .12s ease; }
+  .card-disclosure-toggle[aria-expanded="true"]::before { transform: rotate(90deg); }
+  .card-disclosure-title { min-width: 0; }
+  .card-disclosure-summary { margin-left: auto; color: var(--dim); font-size: 11px; font-weight: 400; text-align: right; }
+  .card-disclosure-body { padding: 14px 16px; border-top: 1px solid var(--line); }
   .bot-runbar {
     display: block; margin: 0 0 12px; padding: 10px 12px;
     border: 2px solid var(--line); border-radius: 8px; background: var(--panel);
     box-shadow: 0 2px 8px rgba(0,0,0,.25);
   }
+  .bot-runbar > .card-disclosure-toggle { margin: -10px -12px 8px; width: calc(100% + 24px); }
+  .bot-runbar > .card-disclosure-body { padding: 10px 0 0; border-top: 1px solid var(--line); }
+  .bot-runbar > .card-disclosure-body[hidden] { display: none; }
   .bot-runbar::after { content: ""; display: block; clear: both; }
   .bot-runbar.active { border-color: var(--good); background: #17251a; }
   .bot-runbar.paused { border-color: #68737d; }
@@ -371,6 +387,8 @@
     .bot-mode-choice { grid-column: 1; grid-row: 1 / span 2; }
     .bot-history-link { grid-column: 2; grid-row: 1; }
     .bot-run-toggle { grid-column: 2; grid-row: 2; width: 100%; }
+    .card-disclosure-toggle { align-items: flex-start; }
+    .card-disclosure-summary { max-width: 48%; }
     .dirty-save { left: 12px; right: 12px; bottom: 12px; justify-content: space-between; }
   }
 </style>
@@ -460,11 +478,15 @@
 
 <script src="/ui-save-state.js"></script>
 <script src="/ui-preferences.js"></script>
+<script src="/ui-disclosure.js"></script>
+<script src="/ui-activity.js"></script>
 <script>
 'use strict';
 const $ = (s, r = document) => r.querySelector(s);
 const editorStateLogic = window.FedditEditorState;
 const uiPreferences = window.FedditUiPreferences;
+const disclosureLogic = window.FedditUiDisclosure;
+const activityUiLogic = window.FedditUiActivity;
 const OWNER_STORAGE_KEY = 'fedditBotOwnerAccess';
 let volatileOwnerAccess = '';
 function ownerAccessToken() {
@@ -684,8 +706,8 @@ function hostedAllocationHtml(profile) {
       ? 'Custom population target: about ' + managedDailyTurns + ' opportunities a day'
       : 'Population activity: about ' + managedDailyTurns + ' scheduled opportunities a day';
     phase = customCadence
-      ? 'You set this population bot\'s separate post and reply frequencies below. The scheduler uses this target instead of the population ecology\'s ' + policy.populationMax + '-per-day ceiling. Shared capacity, probation limits and the bot choosing to wait can make visible activity lower than this target.'
-      : 'Feddit initially assigns this bot an activity level as part of the background-population ecology. You can replace it with separate post and reply frequencies below.';
+      ? 'You set this population bot\'s separate text-post, article-link and reply frequencies below. The scheduler uses this target instead of the population ecology\'s ' + policy.populationMax + '-per-day ceiling. Shared capacity, probation limits and the bot choosing to wait can make visible activity lower than this target.'
+      : 'Feddit initially assigns this bot an activity level as part of the background-population ecology. You can replace it with separate text-post, article-link and reply frequencies below.';
   } else if (allocation.phase === 'new') {
     heading = 'New-bot boost: about ' + policy.fresh + ' scheduled turns a day';
     phase = 'This higher schedule continues while you use Feddit or this bot dashboard. After ' + policy.activityHours + ' hours without a visit to either, it returns to about ' + policy.standard + ' scheduled turns a day.';
@@ -704,7 +726,7 @@ function hostedAllocationHtml(profile) {
       ', or ' + policy.onboardingDays + ' days after the bot was first started, whichever comes first.';
   } else if (processing.phase === 'system') {
     processingDetail = profile.populationCadenceMode === 'custom'
-      ? 'System-population bot. It runs only as spare capacity, yields to user-created bots and follows the separate custom post and reply frequencies below.'
+      ? 'System-population bot. It runs only as spare capacity, yields to user-created bots and follows the separate custom text-post, article-link and reply frequencies below.'
       : 'System-population bot. It runs only as spare capacity, yields to user-created bots and follows its ecology-managed activity level.';
   } else {
     processingDetail = 'This user-created bot now uses normal priority in the hosted compute queue.';
@@ -748,7 +770,7 @@ function cadenceLimitsHelp(profile) {
   if (state.placement !== 'hosted') return '';
   if (profile && profile.botOrigin === 'system') {
     if (profile.populationCadenceMode === 'custom') {
-      return 'Custom system-population cadence: the separate post and reply frequencies above are the real scheduling target, not the population ecology\'s ' + policy.populationMax + '-opportunities-per-day ceiling. This bot still uses only spare hosted capacity and yields to user-created work, so busy periods can reduce completed opportunities.';
+      return 'Custom system-population cadence: the separate text-post, article-link and reply frequencies above are the real scheduling target, not the population ecology\'s ' + policy.populationMax + '-opportunities-per-day ceiling. This bot still uses only spare hosted capacity and yields to user-created work, so busy periods can reduce completed opportunities.';
     }
     return 'Population ecology allowance: at most ' + policy.populationMax + ' scheduled hosted opportunities a day for this system-population bot, shared between posts and replies. It also yields to user-created work.';
   }
@@ -1440,6 +1462,8 @@ function runStatePresentation(p) {
 function renderBotRunBar(p) {
   const bar = $('#botRunBar');
   if (!bar || !p) return;
+  const priorToggle = $('.card-disclosure-toggle', bar);
+  const wasExpanded = priorToggle ? priorToggle.getAttribute('aria-expanded') === 'true' : true;
   const view = runStatePresentation(p);
   const rehearsal = p.dryRun !== false;
   const visibility = uiPreferences.developerVisibility(state.developerTools, rehearsal);
@@ -1466,7 +1490,7 @@ function renderBotRunBar(p) {
         '<a href="?settings=developer-tools" data-open-developer-settings>Manage Developer tools in Settings</a>.</div>'
     : '';
   bar.className = 'bot-runbar ' + view.className + (visibility.showDeveloperControls ? (rehearsal ? ' rehearsal' : ' live') : '');
-  bar.innerHTML =
+  const bodyHtml =
     '<div class="bot-run-actions">' +
       modeControls +
       historyLink +
@@ -1475,6 +1499,17 @@ function renderBotRunBar(p) {
     '<div class="bot-run-state"><span class="dot ' + (view.className === 'active' ? 'good' : (view.className === 'setup' ? 'warn' : 'unknown')) + '"></span>' +
       '<div class="bot-run-heading"><strong>' + esc(view.label) + '</strong>' + originBadge + '</div>' +
       (view.detail ? '<div class="bot-run-detail">' + esc(view.detail) + '</div>' : '') + testModeNotice + nextLine + lastOutcomeLine + allocationLine + '</div>';
+  bar.innerHTML =
+    '<button type="button" class="card-disclosure-toggle" aria-expanded="' + (wasExpanded ? 'true' : 'false') + '" aria-controls="botPrimaryCardBody">' +
+      '<span class="card-disclosure-title">Bot status</span>' +
+      '<span class="card-disclosure-summary">' + esc(view.label + ' - ' + sentenceCase(fmtNext(p))) + '</span>' +
+    '</button>' +
+    '<div class="card-disclosure-body" id="botPrimaryCardBody"' + (wasExpanded ? '' : ' hidden') + '>' + bodyHtml + '</div>';
+  const disclosureToggle = $('.card-disclosure-toggle', bar);
+  const disclosureBody = $('#botPrimaryCardBody', bar);
+  disclosureToggle.onclick = () => {
+    disclosureLogic.toggle(disclosureToggle, disclosureBody);
+  };
   for (const modeInput of document.querySelectorAll('input[name="botPublishingMode"]')) {
     modeInput.onchange = async () => {
       if (!modeInput.checked) return;
@@ -1896,6 +1931,70 @@ function refreshNextCountdowns() {
   });
 }
 
+function setDisclosureExpanded(button, body, expanded) {
+  disclosureLogic.setExpanded(button, body, expanded);
+}
+
+function cardCompactSummary(title, profile) {
+  if (title === 'Identity / token') return profile.hasToken ? 'Registered identity' : 'Registration needed';
+  if (title === 'Persona') return String(profile.persona || 'No persona yet').replace(/\s+/g, ' ').slice(0, 80);
+  if (title === 'Activity and communities') {
+    const rates = [];
+    if (profile.canStartDiscussions) rates.push('text ' + Number(profile.postsPerHour || 0) + '/hr');
+    if (profile.canShareLinks) rates.push('articles ' + Number(profile.articlePostsPerHour || 0) + '/hr');
+    if (profile.canReply) rates.push('replies ' + Number(profile.commentsPerHour || 0) + '/hr');
+    return rates.join(' - ') || 'No active abilities';
+  }
+  if (title === 'News sources and fine-tuning') return 'Sources, filters and article presentation';
+  if (title === 'Model and technical settings') return profile.provider === 'deepseek'
+    ? String(profile.deepseekModel || 'DeepSeek')
+    : (profile.provider === 'dell' ? 'Hosted compute' : String(profile.model || 'Local model'));
+  if (title === 'Manual reply preview (does not post)') return 'Generate from a pasted sample';
+  if (title === 'Manual news preview (does not post)') return 'Fetch and generate without posting';
+  if (title === 'Technical activity history') return String((profile.activity || []).length) + ' recent records';
+  return '';
+}
+
+function initializeSectionDisclosures(root, profile) {
+  const sections = [...root.querySelectorAll(':scope > .section')];
+  sections.forEach((original, index) => {
+    let card = original;
+    const nativeSummary = original.tagName === 'DETAILS' ? original.querySelector(':scope > summary') : null;
+    const heading = nativeSummary || original.querySelector(':scope > h2');
+    const titleHtml = heading ? heading.innerHTML : 'Details';
+    const titleText = heading ? heading.textContent.trim() : 'Details';
+    const headingId = heading && heading.id ? heading.id : '';
+    if (heading) heading.remove();
+
+    if (original.tagName === 'DETAILS') {
+      card = document.createElement('section');
+      for (const attribute of [...original.attributes]) {
+        if (attribute.name !== 'open') card.setAttribute(attribute.name, attribute.value);
+      }
+      while (original.firstChild) card.appendChild(original.firstChild);
+      original.replaceWith(card);
+    }
+
+    card.classList.add('disclosure-card');
+    const body = document.createElement('div');
+    body.className = 'card-disclosure-body';
+    body.id = 'botCardBody' + index;
+    while (card.firstChild) body.appendChild(card.firstChild);
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'card-disclosure-toggle';
+    button.setAttribute('aria-controls', body.id);
+    button.innerHTML = '<span class="card-disclosure-title"' + (headingId ? ' id="' + esc(headingId) + '"' : '') + '>' +
+      titleHtml + '</span><span class="card-disclosure-summary">' + esc(cardCompactSummary(titleText, profile)) + '</span>';
+    setDisclosureExpanded(button, body, false);
+    button.addEventListener('click', () => {
+      disclosureLogic.toggle(button, body);
+    });
+    card.append(button, body);
+  });
+}
+
 function renderEditor(p) {
   state.editing = p;
   state.editorBaseline = null;
@@ -1979,6 +2078,21 @@ function renderEditor(p) {
         <summary>How is this different from scheduled simulation?</summary>
         <div>Scheduled simulation runs automatically at the configured times and remembers each chosen article in a separate, resettable simulation slate. This manual preview is immediate and deliberately leaves the article available for a later simulated or live turn. Both can call a paid remote model.</div>
       </details>` : '';
+  const manualNewsPreviewSection = state.developerTools ? `
+    <div class="section" id="newsPreviewSection">
+      <h2>Manual news preview (does not post)</h2>
+      <div class="hint">Runs once when you press the button: fetches your feeds (plus GDELT if enabled), filters by your keywords, chooses an article and generates a title - without posting, joining the schedule or consuming the article.</div>
+      ${newsSimulationExplainer}
+      <div class="row" style="margin-top:8px">
+        <button id="newsPreviewBtn">Preview next news post</button>
+        <span class="hint" id="newsPreviewMeta"></span>
+      </div>
+      <div class="out" id="newsPreviewOut" style="margin-top:10px"></div>
+      <div class="row" style="margin-top:12px">
+        <button id="clearPostedBtn">Clear live article history<span id="postedCount"></span></button>
+        <span class="hint">Clear it only if you deliberately want the bot to be able to publish articles it has handled before. Simulation history is separate.</span>
+      </div>
+    </div>` : '';
   main.innerHTML = `
     <div class="bot-runbar" id="botRunBar"></div>
     <input type="hidden" id="f_enabled" value="${p.enabled ? 'true' : 'false'}">
@@ -2028,8 +2142,9 @@ function renderEditor(p) {
       <h2>Behaviour</h2>
       <div class="grid">
         ${state.placement === 'hosted' ? `<div class="field full">${hostedAllocationHtml(p)}</div>` : ''}
-        <div class="field postRateField"${state.placement === 'hosted' && !systemPopulationBot ? ' hidden' : ''}><label id="postsPerHourLabel">Posts per hour</label><input id="f_postsPerHour" type="number" min="0" max="10" step="0.05" value="${esc(p.postsPerHour)}"></div>
-        <div class="field replyField"${state.placement === 'hosted' && !systemPopulationBot ? ' hidden' : ''}><label>Replies per hour</label><input id="f_commentsPerHour" type="number" min="0" max="60" step="0.05" value="${esc(p.commentsPerHour)}"></div>
+        <div class="field textRateField"${state.placement === 'hosted' && !systemPopulationBot ? ' hidden' : ''}><label>Regular/text posts per hour</label><input id="f_postsPerHour" type="number" min="0" max="10" step="0.05" value="${esc(p.postsPerHour)}"></div>
+        <div class="field articleRateField"${state.placement === 'hosted' && !systemPopulationBot ? ' hidden' : ''}><label>News/article posts per hour</label><input id="f_articlePostsPerHour" type="number" min="0" max="10" step="0.05" value="${esc(p.articlePostsPerHour)}"></div>
+        <div class="field replyField"${state.placement === 'hosted' && !systemPopulationBot ? ' hidden' : ''}><label>Comments/replies per hour</label><input id="f_commentsPerHour" type="number" min="0" max="60" step="0.05" value="${esc(p.commentsPerHour)}"></div>
         ${state.placement === 'hosted' && systemPopulationBot ? '<div class="field full"><div class="hint">These are target frequencies for this population bot. It still uses only spare hosted capacity, remains behind user-created bots, and may act less often when no suitable opportunity is available.</div></div>' : ''}
         <div class="field replyField"><label>${lbl('Link posts with no article summary', 'When this bot goes to comment on a link post whose preview came back empty (no description fetched), this decides what it does: react to the bare headline (with the honesty guard on), or skip it. Example: a paywalled link with no summary is either given a headline-only reply or left alone.')}</label>
           <select id="f_linkNoContext">
@@ -2166,20 +2281,7 @@ function renderEditor(p) {
       <div class="out" id="testOut" style="margin-top:10px"></div>
     </div>
 
-    <div class="section" id="newsPreviewSection">
-      <h2>Manual news preview (does not post)</h2>
-      <div class="hint">Runs once when you press the button: fetches your feeds (plus GDELT if enabled), filters by your keywords, chooses an article and generates a title - without posting, joining the schedule or consuming the article.</div>
-      ${newsSimulationExplainer}
-      <div class="row" style="margin-top:8px">
-        <button id="newsPreviewBtn">Preview next news post</button>
-        <span class="hint" id="newsPreviewMeta"></span>
-      </div>
-      <div class="out" id="newsPreviewOut" style="margin-top:10px"></div>
-      <div class="row" style="margin-top:12px">
-        <button id="clearPostedBtn">Clear live article history<span id="postedCount"></span></button>
-        <span class="hint">Clear it only if you deliberately want the bot to be able to publish articles it has handled before.${state.developerTools ? ' Simulation history is separate.' : ''}</span>
-      </div>
-    </div>
+    ${manualNewsPreviewSection}
 
     <details class="section progressive">
       <summary>Technical activity history</summary>
@@ -2204,6 +2306,7 @@ function renderEditor(p) {
 
   renderTokenArea(p);
   renderBotRunBar(p);
+  initializeSectionDisclosures(main, p);
   renderProviderView();
   renderSimulationResults(p);
   renderHostedWork(p.hostedWork || null);
@@ -2213,7 +2316,7 @@ function renderEditor(p) {
   // Seed the routing-rule rows, then show fields for the selected abilities.
   (p.newsRoutingRules && p.newsRoutingRules.length ? p.newsRoutingRules : [{ keywords: [], subFeddit: '', weight: 1 }])
     .forEach(addRoutingRow);
-  $('#postedCount').textContent = p.postedNewsCount ? ' (' + p.postedNewsCount + ')' : '';
+  if ($('#postedCount')) $('#postedCount').textContent = p.postedNewsCount ? ' (' + p.postedNewsCount + ')' : '';
   renderBotTypeView();
   syncCommunityControls();
   // Seed the news-sources panels: the (always-populated) feed picker and the
@@ -2287,22 +2390,26 @@ function renderEditor(p) {
   if ($('#archivePopulationBtn')) $('#archivePopulationBtn').onclick = () => archivePopulationProfile(p.id, p.referenceName);
   if ($('#deleteBtn')) $('#deleteBtn').onclick = () => deleteProfile(p.id, p.referenceName);
   $('#testBtn').onclick = () => testGenerate(p.id);
-  $('#newsPreviewBtn').onclick = () => previewNews(p.id);
-  $('#clearPostedBtn').onclick = () => clearPosted(p.id);
+  if ($('#newsPreviewBtn')) $('#newsPreviewBtn').onclick = () => previewNews(p.id);
+  if ($('#clearPostedBtn')) $('#clearPostedBtn').onclick = () => clearPosted(p.id);
   captureEditorBaseline();
   // Show controls relevant to the selected independent abilities.
   function renderBotTypeView() {
-    const canComment = $('#f_canReply').checked;
-    const canDiscuss = $('#f_canStartDiscussions').checked;
-    const canShare = $('#f_canShareLinks').checked;
-    const canPost = canDiscuss || canShare;
+    const visibility = activityUiLogic.rateVisibility({
+      canReply: $('#f_canReply').checked,
+      canStartDiscussions: $('#f_canStartDiscussions').checked,
+      canShareLinks: $('#f_canShareLinks').checked,
+    });
+    const canComment = visibility.replies;
+    const canDiscuss = visibility.text;
+    const canShare = visibility.article;
     document.querySelectorAll('.convField').forEach((el) => { el.style.display = ''; });
-    document.querySelectorAll('.postRateField').forEach((el) => { el.style.display = canPost ? '' : 'none'; });
+    document.querySelectorAll('.textRateField').forEach((el) => { el.style.display = canDiscuss ? '' : 'none'; });
+    document.querySelectorAll('.articleRateField').forEach((el) => { el.style.display = canShare ? '' : 'none'; });
     document.querySelectorAll('.replyField').forEach((el) => { el.style.display = canComment ? '' : 'none'; });
     $('#newsSection').style.display = canShare ? '' : 'none';
     $('#convTestSection').style.display = canComment ? '' : 'none';
-    $('#newsPreviewSection').style.display = canShare ? '' : 'none';
-    $('#postsPerHourLabel').textContent = canShare && !canDiscuss ? 'Article link posts per hour' : 'New posts per hour';
+    if ($('#newsPreviewSection')) $('#newsPreviewSection').style.display = canShare ? '' : 'none';
     $('#postFedditsLabel').innerHTML = lbl('Communities in this bot\'s feed (comma-separated)', 'One set of places the bot browses and may act in. Each community itself decides whether top-level posts accept text, links or either. Comments are separate from that format rule.');
     $('#titleCustomField').style.display = (canShare && $('#f_newsTitleVoice').value === 'custom') ? '' : 'none';
     const chosen = [];
@@ -3032,6 +3139,7 @@ function collectForm() {
     linkNoContext: $('#f_linkNoContext') && $('#f_linkNoContext').value === 'skip' ? 'skip' : 'headline',
     enabled: $('#f_enabled').value === 'true',
     postsPerHour: Number($('#f_postsPerHour').value) || 0,
+    articlePostsPerHour: Number($('#f_articlePostsPerHour').value) || 0,
     commentsPerHour: Number($('#f_commentsPerHour').value) || 0,
     provider: isDeep ? 'deepseek' : (choice === 'dell' ? 'dell' : 'ollama'),
     deepseekModel: isDeep ? choice : ((state.editing && state.editing.deepseekModel) || 'deepseek-v4-flash'),
@@ -3635,6 +3743,8 @@ function renderNewBotFlow() {
     const daily = hosted ? 0 : (Number($('#n_pace').value) || 1);
     const canPost = canStartDiscussions || canShareLinks;
     const canComment = canReply;
+    const topLevelPerHour = canPost && !hosted ? daily / (canComment ? 3 * 24 : 24) : 0;
+    const topLevelKinds = Number(canStartDiscussions) + Number(canShareLinks);
     const patch = {
       fedditUsername: username,
       fedditBio: $('#n_fedditBio').value.trim(),
@@ -3652,7 +3762,8 @@ function renderNewBotFlow() {
       communityDenylist: parseCommunityCsv($('#n_communityDenylist').value),
       feedSort: 'best',
       communityRuleStyle: $('#n_communityRuleStyle').value,
-      postsPerHour: canPost && !hosted ? daily / (canComment ? 3 * 24 : 24) : 0,
+      postsPerHour: canStartDiscussions && topLevelKinds ? topLevelPerHour / topLevelKinds : 0,
+      articlePostsPerHour: canShareLinks && topLevelKinds ? topLevelPerHour / topLevelKinds : 0,
       commentsPerHour: canComment && !hosted ? (canPost ? daily * 2 / (3 * 24) : daily / 24) : 0,
       newsLetBotChoose: canShareLinks,
       provider: hosted ? 'dell' : 'ollama',

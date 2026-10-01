@@ -47,8 +47,11 @@ const firstStart = policy.applyHostedPolicy({
 eq(firstStart.hostedActivatedAt, '2026-09-13T12:00:00.000Z', 'first activation is recorded by the server');
 eq(firstStart.hostedDailyTurns, 6, 'owner-supplied allowance is ignored');
 eq(firstStart.postsPerHour * 24, 2, 'mixed bot reserves one third of opportunities for posts');
+eq(firstStart.articlePostsPerHour, 0, 'mixed non-news bot has no article cadence');
 eq(firstStart.commentsPerHour * 24, 4, 'mixed bot reserves two thirds for replies');
 eq(firstStart.sched.nextPostAt, startedAt + 2 * 60 * 1000, 'first post becomes due in two minutes');
+eq(Object.prototype.hasOwnProperty.call(firstStart.sched, 'nextArticleAt'), false,
+  'non-news activation does not seed an article timer');
 eq(firstStart.sched.nextCommentAt, startedAt + 2 * 60 * 1000, 'first reply becomes due in two minutes');
 eq(firstStart.simulationState.sched.nextPostAt, startedAt + 2 * 60 * 1000, 'rehearsal is seeded too');
 eq(firstStart.botOrigin, 'user', 'browser-supplied origin cannot replace the safe user default');
@@ -88,12 +91,16 @@ const activeReconciled = policy.applyHostedPolicy({}, establishedProfile, boostE
 eq(activeReconciled.hostedDailyTurns, 6, 'reconciliation applies the active-owner boost');
 
 const postOnly = policy.applyHostedPolicy({
+  enabled: true,
   canReply: false,
   canStartDiscussions: false,
   canShareLinks: true,
 }, {}, startedAt);
-eq(postOnly.postsPerHour * 24, 6, 'article-only bot uses all opportunities for posts');
+eq(postOnly.postsPerHour, 0, 'article-only bot has no text-post cadence');
+eq(postOnly.articlePostsPerHour * 24, 6, 'article-only bot uses all opportunities for articles');
 eq(postOnly.commentsPerHour, 0, 'article-only bot has no reply cadence');
+eq(postOnly.sched.nextArticleAt, startedAt + 2 * 60 * 1000,
+  'article-only activation seeds its independent article timer');
 
 const replyOnly = policy.applyHostedPolicy({
   canReply: true,
@@ -173,17 +180,25 @@ eq(Object.prototype.hasOwnProperty.call(systemStarted, 'sched'), false,
 
 const customSystem = policy.applyHostedPolicy({
   postsPerHour: 0.2,
+  articlePostsPerHour: 0.3,
   commentsPerHour: 1,
   populationCadenceMode: 'custom',
-}, systemStarted, startedAt);
+}, {
+  ...systemStarted,
+  canShareLinks: true,
+  canStartDiscussions: true,
+}, startedAt);
 eq(customSystem.postsPerHour, 0.2, 'system population can use a custom post frequency');
+eq(customSystem.articlePostsPerHour, 0.3, 'system population can use a custom article frequency');
 eq(customSystem.commentsPerHour, 1, 'system population can use a custom reply frequency');
-eq(Number(customSystem.hostedDailyTurns.toFixed(1)), 28.8,
+eq(Number(customSystem.hostedDailyTurns.toFixed(1)), 36,
   'custom population frequencies determine its opportunity target');
 eq(policy.allocationFor(customSystem, startedAt).phase, 'system-custom',
   'custom population cadence is distinguished from generated ecology');
 const customReconciled = policy.applyHostedPolicy({}, customSystem, startedAt + 1000);
 eq(customReconciled.postsPerHour, 0.2, 'hosted reconciliation preserves custom population post cadence');
+eq(customReconciled.articlePostsPerHour, 0.3,
+  'hosted reconciliation preserves custom population article cadence');
 eq(customReconciled.commentsPerHour, 1, 'hosted reconciliation preserves custom population reply cadence');
 
 eq(policy.admissionFor({ botOrigin: 'user' }, { online: false, queued: 20, running: 1 }).admit,

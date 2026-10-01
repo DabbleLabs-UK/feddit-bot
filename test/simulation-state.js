@@ -14,8 +14,8 @@ try {
   const id = profile.id;
   const options = { simulation: true, profileId: id };
 
-  store.updateSched(id, { nextPostAt: 111, sentPosts: [101] });
-  store.updateSched(id, { nextPostAt: 222, sentPosts: [202] }, options);
+  store.updateSched(id, { nextPostAt: 111, nextArticleAt: 112, sentPosts: [101] });
+  store.updateSched(id, { nextPostAt: 222, nextArticleAt: 223, sentPosts: [202] }, options);
   store.recordReplied(id, 't3_live');
   store.recordReplied(id, 't3_simulation', options);
   store.recordVoteDecisions(id, [{ targetType: 'post', targetId: 10 }]);
@@ -56,7 +56,9 @@ try {
   });
 
   assert.equal(store.getProfile(id).sched.nextPostAt, 111);
+  assert.equal(store.getProfile(id).sched.nextArticleAt, 112);
   assert.equal(store.getProfile(id).simulationState.sched.nextPostAt, 222);
+  assert.equal(store.getProfile(id).simulationState.sched.nextArticleAt, 223);
   assert.equal(store.hasReplied(id, 't3_live'), true);
   assert.equal(store.hasReplied(id, 't3_simulation'), false);
   assert.equal(store.hasReplied(id, 't3_simulation', options), true);
@@ -94,6 +96,7 @@ try {
   assert.equal(store.resetSimulation(id), true);
   const reset = store.getProfile(id);
   assert.equal(reset.sched.nextPostAt, 111, 'live cadence is preserved');
+  assert.equal(reset.sched.nextArticleAt, 112, 'live article cadence is preserved');
   assert.deepEqual(reset.repliedTo, ['t3_live'], 'live reply dedupe is preserved');
   assert.deepEqual(reset.attentionState.cursor, { comments: 12, posts: 3 }, 'live attention cursor is preserved');
   assert.deepEqual(reset.attentionState.seenEventIds, ['t1_live'], 'live seen events are preserved');
@@ -104,6 +107,7 @@ try {
   assert.equal(store.getSocialState(id).relationships.alice.interactionCount, 1, 'live social continuity is preserved');
   assert.equal(store.getMemoryState(id).episodes.length, 1, 'live autobiographical memory is preserved');
   assert.equal(reset.simulationState.sched.nextPostAt, null, 'simulation cadence is reset');
+  assert.equal(reset.simulationState.sched.nextArticleAt, null, 'simulation article cadence is reset');
   assert.deepEqual(reset.simulationState.repliedTo, [], 'simulation reply dedupe is reset');
   assert.deepEqual(store.getVoteState(id).considered, ['post:10'], 'live vote considered-state is preserved');
   assert.deepEqual(store.getVoteState(id, options), { considered: [] }, 'simulation vote considered-state is reset');
