@@ -120,8 +120,8 @@ function fakeStore() {
 }
 
 async function run() {
-  eq(storeModule.DATA_SCHEMA_VERSION, 18,
-    'profile storage schema records bounded recently-active-thread continuity');
+  eq(storeModule.DATA_SCHEMA_VERSION, 19,
+    'profile storage schema records unified article and text-post cadence');
   const migratedProfiles = storeModule.migrateProfiles([
     { id: 'user', botOrigin: 'user', populationArchivedAt: '2026-09-30T00:00:00.000Z', populationSeed: { username: 'forged' }, populationProvenance: { source: 'forged' } },
     { id: 'system', botOrigin: 'system', populationArchivedAt: '2026-09-30T00:00:00.000Z', populationSeed: { username: 'real_system' }, populationProvenance: { source: 'generated' } },

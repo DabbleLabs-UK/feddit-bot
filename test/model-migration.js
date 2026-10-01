@@ -133,4 +133,40 @@ const currentBiography = store.migrateProfiles([{
 assert.equal(currentBiography.fedditBio, 'A deliberately separate public biography.');
 assert.equal(currentBiography.persona, 'Private behaviour.');
 
+const legacyArticleCadence = store.migrateProfiles([{
+  id: 'legacy-article-cadence',
+  botType: 'news',
+  mode: 'post',
+  postsPerHour: 6,
+  newsMinGapMinutes: 30,
+}], 18)[0];
+assert.equal(legacyArticleCadence.postsPerHour, 2,
+  'the old 30-minute article gap becomes a safe 2-post-per-hour unified ceiling');
+assert.equal('newsMinGapMinutes' in legacyArticleCadence, false,
+  'the retired parallel article cadence field is removed');
+
+const slowerLegacyArticle = store.migrateProfiles([{
+  id: 'slower-legacy-article',
+  canReply: false,
+  canStartDiscussions: false,
+  canShareLinks: true,
+  postsPerHour: 0.05,
+  newsMinGapMinutes: 30,
+}], 18)[0];
+assert.equal(slowerLegacyArticle.postsPerHour, 0.05,
+  'a low existing post rate is never raised by the migration');
+
+const ordinaryCadence = store.migrateProfiles([{
+  id: 'ordinary-cadence',
+  canReply: true,
+  canStartDiscussions: true,
+  canShareLinks: false,
+  postsPerHour: 0.2,
+  commentsPerHour: 1,
+  newsMinGapMinutes: 1,
+}], 18)[0];
+assert.equal(ordinaryCadence.postsPerHour, 0.2, 'ordinary post cadence is unchanged');
+assert.equal(ordinaryCadence.commentsPerHour, 1, 'reply cadence remains independent');
+assert.equal('newsMinGapMinutes' in ordinaryCadence, false, 'obsolete fields are purged from every profile');
+
 console.log('model-migration: all checks passed');

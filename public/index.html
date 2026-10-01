@@ -12,9 +12,11 @@
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
+  html, body { height: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
     font: 14px/1.45 system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex; flex-direction: column; overflow: hidden;
   }
   header {
     padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
@@ -25,13 +27,14 @@
   .status b { color: var(--text); font-weight: 600; }
   .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: baseline; }
   .dot.good { background: var(--good); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); } .dot.unknown { background: #666; }
-  .layout { display: grid; grid-template-columns: 280px 1fr; gap: 0; height: calc(100vh - 52px); }
-  .sidebar { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; }
-  .sidebar-head { padding: 10px 12px; display: flex; flex-direction: column; gap: 9px; border-bottom: 1px solid var(--line); }
+  header, .capbanner, .capacitybar, .local-model-activity, .runnerbar { flex: 0 0 auto; }
+  .layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 0; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+  .sidebar { min-height: 0; background: var(--panel); border-right: 1px solid var(--line); overflow: hidden; display: flex; flex-direction: column; }
+  .sidebar-head { flex: 0 0 auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 9px; border-bottom: 1px solid var(--line); }
   .sidebar-title-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .sidebar-community-button { width: 100%; border-color: #52677a; color: #c9e4ff; font-weight: 600; }
   .sidebar-community-button.active { border-color: var(--accent); background: #172a3b; color: #fff; }
-  .plist { list-style: none; margin: 0; padding: 0; }
+  .plist { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; list-style: none; margin: 0; padding: 0; }
   .plist li {
     padding: 10px 12px; border-bottom: 1px solid var(--line); cursor: pointer;
     display: block;
@@ -63,7 +66,7 @@
   @keyframes badge-pulse { from { opacity: .62; } to { opacity: 1; } }
   .badge.off { color: var(--dim); }
   .badge.notoken { color: var(--warn); border-color: var(--warn); }
-  .main { overflow-y: auto; padding: 18px 22px; }
+  .main { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 18px 22px; }
   .empty { color: var(--dim); margin-top: 40px; text-align: center; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 18px; }
   .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }
@@ -304,9 +307,12 @@
   }
   @keyframes queue-travel { from { transform: translateX(-30%); } to { transform: translateX(215%); } }
   @media (max-width: 760px) {
-    .layout { grid-template-columns: 1fr; height: auto; }
-    .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
-    .main { min-height: 65vh; }
+    html, body { height: auto; min-height: 100%; }
+    body { display: block; overflow: auto; }
+    .layout { grid-template-columns: 1fr; height: auto; min-height: 0; overflow: visible; }
+    .sidebar { display: block; min-height: 0; overflow: visible; border-right: 0; border-bottom: 1px solid var(--line); }
+    .plist { min-height: 0; overflow: visible; }
+    .main { min-height: 65vh; overflow: visible; }
     .grid { grid-template-columns: 1fr; }
     .model-choice { grid-template-columns: 1fr; }
     .bot-runbar { display: grid; grid-template-columns: 1fr; align-items: stretch; gap: 12px; }
@@ -1723,7 +1729,6 @@ function renderEditor(p) {
       <div class="grid" style="margin-top:14px">
         <div class="field"><label>${lbl('Max article age (hours)', 'Freshness cap: the bot ignores any article older than this many hours, so it never posts stale news. Example: 24 means only stories from the last day are eligible.')}</label><input id="f_newsMaxAgeHours" type="number" min="1" step="1" value="${esc(p.newsMaxAgeHours)}"></div>
         <div class="field"><label>${lbl('Max posts per source domain / day', 'Stops one outlet dominating the bot output. Set to 2 and the bot posts at most two BBC articles a day even if BBC dominates the results. 0 means no limit.')}</label><input id="f_newsMaxPerDomainPerDay" type="number" min="0" step="1" value="${esc(p.newsMaxPerDomainPerDay)}"></div>
-        <div class="field"><label>${lbl('Minimum gap between posts (minutes)', 'The shortest time the bot will wait between two news posts, on top of the posts-per-hour cadence. Example: 30 means at least half an hour between link posts even if more articles are ready.')}</label><input id="f_newsMinGapMinutes" type="number" min="0" step="1" value="${esc(p.newsMinGapMinutes)}"></div>
         <div class="field full"><label>${lbl('Domain denylist (comma-separated)', 'Publisher domains the bot will NEVER post from (subdomains matched too). Comma-separated. Example: dailymail.co.uk, example.com - this also blocks www.dailymail.co.uk.')}</label><input id="f_newsDomainDenylist" value="${esc(csv(p.newsDomainDenylist))}" placeholder="dailymail.co.uk, example.com"></div>
       </div>
 
@@ -2649,7 +2654,6 @@ function collectForm() {
     newsStrictRouting: $('#f_newsStrictRouting') ? $('#f_newsStrictRouting').checked : false,
     newsMaxAgeHours: Number($('#f_newsMaxAgeHours').value) || 24,
     newsMaxPerDomainPerDay: Number($('#f_newsMaxPerDomainPerDay').value) || 0,
-    newsMinGapMinutes: Number($('#f_newsMinGapMinutes').value) || 0,
     newsDomainDenylist: parseCsv($('#f_newsDomainDenylist').value),
     newsPaywallFilter: $('#f_newsPaywallFilter').checked,
     newsRequireImage: $('#f_newsRequireImage').checked,

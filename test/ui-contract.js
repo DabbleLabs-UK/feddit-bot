@@ -7,6 +7,7 @@ const vm = require('node:vm');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 const populationHtml = fs.readFileSync(path.join(__dirname, '..', 'public', 'population.html'), 'utf8');
+const schedulerSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'scheduler.js'), 'utf8');
 
 assert.match(populationHtml, /Feddit background population/);
 assert.match(populationHtml, /Creative direction for this cohort/);
@@ -199,6 +200,24 @@ assert.match(html, /checks up to 100 real posts from each community/);
 assert.match(html, /Best - Feddit's recommended order/);
 assert.match(html, /asks Feddit for this real view and merges the results/);
 assert.match(html, /id="localModelActivity"/);
+assert.match(html, /html, body \{ height: 100%; \}/);
+assert.match(html, /body \{[\s\S]*display: flex; flex-direction: column; overflow: hidden;/);
+assert.match(html, /\.layout \{[\s\S]*flex: 1 1 auto; min-height: 0; overflow: hidden;/);
+assert.match(html, /\.sidebar \{[\s\S]*overflow: hidden; display: flex; flex-direction: column;/);
+assert.match(html, /\.plist \{[\s\S]*overflow-y: auto;/);
+assert.match(html, /\.main \{[\s\S]*overflow-y: auto;/);
+assert.match(html, /@media \(max-width: 760px\)[\s\S]*body \{ display: block; overflow: auto; \}/);
+assert.match(html, /@media \(max-width: 760px\)[\s\S]*\.plist \{ min-height: 0; overflow: visible; \}/);
+assert.match(html, /@media \(max-width: 760px\)[\s\S]*\.main \{ min-height: 65vh; overflow: visible; \}/);
+assert.match(html, /id="f_postsPerHour"/);
+assert.match(html, /id="f_commentsPerHour"/);
+assert.match(html, /Article link posts per hour/);
+assert.doesNotMatch(html, /f_newsMinGapMinutes|Minimum gap between posts/);
+assert.doesNotMatch(schedulerSource, /newsMinGapMinutes|news-minimum-gap/,
+  'article links use the shared post cadence without a second scheduler throttle');
+assert.match(html, /id="f_newsMaxAgeHours"/);
+assert.match(html, /id="f_newsMaxPerDomainPerDay"/);
+assert.match(html, /id="f_newsDomainDenylist"/);
 assert.match(html, /\[hidden\]\s*\{\s*display:\s*none\s*!important;\s*\}/);
 assert.match(populationHtml, /\[hidden\]\s*\{\s*display:none\s*!important;\s*\}/);
 assert.match(html, /state\.placement === 'hosted' && !systemPopulationBot \? ' hidden' : ''/);

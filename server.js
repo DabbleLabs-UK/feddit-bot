@@ -1213,6 +1213,7 @@ async function handleApi(req, res, urlPath, query) {
       delete body.populationArchivedAt;
       delete body.hostedOnboardingTurnsCompleted;
       delete body.hostedActivatedAt;
+      delete body.newsMinGapMinutes;
       delete body.memoryState;
       delete body.voteState;
       delete body.simulationState;

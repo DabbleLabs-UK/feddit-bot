@@ -103,6 +103,17 @@ assert.equal(imported.model, 'machine-specific-model');
 assert.equal('token' in imported, false);
 assert.equal('botOrigin' in imported, false, 'portable files cannot assert shared-capacity provenance');
 assert.equal('hostedOnboardingTurnsCompleted' in imported, false, 'portable files cannot carry destination onboarding priority');
+assert.equal('newsMinGapMinutes' in moved.bot, false, 'new profile packs export only the unified post cadence');
+
+const legacyPack = structuredClone(moved);
+legacyPack.bot.canShareLinks = true;
+legacyPack.bot.postsPerHour = 4;
+legacyPack.bot.newsMinGapMinutes = 60;
+const importedLegacyCadence = packs.importPatch(legacyPack);
+assert.equal(importedLegacyCadence.postsPerHour, 1,
+  'old portable article gaps are conservatively folded into posts per hour');
+assert.equal('newsMinGapMinutes' in importedLegacyCadence, false,
+  'old portable article gaps do not survive as a second cadence');
 
 const template = packs.exportProfile(original, { template: true });
 assert.equal(template.kind, 'template');
