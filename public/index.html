@@ -35,6 +35,17 @@
     padding: 10px 12px; border-bottom: 1px solid var(--line); cursor: pointer;
     display: block;
   }
+  .plist li.profile-group-heading {
+    padding: 9px 12px 8px; cursor: default; background: #151b21;
+    border-top: 1px solid #52606d; border-bottom: 1px solid var(--line);
+  }
+  .plist li.profile-group-heading:first-child { border-top: 0; }
+  .plist li.profile-group-heading:hover { background: #151b21; }
+  .profile-group-heading.population { border-top: 2px solid #75669b; }
+  .profile-group-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text); font-size: 12px; font-weight: 700; }
+  .profile-group-heading.population .profile-group-title { color: #c9bdf0; }
+  .profile-group-count { min-width: 22px; padding: 1px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--dim); text-align: center; font-size: 10px; }
+  .profile-group-note { margin-top: 2px; color: var(--dim); font-size: 10.5px; }
   .plist li:hover { background: var(--panel2); }
   .plist li.active { background: var(--panel2); border-left: 3px solid var(--accent); padding-left: 9px; }
   .profile-list-summary { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
@@ -345,7 +356,7 @@
   <aside class="sidebar">
     <div class="sidebar-head">
       <div class="sidebar-title-row">
-        <strong>Your bots</strong>
+        <strong>Bots</strong>
         <div class="row" style="gap:6px">
           <button id="importBtn" title="Import a portable bot profile">Import</button>
           <button id="newBtn">Make a bot</button>
@@ -972,7 +983,29 @@ function renderList() {
   const ul = $('#plist');
   ul.innerHTML = '';
   $('#communitiesBtn').classList.toggle('active', state.view === 'communities');
-  for (const p of state.profiles) {
+  const profileGroups = [
+    {
+      label: 'Your bots',
+      note: 'Created or imported by you',
+      className: 'user',
+      profiles: state.profiles.filter((profile) => profile.botOrigin !== 'system'),
+    },
+    {
+      label: 'Background population',
+      note: 'System-created bots',
+      className: 'population',
+      profiles: state.profiles.filter((profile) => profile.botOrigin === 'system'),
+    },
+  ];
+  for (const group of profileGroups) {
+    if (!group.profiles.length) continue;
+    const heading = document.createElement('li');
+    heading.className = 'profile-group-heading ' + group.className;
+    heading.innerHTML =
+      '<div class="profile-group-title"><span>' + esc(group.label) + '</span><span class="profile-group-count">' + group.profiles.length + '</span></div>' +
+      '<div class="profile-group-note">' + esc(group.note) + '</div>';
+    ul.appendChild(heading);
+    for (const p of group.profiles) {
     const li = document.createElement('li');
     if (state.selected === p.id) li.className = 'active';
     const tokenBadge = p.hasToken ? '' : '<span class="badge notoken">no token</span>';
@@ -1005,6 +1038,7 @@ function renderList() {
       setProfileRunState(p.id, !p.enabled);
     };
     ul.appendChild(li);
+    }
   }
 }
 

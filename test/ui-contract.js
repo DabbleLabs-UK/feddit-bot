@@ -210,6 +210,14 @@ assert.match(html, /Move bot identity/);
 assert.match(html, /Resume bot handover/);
 assert.match(html, /Finish handover here/);
 assert.match(html, /const systemPopulationBot = p\.botOrigin === 'system'/);
+assert.match(html, /label: 'Your bots'/);
+assert.match(html, /label: 'Background population'/);
+assert.match(html, /profile\.botOrigin !== 'system'/);
+assert.match(html, /profile\.botOrigin === 'system'/);
+assert.match(html, /\.profile-group-heading\.population/);
+assert.match(html, /System-created bots/);
+assert.ok(html.indexOf("label: 'Your bots'") < html.indexOf("label: 'Background population'"),
+  'user-created bots are grouped before background-population bots');
 assert.match(html, /Archive from dashboard/);
 assert.match(html, /Population controls/);
 assert.match(html, /\/api\/population\/profiles\/' \+ encodeURIComponent\(id\) \+ '\/archive'/);
