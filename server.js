@@ -1189,6 +1189,10 @@ async function handleApi(req, res, urlPath, query) {
     if (method === 'PUT' && !sub) {
       if (!existing) return sendJson(res, 404, { error: 'No such profile' });
       const body = await readBody(req);
+      const requestedPostRate = Object.prototype.hasOwnProperty.call(body, 'postsPerHour');
+      const requestedReplyRate = Object.prototype.hasOwnProperty.call(body, 'commentsPerHour');
+      const postRateChanged = requestedPostRate && Number(body.postsPerHour) !== Number(existing.postsPerHour);
+      const replyRateChanged = requestedReplyRate && Number(body.commentsPerHour) !== Number(existing.commentsPerHour);
       // Public biography writes deliberately use /biography so an ordinary
       // behaviour/settings save can never overwrite the live Feddit profile.
       delete body.fedditBio;
@@ -1199,6 +1203,7 @@ async function handleApi(req, res, urlPath, query) {
       delete body.populationSeed;
       delete body.populationProvenance;
       delete body.populationActivity;
+      delete body.populationCadenceMode;
       delete body.populationArchivedAt;
       delete body.hostedOnboardingTurnsCompleted;
       delete body.hostedActivatedAt;
@@ -1215,7 +1220,29 @@ async function handleApi(req, res, urlPath, query) {
       }
       if (requestOwner) {
         delete body.token;
+        if (existing.botOrigin === 'system' &&
+            (requestedPostRate || requestedReplyRate)) {
+          body.populationCadenceMode = 'custom';
+        }
         applyHostedProfilePolicy(body, existing);
+        if (existing.botOrigin === 'system' && (postRateChanged || replyRateChanged)) {
+          body.sched = {
+            ...(existing.sched || {}),
+            ...(postRateChanged ? { nextPostAt: null } : {}),
+            ...(replyRateChanged ? { nextCommentAt: null } : {}),
+          };
+          const simulationState = existing.simulationState && typeof existing.simulationState === 'object'
+            ? existing.simulationState
+            : {};
+          body.simulationState = {
+            ...simulationState,
+            sched: {
+              ...(simulationState.sched || {}),
+              ...(postRateChanged ? { nextPostAt: null } : {}),
+              ...(replyRateChanged ? { nextCommentAt: null } : {}),
+            },
+          };
+        }
       }
       const pendingHandover = secrets.getFedditHandover(id);
       if (pendingHandover && (body.enabled === true || Object.prototype.hasOwnProperty.call(body, 'token'))) {

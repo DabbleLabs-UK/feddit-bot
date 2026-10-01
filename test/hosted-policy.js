@@ -169,6 +169,21 @@ eq(systemStarted.populationActivity.band, 'rare',
 eq(Object.prototype.hasOwnProperty.call(systemStarted, 'sched'), false,
   'system activation lets stochastic ecology seed the first opportunity instead of synchronising a cohort');
 
+const customSystem = policy.applyHostedPolicy({
+  postsPerHour: 0.2,
+  commentsPerHour: 1,
+  populationCadenceMode: 'custom',
+}, systemStarted, startedAt);
+eq(customSystem.postsPerHour, 0.2, 'system population can use a custom post frequency');
+eq(customSystem.commentsPerHour, 1, 'system population can use a custom reply frequency');
+eq(Number(customSystem.hostedDailyTurns.toFixed(1)), 28.8,
+  'custom population frequencies determine its opportunity target');
+eq(policy.allocationFor(customSystem, startedAt).phase, 'system-custom',
+  'custom population cadence is distinguished from generated ecology');
+const customReconciled = policy.applyHostedPolicy({}, customSystem, startedAt + 1000);
+eq(customReconciled.postsPerHour, 0.2, 'hosted reconciliation preserves custom population post cadence');
+eq(customReconciled.commentsPerHour, 1, 'hosted reconciliation preserves custom population reply cadence');
+
 eq(policy.admissionFor({ botOrigin: 'user' }, { online: false, queued: 20, running: 1 }).admit,
   true, 'user-created turns remain admissible under congestion');
 eq(policy.admissionFor({ botOrigin: 'system' }, { online: false, queued: 0, running: 0 }).admit,

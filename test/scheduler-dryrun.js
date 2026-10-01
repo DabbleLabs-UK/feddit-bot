@@ -1154,6 +1154,30 @@ async function scenarioCadenceCeiling() {
     ok(count <= 60, 'configured 100000/hr but ceiling held it to ' + count + ' in the hour (<= 60)');
     ok(count >= 55, 'still worked near the ceiling (' + count + ' >= 55), not starved');
   }
+
+  // 2c: an operator-set population cadence uses the saved per-kind rate.
+  // Population work still passes through the separate spare-capacity admission
+  // gate in hosted mode; this proves the scheduler no longer substitutes the
+  // generated ecology cadence after the operator has taken control.
+  {
+    const clock = makeClock(4_000_000);
+    const p = profile({
+      id: 'custom-population-cadence', mode: 'comment', commentsPerHour: 1,
+      readFeddits: ['busy'],
+    });
+    p.botOrigin = 'system';
+    p.populationCadenceMode = 'custom';
+    p.sched.nextCommentAt = clock.now();
+    const store = makeStore([p]);
+    const sched = scheduler.createScheduler({
+      store, providers: makeProviders(), feddit: makeFeddit(world),
+      now: clock.now, random: () => 0, getDeepseekKey: KEY,
+    });
+    const result = await sched.runTick();
+    ok(result.acted, 'custom population reply frequency produces a scheduled opportunity');
+    eq(p.sched.nextCommentAt - clock.now(), 36 * 60 * 1000,
+      'custom population reply frequency controls the next interval');
+  }
 }
 
 // ============================================================================

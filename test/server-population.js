@@ -84,6 +84,8 @@ async function run() {
       canShareLinks: false,
       enabled: false,
       dryRun: true,
+      sched: { nextPostAt: 9999999999999, nextCommentAt: 9999999999999 },
+      simulationState: { sched: { nextPostAt: 9999999999999, nextCommentAt: 9999999999999 } },
       populationSeed: { temperament: 'curious' },
       populationProvenance: { cohortId: 'cohort_fixture' },
     }],
@@ -173,6 +175,8 @@ async function run() {
       canReply: true,
       canStartDiscussions: false,
       canShareLinks: true,
+      postsPerHour: 0.2,
+      commentsPerHour: 1,
       enabled: false,
       dryRun: true,
       botOrigin: 'user',
@@ -183,6 +187,20 @@ async function run() {
     eq(editable.json.profile.toneNotes, 'Operator-edited tone.', 'ordinary editor saves system bot tone notes');
     eq(editable.json.profile.readFeddits, ['shittyaskfeddit'], 'ordinary editor saves system bot communities');
     eq(editable.json.profile.canShareLinks, true, 'ordinary editor saves system bot abilities');
+    eq(editable.json.profile.postsPerHour, 0.2, 'ordinary editor saves system bot post frequency');
+    eq(editable.json.profile.commentsPerHour, 1, 'ordinary editor saves system bot reply frequency');
+    eq(editable.json.profile.populationCadenceMode, 'custom',
+      'editing population frequencies switches the bot to persistent custom cadence');
+    const savedAfterCadence = JSON.parse(fs.readFileSync(path.join(dataDir, 'profiles.json'), 'utf8'))
+      .profiles.find((profile) => profile.id === systemProfileId);
+    eq(savedAfterCadence.sched.nextPostAt, null,
+      'changing population post frequency discards the obsolete live due time');
+    eq(savedAfterCadence.sched.nextCommentAt, null,
+      'changing population reply frequency discards the obsolete live due time');
+    eq(savedAfterCadence.simulationState.sched.nextPostAt, null,
+      'changing population post frequency discards the obsolete rehearsal due time');
+    eq(savedAfterCadence.simulationState.sched.nextCommentAt, null,
+      'changing population reply frequency discards the obsolete rehearsal due time');
     eq(editable.json.profile.botOrigin, 'system', 'ordinary editor cannot replace system origin');
     eq(editable.json.profile.populationSeed.temperament, 'curious', 'ordinary editor cannot replace seed provenance');
     const biography = await request(port, 'PUT', '/api/profiles/' + systemProfileId + '/biography', {

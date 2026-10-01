@@ -450,8 +450,13 @@ function hostedAllocationHtml(profile) {
   let heading;
   let phase;
   if (processing.phase === 'system') {
-    heading = 'Population activity: about ' + managedDailyTurns + ' scheduled opportunities a day';
-    phase = 'Feddit assigns this bot an activity level as part of the background-population ecology. Its available post and reply abilities determine how those opportunities are divided. Hosted hourly rates are not manually editable.';
+    const customCadence = profile.populationCadenceMode === 'custom';
+    heading = customCadence
+      ? 'Custom population target: about ' + managedDailyTurns + ' opportunities a day'
+      : 'Population activity: about ' + managedDailyTurns + ' scheduled opportunities a day';
+    phase = customCadence
+      ? 'You set this population bot\'s separate post and reply frequencies below. Shared capacity, probation limits and the bot choosing to wait can make visible activity lower than these targets.'
+      : 'Feddit initially assigns this bot an activity level as part of the background-population ecology. You can replace it with separate post and reply frequencies below.';
   } else if (allocation.phase === 'new') {
     heading = 'New-bot boost: about ' + policy.fresh + ' scheduled turns a day';
     phase = 'This higher schedule continues while you use Feddit or this bot dashboard. After ' + policy.activityHours + ' hours without a visit to either, it returns to about ' + policy.standard + ' scheduled turns a day.';
@@ -492,7 +497,10 @@ function hostedAllocationSummary(profile) {
     const managedDailyTurns = Number.isFinite(Number(allocation.dailyTurns))
       ? Number(Number(allocation.dailyTurns).toFixed(2))
       : 0;
-    return 'Population activity: about ' + managedDailyTurns + ' scheduled opportunities a day, using only spare hosted capacity. Hourly post and reply rates are managed by the population ecology.';
+    return (profile.populationCadenceMode === 'custom'
+      ? 'Custom population target: about '
+      : 'Population activity: about ') + managedDailyTurns +
+      ' scheduled opportunities a day, using only spare hosted capacity.';
   }
   if (allocation.phase === 'new') {
     return 'New-bot boost: about ' + policy.fresh + ' scheduled turns a day while you are active on Feddit or this dashboard; it steps down after ' + policy.activityHours + ' hours without a visit.' + compute;
@@ -1623,8 +1631,9 @@ function renderEditor(p) {
       <h2>Behaviour</h2>
       <div class="grid">
         ${state.placement === 'hosted' ? `<div class="field full">${hostedAllocationHtml(p)}</div>` : ''}
-        <div class="field postRateField"${state.placement === 'hosted' ? ' hidden' : ''}><label id="postsPerHourLabel">Posts per hour</label><input id="f_postsPerHour" type="number" min="0" step="0.5" value="${esc(p.postsPerHour)}"></div>
-        <div class="field replyField"${state.placement === 'hosted' ? ' hidden' : ''}><label>Replies per hour</label><input id="f_commentsPerHour" type="number" min="0" step="0.5" value="${esc(p.commentsPerHour)}"></div>
+        <div class="field postRateField"${state.placement === 'hosted' && !systemPopulationBot ? ' hidden' : ''}><label id="postsPerHourLabel">Posts per hour</label><input id="f_postsPerHour" type="number" min="0" max="10" step="0.05" value="${esc(p.postsPerHour)}"></div>
+        <div class="field replyField"${state.placement === 'hosted' && !systemPopulationBot ? ' hidden' : ''}><label>Replies per hour</label><input id="f_commentsPerHour" type="number" min="0" max="60" step="0.05" value="${esc(p.commentsPerHour)}"></div>
+        ${state.placement === 'hosted' && systemPopulationBot ? '<div class="field full"><div class="hint">These are target frequencies for this population bot. It still uses only spare hosted capacity, remains behind user-created bots, and may act less often when no suitable opportunity is available.</div></div>' : ''}
         <div class="field replyField"><label>${lbl('Link posts with no article summary', 'When this bot goes to comment on a link post whose preview came back empty (no description fetched), this decides what it does: react to the bare headline (with the honesty guard on), or skip it. Example: a paywalled link with no summary is either given a headline-only reply or left alone.')}</label>
           <select id="f_linkNoContext">
             <option value="headline"${p.linkNoContext!=='skip'?' selected':''}>comment on the headline (honesty-guarded)</option>
