@@ -6,11 +6,16 @@ const path = require('node:path');
 const providers = require('../lib/providers');
 const secrets = require('../lib/secrets');
 const { createRedditJsonSource } = require('../lib/culture-importer/reddit-json-source');
-const { createCultureImporter } = require('../lib/culture-importer');
+const {
+  createCultureImporter,
+  createCultureStagingBridge,
+  createExternalSeedHttpStager,
+} = require('../lib/culture-importer');
 
 function usage() {
   return [
     'Usage: node bin/import-subreddit-culture.js --subreddit NAME --communities NAME[,NAME] [options]',
+    '       node bin/import-subreddit-culture.js stage --input FILE --select INDEX[,INDEX] --server-url URL [options]',
     '',
     'Options:',
     '  --posts N             Recent posts to fetch (default 100, max 1000)',
@@ -25,15 +30,28 @@ function usage() {
     '  --out PATH            Write JSON to a file instead of stdout',
     '  --help                Show this help',
     '',
+    'Explicit staging options:',
+    '  --input PATH          Completed import JSON to review and stage from',
+    '  --select VALUES       One to six zero-based candidate indexes or stable candidate IDs',
+    '  --server-url URL      Feddit bot server hosting the external-seed staging endpoint',
+    '  --out PATH            Write the correlated staging result to a file instead of stdout',
+    '',
     'Optional REDDIT_ACCESS_TOKEN and REDDIT_USER_AGENT environment variables configure the source adapter.',
     'The dell provider needs a programmatic hosted queue and is not initialized by this standalone CLI.',
+    'FEDDIT_BOT_OWNER_TOKEN supplies the existing population operator capability for the stage action.',
+    'Import and generation never stage candidates. The stage action submits the selected seeds once and never splits or retries them.',
   ].join('\n');
 }
 
 function parseArgs(argv) {
-  const output = { refresh: false };
-  const aliases = new Set(['subreddit', 'posts', 'comments', 'count', 'provider', 'model', 'since', 'until', 'cache-dir', 'communities', 'out']);
-  for (let index = 0; index < argv.length; index++) {
+  const action = argv[0] === 'stage' ? 'stage' : 'import';
+  const start = action === 'stage' ? 1 : (argv[0] === 'import' ? 1 : 0);
+  const output = { action, refresh: false };
+  const aliases = new Set([
+    'subreddit', 'posts', 'comments', 'count', 'provider', 'model', 'since', 'until',
+    'cache-dir', 'communities', 'out', 'input', 'select', 'server-url',
+  ]);
+  for (let index = start; index < argv.length; index++) {
     const arg = argv[index];
     if (arg === '--help' || arg === '-h') output.help = true;
     else if (arg === '--refresh') output.refresh = true;
@@ -44,6 +62,42 @@ function parseArgs(argv) {
     } else throw new Error('Unknown argument: ' + arg);
   }
   return output;
+}
+
+function selectedValues(value) {
+  return String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function readImportResult(file) {
+  if (!file) throw new Error('--input is required for the stage action.');
+  return JSON.parse(fs.readFileSync(path.resolve(file), 'utf8'));
+}
+
+async function stageImportResult(args, options = {}) {
+  const selection = selectedValues(args.select);
+  if (!selection.length) throw new Error('--select needs one to six candidate indexes or IDs.');
+  if (!args['server-url']) throw new Error('--server-url is required for the stage action.');
+  const importResult = readImportResult(args.input);
+  const stageExternalSeeds = createExternalSeedHttpStager({
+    serverUrl: args['server-url'],
+    ownerToken: options.ownerToken || process.env.FEDDIT_BOT_OWNER_TOKEN,
+    fetch: options.fetch,
+  });
+  const bridge = createCultureStagingBridge({ stageExternalSeeds });
+  return bridge.stage(importResult, selection);
+}
+
+function stagingErrorResult(error) {
+  return {
+    ok: false,
+    error: {
+      code: String(error && error.code || 'CULTURE_STAGING_FAILED'),
+      message: String(error && error.message || error),
+    },
+    association: error && error.association || null,
+    importerSelection: error && error.importerSelection || [],
+    results: error && Array.isArray(error.results) ? error.results : [],
+  };
 }
 
 function writeOutput(result, destination) {
@@ -65,6 +119,12 @@ async function main(argv = process.argv.slice(2)) {
   if (args.help) {
     process.stdout.write(usage() + '\n');
     return;
+  }
+  if (args.action === 'stage') {
+    const result = await stageImportResult(args);
+    writeOutput(result, args.out);
+    if (result.ok === false) process.exitCode = 2;
+    return result;
   }
   if (!args.subreddit) throw new Error('--subreddit is required.');
   const communities = String(args.communities || '').split(',').map((item) => item.trim()).filter(Boolean);
@@ -110,9 +170,15 @@ async function main(argv = process.argv.slice(2)) {
 if (require.main === module) {
   main().catch((error) => {
     if (error && error.name === 'AbortError') process.stderr.write('Import cancelled.\n');
+    else if (error && Array.isArray(error.results) && error.results.length) {
+      process.stderr.write(JSON.stringify(stagingErrorResult(error), null, 2) + '\n');
+    }
     else process.stderr.write((error && error.code ? error.code + ': ' : '') + String(error && error.message || error) + '\n');
     process.exitCode = 1;
   });
 }
 
-module.exports = { usage, parseArgs, writeOutput, main };
+module.exports = {
+  usage, parseArgs, selectedValues, readImportResult, stageImportResult,
+  stagingErrorResult, writeOutput, main,
+};

@@ -1,0 +1,31 @@
+{
+  "culture": {
+    "summary": "RICH_SOURCE_ANALYSIS_MUST_NOT_ENTER_RUNTIME: a culture of dry procedural escalation.",
+    "recurringJokes": ["ceremonial objects"],
+    "runningBits": ["requesting unnecessary procedural detail"],
+    "postFormats": ["oddly specific open questions"],
+    "repeatedPhrases": ["obviously the correct answer"],
+    "humour": ["dry escalation", "literal follow-up"],
+    "responseConventions": ["answer the premise before complicating it"],
+    "recurringTopics": ["ceremonies", "diagrams"],
+    "escalationPatterns": ["answer an absurd detail with a more specific one"],
+    "interactionPatterns": ["dry claim followed by literal challenge"],
+    "archetypes": ["confident absurdist", "literal examiner"],
+    "socialRoles": ["premise setter", "detail escalator"]
+  },
+  "contributors": [
+    {
+      "label": "contributor-1",
+      "voice": "Dry and confidently specific.",
+      "humour": "Treats absurd claims as administrative facts.",
+      "conversationalHabits": ["returns to a bit after another person questions it"],
+      "typicalReactions": ["adds a more specific absurd detail"],
+      "topics": ["ceremonies"],
+      "disagreementTendency": "Extends the premise instead of openly disagreeing.",
+      "runningJokeTendency": "Reuses the central object with new detail.",
+      "interactionPatterns": ["answers literal challenges"],
+      "postingPattern": "Mostly replies.",
+      "evidenceSourceIds": ["t1_comment1", "t1_comment3"]
+    }
+  ]
+}

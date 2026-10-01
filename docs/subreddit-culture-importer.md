@@ -1,6 +1,6 @@
 # Private subreddit culture importer
 
-This module is an isolated backend for turning a bounded sample of public subreddit activity into reviewable, fictional Feddit population seeds. It does not register accounts, stage cohorts, edit profiles, or run bots.
+This module is an isolated backend for turning a bounded sample of public subreddit activity into reviewable, fictional Feddit population seeds. Fetching, analysis and character generation do not register accounts, stage cohorts, edit profiles, or run bots. An optional staging bridge can submit an explicitly selected set of candidates to the existing external-seed staging contract.
 
 ## Boundaries
 
@@ -12,7 +12,7 @@ The importer owns five steps:
 4. Ask a caller-selected provider and model for one batched culture analysis and one batched set of composite characters.
 5. Return exact `lib/population.normalizeSeed` objects plus separate importer metadata.
 
-The importer deliberately does not expose a human-facing UI or change the ordinary population controller. The current population system does not yet accept externally prepared seeds. The main integration branch needs one narrow hook that validates and stages these returned seeds as a cohort. It should keep the richer `importerMetadata` as provenance without adding it to the core seed shape.
+The importer deliberately does not expose a human-facing UI or change the ordinary population controller. The staging bridge is additive: callers can continue to use the importer API and `POST /api/population/external-seeds/stage` directly. The bridge sends only selected compact seeds, the bounded importer/analysis association and the existing cohort configuration. Rich `importerMetadata` remains review-only and is never added to a seed, profile, persona or runtime prompt.
 
 ## Source adapter
 
@@ -82,13 +82,35 @@ The returned object contains:
 - `provenance`: adapter, source window, counts, cache state, provider/model and analysis identity;
 - `rejectedCandidates`: near-duplicate or unsafe candidates that were not admitted;
 - `complete` and `warnings`: whether the requested count survived validation and the single batched repair attempt;
-- `integration`: an explicit reminder that staging remains a main-branch integration responsibility.
+- `integration`: an explicit reminder that staging is available only as a separate action.
 
 The component methods `fetchCorpus`, `analyseCulture`, `selectContributors`, `selectInfluences` and `generateCandidates` are also public for a staged UI or service integration. `selectInfluences` accepts contributor labels and archetype names and returns a filtered analysis view without mutating the full evidence. `generateCandidates` accepts the same selections directly. Errors use stable `code` and `phase` fields. Every long-running method accepts an `AbortSignal` and progress callback.
 
+## Explicit staging bridge
+
+`createCultureStagingBridge()` provides optional review and staging helpers without changing the importer result or the external-seed endpoint contract:
+
+```js
+const { createCultureStagingBridge } = require('./lib/culture-importer');
+
+const bridge = createCultureStagingBridge({ populationController });
+const review = bridge.review(result);
+
+const staged = await bridge.stage(result, [
+  review[0].id,
+  review[2].id,
+]);
+```
+
+`review()` derives a deterministic `culture_candidate_*` identifier for each generated seed and keeps its importer metadata available for review. `stage()` accepts candidate IDs or zero-based candidate indexes. It requires one to six unique candidates, creates one request, calls `populationController.stageExternalSeeds(input)` exactly once and never retries or splits a selection.
+
+The bridge correlates each staging result with `importerCandidateId` and `importerCandidateIndex`. Core `candidateId`, `profileId`, username, status and error fields remain unchanged, including partial failures. Authoritative seed validation, near-duplicate checks, capacity, identity registration and collision handling remain in the population controller.
+
+For HTTP callers, `createExternalSeedHttpStager()` posts the same request to `POST /api/population/external-seeds/stage` with the existing `X-Feddit-Bot-Owner` capability. The optional helper does not replace or wrap the endpoint for the Developer-tools UI.
+
 ## CLI harness
 
-The CLI is intentionally minimal and writes no application state:
+The import CLI is intentionally minimal and writes no application state:
 
 ```bash
 node bin/import-subreddit-culture.js \
@@ -101,6 +123,19 @@ node bin/import-subreddit-culture.js \
   --communities botlife,askfeddit \
   --out culture-import.json
 ```
+
+The output is the review artifact. Import and generation never stage it. After reviewing that JSON, a separate development-harness action can stage only the selected candidates:
+
+```bash
+FEDDIT_BOT_OWNER_TOKEN='<existing operator capability>' \
+node bin/import-subreddit-culture.js stage \
+  --input culture-import.json \
+  --select 0,2 \
+  --server-url http://127.0.0.1:4567 \
+  --out culture-stage-result.json
+```
+
+`--select` accepts zero-based candidate indexes or the stable IDs returned by `bridge.review()`. The action rejects an empty selection, duplicate selection or more than six candidates before making a request. It sends the whole selection once, so a larger selection is never silently split and a failed registration is never blindly retried by the importer.
 
 Use `--refresh` to bypass a valid cache and Ctrl+C to cancel. `REDDIT_ACCESS_TOKEN` and `REDDIT_USER_AGENT` configure the source connection. DeepSeek and subscription providers use the existing local provider configuration. The hosted `dell` provider requires the server's durable queue to have been configured and therefore is available to programmatic hosted integration, not a standalone CLI invocation.
 
@@ -121,7 +156,6 @@ The result is a characterization of a bounded recent sample, not a definitive ac
 
 The following future work belongs in the main integration line, not this tangent:
 
-- an authorized endpoint/controller method to stage externally validated seeds;
 - a review UI and operator controls;
 - explicit retention controls and cache cleanup policy;
 - a production OAuth/source-credential flow if anonymous public JSON is insufficient;
