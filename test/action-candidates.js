@@ -136,4 +136,35 @@ ok(memorySummary.selectedMemory && memorySummary.selectedMemory.episodeCount ===
 ok(/raised this candidate's within-bot salience by 1 bounded step/.test(memorySummary.memoryDecisionContext),
   'decision explainability states the bounded memory effect without claiming it forced the choice');
 
+const voteItems = [
+  { id: 'V1', targetType: 'post', targetId: 1, label: 'Post by alice' },
+  { id: 'V2', targetType: 'comment', targetId: 2, label: 'Comment by bob' },
+  { id: 'V3', targetType: 'comment', targetId: 3, label: 'Comment by carol' },
+];
+const votingPrompt = candidates.prompt(menu, 200_000, { voteCandidates: voteItems, voteAllowance: { remaining: 3 } });
+ok(votingPrompt.includes('SECONDARY VOTING') && votingPrompt.includes('"votes"'),
+  'the existing action prompt carries a bounded secondary voting contract');
+decision = candidates.parseDecision(JSON.stringify({
+  choice: 'C4', reason: 'The ordinary post fits.', votes: [
+    { id: 'V1', direction: 'up', reason: 'This contribution is concrete and useful.' },
+    { id: 'V2', direction: 'down', reason: 'This assertion is misleading and unsupported.' },
+    { id: 'V3', direction: 'nil', reason: '' },
+  ],
+}), menu, { voteCandidates: voteItems });
+eq(decision.candidate.candidateType, 'ordinary_post', 'secondary votes do not disturb the primary action choice');
+eq(decision.votes.map((vote) => vote.direction), ['up', 'down', 'nil'],
+  'one structured response can include up, down and nil secondary reactions');
+decision = candidates.parseDecision('{"choice":"C4","reason":"Still fits.","votes":"bad"}', menu, { voteCandidates: voteItems });
+ok(decision.valid && decision.votes.every((vote) => vote.direction === 'nil'),
+  'malformed secondary votes never invalidate a valid primary action');
+decision = candidates.parseDecision(JSON.stringify({
+  choice: 'WAIT', reason: 'Nothing needs a written reply.', votes: [
+    { id: 'V1', direction: 'up', reason: 'The post remains useful without a reply.' },
+    { id: 'V2', direction: 'nil', reason: '' },
+    { id: 'V3', direction: 'down', reason: 'The claim remains misleading and unsupported.' },
+  ],
+}), menu, { voteCandidates: voteItems });
+ok(decision.valid && decision.waited && decision.votes[0].direction === 'up' && decision.votes[2].direction === 'down',
+  'secondary up/down votes can coexist with WAIT and do not force a reply');
+
 console.log('action candidates: ' + checks + ' checks passed');

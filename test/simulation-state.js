@@ -18,6 +18,8 @@ try {
   store.updateSched(id, { nextPostAt: 222, sentPosts: [202] }, options);
   store.recordReplied(id, 't3_live');
   store.recordReplied(id, 't3_simulation', options);
+  store.recordVoteDecisions(id, [{ targetType: 'post', targetId: 10 }]);
+  store.recordVoteDecisions(id, [{ targetType: 'comment', targetId: 20 }], options);
   store.recordAttentionScan(id, { cursor: { comments: 12, posts: 3 }, seenEventIds: ['t1_live'] });
   store.recordAttentionScan(id, { cursor: { comments: 22, posts: 5 }, seenEventIds: ['t1_simulation'] }, options);
   store.recordPostedNews(id, 'https://example.com/live');
@@ -56,6 +58,8 @@ try {
   assert.equal(store.hasReplied(id, 't3_live'), true);
   assert.equal(store.hasReplied(id, 't3_simulation'), false);
   assert.equal(store.hasReplied(id, 't3_simulation', options), true);
+  assert.deepEqual(store.getVoteState(id).considered, ['post:10']);
+  assert.deepEqual(store.getVoteState(id, options).considered, ['comment:20']);
   assert.deepEqual(store.getAttentionState(id).cursor, { comments: 12, posts: 3 });
   assert.deepEqual(store.getAttentionState(id, options).cursor, { comments: 22, posts: 5 });
   assert.deepEqual(store.getAttentionState(id).seenEventIds, ['t1_live']);
@@ -76,6 +80,13 @@ try {
   assert.equal(store.getSimulationTelemetry(id).events.length, 1, 'bounded rehearsal telemetry is stored only in simulation state');
   assert.equal('telemetry' in store.getProfile(id), false, 'no rehearsal telemetry field is added to LIVE profile state');
 
+  store.updateProfile(id, {
+    voteState: { considered: ['post:999'] },
+    simulationState: { voteState: { considered: ['comment:999'] } },
+  });
+  assert.deepEqual(store.getVoteState(id).considered, ['post:10'], 'ordinary profile edits cannot overwrite live vote continuity');
+  assert.deepEqual(store.getVoteState(id, options).considered, ['comment:20'], 'ordinary profile edits cannot overwrite rehearsal continuity');
+
   assert.equal(store.resetSimulation(id), true);
   const reset = store.getProfile(id);
   assert.equal(reset.sched.nextPostAt, 111, 'live cadence is preserved');
@@ -88,6 +99,8 @@ try {
   assert.equal(store.getMemoryState(id).episodes.length, 1, 'live autobiographical memory is preserved');
   assert.equal(reset.simulationState.sched.nextPostAt, null, 'simulation cadence is reset');
   assert.deepEqual(reset.simulationState.repliedTo, [], 'simulation reply dedupe is reset');
+  assert.deepEqual(store.getVoteState(id).considered, ['post:10'], 'live vote considered-state is preserved');
+  assert.deepEqual(store.getVoteState(id, options), { considered: [] }, 'simulation vote considered-state is reset');
   assert.deepEqual(reset.simulationState.attentionState, store.attentionDefaults(), 'simulation attention is reset');
   assert.deepEqual(reset.simulationState.postedNews, [], 'simulation article dedupe is reset');
   assert.equal(store.getThreadReplyCount(20, options), 0, 'simulation thread cap is reset');

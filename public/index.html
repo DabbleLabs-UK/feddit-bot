@@ -2390,6 +2390,14 @@ function simulationDecision(decision) {
     ? decision.candidateTypes.map((type) => String(type || '').replaceAll('_', ' ')).filter(Boolean)
     : [];
   const considered = Number(decision.candidateCount) || 0;
+  const votes = Array.isArray(decision.votes) ? decision.votes : [];
+  const voteRows = votes.map((vote) => {
+    const direction = vote.direction === 'up' ? 'UPVOTE' : (vote.direction === 'down' ? 'DOWNVOTE' : 'NO VOTE');
+    const status = vote.status ? ' - ' + vote.status.replaceAll('-', ' ') : '';
+    const reason = vote.reason ? ': ' + vote.reason : '';
+    const error = vote.error ? ' (' + vote.error + ')' : '';
+    return direction + status + ' - ' + (vote.label || vote.targetType + ' ' + vote.targetId) + reason + error;
+  });
   return '<div class="simulation-decision">' +
     simulationValue('Opportunity decision', selected) +
     simulationValue(reasonLabel, decision.reason || 'No short decision reason was recorded.') +
@@ -2397,6 +2405,9 @@ function simulationDecision(decision) {
     simulationValue('Autobiographical memory used', decision.selectedMemory && decision.selectedMemory.summary) +
     simulationValue('Memory effect on the choice', decision.memoryDecisionContext) +
     simulationValue('Conversation outcome', decision.socialDecisionContext) +
+    simulationValue('Secondary reactions', voteRows.join('\n')) +
+    (decision.voteCapacityExhausted ? simulationValue('Voting capacity', 'Feddit\'s authoritative daily vote allowance was exhausted, so no vote reasons were requested.') : '') +
+    (decision.voteError ? simulationValue('Voting unavailable', decision.voteError) : '') +
     (considered ? '<details class="simulation-context"><summary>' + esc(considered + ' real candidate' + (considered === 1 ? '' : 's') + ' considered') +
       '</summary><div class="simulation-output">' + esc(types.length ? types.join(', ') : 'Candidate types unavailable.') + '</div></details>' : '') +
     '</div>';
@@ -2412,10 +2423,12 @@ function renderSimulationResults(p) {
     const articles = Number(p.simulationArticleCount) || 0;
     const relationships = Number(p.simulationRelationshipCount) || 0;
     const episodes = Number(p.simulationMemoryEpisodeCount) || 0;
+    const votes = Number(p.simulationVoteConsideredCount) || 0;
     slate.textContent = 'Current rehearsal memory: ' + replies + ' reply target' + (replies === 1 ? '' : 's') +
       ', ' + articles + ' news article' + (articles === 1 ? '' : 's') + ' and ' + relationships +
       ' conversation counterpart' + (relationships === 1 ? '' : 's') + ', plus ' + episodes +
-      ' autobiographical episode' + (episodes === 1 ? '' : 's') + '. Use Reset simulation memory when you want to try those candidates or conversations again.';
+      ' autobiographical episode' + (episodes === 1 ? '' : 's') + ', and ' + votes +
+      ' item' + (votes === 1 ? '' : 's') + ' considered for a vote. Use Reset simulation memory when you want to try those candidates or conversations again.';
   }
   const all = (p.activity || []).filter((a) => a && a.dryRun && ['post', 'comment', 'news', 'decision'].includes(a.kind));
   count.textContent = String(all.length);

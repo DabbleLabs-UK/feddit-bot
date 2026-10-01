@@ -69,6 +69,7 @@ function makeProfile(id, dryRun) {
     },
     activity: [],
     repliedTo: [],
+    voteState: { considered: [] },
     attentionState: { cursor: { comments: 0, posts: 0 }, seenEventIds: [] },
     socialState: socialRelationships.defaults(),
     memoryState: autobiographicalMemory.defaults(),
@@ -111,6 +112,23 @@ function makeStore(profiles, now) {
       parent.repliedTo = Array.isArray(parent.repliedTo) ? parent.repliedTo : [];
       if (!parent.repliedTo.includes(key)) parent.repliedTo.push(key);
       return parent.repliedTo;
+    },
+    getVoteState(id, options = {}) {
+      const profile = byId.get(id);
+      const parent = options.simulation && profile && profile.simulationState ? profile.simulationState : profile;
+      return structuredClone(parent && parent.voteState || { considered: [] });
+    },
+    recordVoteDecisions(id, decisions, options = {}) {
+      const profile = byId.get(id);
+      if (!profile) return null;
+      if (options.simulation && !profile.simulationState) profile.simulationState = {};
+      const parent = options.simulation ? profile.simulationState : profile;
+      parent.voteState = parent.voteState || { considered: [] };
+      for (const vote of decisions || []) {
+        const key = vote.targetType + ':' + vote.targetId;
+        if (!parent.voteState.considered.includes(key)) parent.voteState.considered.push(key);
+      }
+      return structuredClone(parent.voteState);
     },
     getAttentionState(id, options = {}) {
       const profile = byId.get(id);
@@ -327,6 +345,16 @@ function harness(options = {}) {
       writes.push({ type: 'comment', request });
       if (options.commentResponse) return options.commentResponse(request);
       return { ok: true, status: 200, data: { comment: { data: { id: 1000 + writes.length } } } };
+    },
+    voteAllowance: async () => ({
+      ok: true,
+      status: 200,
+      data: { vote_allowance: { limited: true, limit: 15, used: 0, remaining: 15, on_probation: false } },
+    }),
+    vote: async (request) => {
+      writes.push({ type: 'vote', request });
+      if (options.voteResponse) return options.voteResponse(request);
+      return { ok: true, status: 200, data: { score: 1 } };
     },
     attention: async () => ({
       ok: true, status: 200,
@@ -729,6 +757,58 @@ async function run() {
       await settle();
       eq(h.profiles[0].memoryState.episodes.length, 1,
         'post-publication finalisation replay cannot duplicate the episode');
+    } finally {
+      h.cleanup();
+    }
+  }
+
+  {
+    const voter = makeProfile('restart-safe-voter', false);
+    voter.canReply = true;
+    voter.canStartDiscussions = false;
+    voter.postsPerHour = 0;
+    voter.commentsPerHour = 1;
+    voter.sched.nextPostAt = null;
+    voter.sched.nextCommentAt = 0;
+    const h = harness({
+      profiles: [voter],
+      feedPosts: [{
+        id: 73, feddit: 'general', author: 'carol', title: 'A visible item',
+        selftext: 'A specific public contribution worth considering.', created_utc: 9,
+      }],
+      voteResponse: async () => { throw new Error('connection ended before a vote response arrived'); },
+    });
+    try {
+      const initial = h.scheduler();
+      await initial.runTick();
+      await settle();
+      const turn = h.turnStore.activeForProfile(voter.id);
+      completeJob(h.queue, turn.generations[0].jobId, JSON.stringify({
+        choice: 'C1',
+        reason: 'The visible discussion is worth answering.',
+        votes: [{ id: 'V1', direction: 'up', reason: 'The contribution is concrete and useful.' }],
+      }));
+      initial.reconcileDurableTurns();
+      await settle();
+      eq(h.writes.filter((write) => write.type === 'vote').length, 1,
+        'an ambiguous live vote is attempted exactly once before restart');
+      const afterAttempt = h.turnStore.get(turn.id);
+      eq(afterAttempt.checkpoints['vote-effect-post:73'].state, 'uncertain',
+        'the no-response vote boundary is immediately and durably marked uncertain');
+
+      const restarted = h.restartRuntime();
+      const content = await queueContentGeneration(restarted, turn.id);
+      completeJob(restarted.queue, content.jobId, 'A reply that still proceeds after the ancillary vote failure.');
+      restarted.scheduler.reconcileDurableTurns();
+      await settle();
+      eq(h.writes.filter((write) => write.type === 'vote').length, 1,
+        'restart recovery does not submit an ambiguous vote a second time');
+      eq(restarted.turnStore.get(turn.id).checkpoints['vote-effect-post:73'].state, 'uncertain',
+        'restart recovery records the ambiguous vote as uncertain instead of retrying');
+      eq(h.writes.filter((write) => write.type === 'comment').length, 1,
+        'an ambiguous ancillary vote does not block the selected main reply');
+      eq(voter.voteState.considered, ['post:73'],
+        'the viewed item remains considered once across durable replay');
     } finally {
       h.cleanup();
     }

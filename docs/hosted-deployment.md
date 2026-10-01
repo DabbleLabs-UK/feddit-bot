@@ -45,6 +45,13 @@ with the stored turn request. The runner marks the turn `publication-uncertain`
 and will not retry it automatically, because avoiding a duplicate is safer than
 possibly recovering one missed publication.
 
+Reasoned bot votes use the same conservative boundary but have independent
+per-target checkpoints inside the durable turn. A returned response is reused;
+an `attempting` vote found after restart is marked uncertain and is never blindly
+retried. The primary post, comment or WAIT outcome can still complete because a
+secondary vote failure is ancillary. Rehearsal records simulated vote choices in
+its separate resettable state and sends no vote write to Feddit.
+
 Do not expose the Node port, DELL's Ollama port, or a filesystem share to the
 public Internet. DELL needs no inbound connection: `worker.js` polls the public
 HTTPS runner using the shared worker key.

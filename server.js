@@ -68,7 +68,7 @@ const populationController = createPopulationController({
   activateProfile(profile, mode) {
     const patch = { enabled: true, dryRun: mode !== 'live' };
     applyHostedProfilePolicy(patch, profile);
-    return store.updateProfile(profile.id, patch);
+    return store.updateProfile(profile.id, patch, { allowContinuity: true });
   },
 });
 
@@ -229,7 +229,7 @@ function safeProfile(p) {
   // count of the news dedupe set so the UI can show it on the clear button.
   const {
     token, ownerId, repliedTo, postedNews, newsDomainDaily, newsDomainDays,
-    attentionState, socialState, memoryState, simulationState, ...rest
+    attentionState, socialState, memoryState, voteState, simulationState, ...rest
   } = p;
   const now = Date.now();
   const spend = store.profileSpend(p, cost.dayKey(now), cost.monthKey(now));
@@ -253,6 +253,9 @@ function safeProfile(p) {
     memoryEpisodeCount: memoryState && Array.isArray(memoryState.episodes) ? memoryState.episodes.length : 0,
     simulationMemoryEpisodeCount: simulationState && simulationState.memoryState && Array.isArray(simulationState.memoryState.episodes)
       ? simulationState.memoryState.episodes.length : 0,
+    voteConsideredCount: voteState && Array.isArray(voteState.considered) ? voteState.considered.length : 0,
+    simulationVoteConsideredCount: simulationState && simulationState.voteState && Array.isArray(simulationState.voteState.considered)
+      ? simulationState.voteState.considered.length : 0,
     nextAction: scheduler.nextAction(p, simulation),
     effProvider: scheduler.providerOf(p),
     effModel: scheduler.modelOf(p, store.DEFAULT_MODEL),
@@ -1092,7 +1095,7 @@ async function handleApi(req, res, urlPath, query) {
       const biography = await currentFedditBiography(existing);
       const {
         token, ownerId, postedNews, newsDomainDaily, newsDomainDays,
-        socialState, memoryState, simulationState, ...rest
+        socialState, memoryState, voteState, simulationState, ...rest
       } = existing;
       const simulation = scheduler.isDryRun(existing, store.getSettings());
       return sendJson(res, 200, {
@@ -1118,6 +1121,9 @@ async function handleApi(req, res, urlPath, query) {
           memoryEpisodeCount: memoryState && Array.isArray(memoryState.episodes) ? memoryState.episodes.length : 0,
           simulationMemoryEpisodeCount: simulationState && simulationState.memoryState && Array.isArray(simulationState.memoryState.episodes)
             ? simulationState.memoryState.episodes.length : 0,
+          voteConsideredCount: voteState && Array.isArray(voteState.considered) ? voteState.considered.length : 0,
+          simulationVoteConsideredCount: simulationState && simulationState.voteState && Array.isArray(simulationState.voteState.considered)
+            ? simulationState.voteState.considered.length : 0,
           hostedAllocation: PLACEMENT === 'hosted'
             ? hostedPolicy.allocationFor(existing, Date.now(), ownerPolicyContext(existing))
             : null,
@@ -1208,6 +1214,8 @@ async function handleApi(req, res, urlPath, query) {
       delete body.hostedOnboardingTurnsCompleted;
       delete body.hostedActivatedAt;
       delete body.memoryState;
+      delete body.voteState;
+      delete body.simulationState;
       if (existing.token && Object.prototype.hasOwnProperty.call(body, 'fedditUsername')) {
         const currentUsername = String(existing.fedditUsername || '').trim().toLowerCase();
         const requestedUsername = String(body.fedditUsername || '').trim().toLowerCase();
@@ -1253,7 +1261,7 @@ async function handleApi(req, res, urlPath, query) {
       if (body.token === '' || body.token == null) delete body.token;
       const modelError = await unavailableLocalModel({ ...existing, ...body });
       if (modelError) return sendJson(res, 409, { error: modelError, code: 'LOCAL_MODEL_MISSING' });
-      const p = store.updateProfile(id, body);
+      const p = store.updateProfile(id, body, { allowContinuity: true });
       return sendJson(res, 200, { profile: safeProfile(p) });
     }
 
@@ -1710,7 +1718,7 @@ function reconcileHostedProfiles(at = Date.now()) {
     const managed = applyHostedProfilePolicy({}, profile, at);
     const changed = Object.keys(managed).some((key) =>
       JSON.stringify(profile[key]) !== JSON.stringify(managed[key]));
-    if (changed) store.updateProfile(profile.id, managed);
+    if (changed) store.updateProfile(profile.id, managed, { allowContinuity: true });
   }
 }
 

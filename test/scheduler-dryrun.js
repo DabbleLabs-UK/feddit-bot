@@ -88,6 +88,21 @@ function makeStore(profiles) {
       parent.repliedTo = parent.repliedTo || [];
       if (!parent.repliedTo.includes(key)) parent.repliedTo.push(key);
     },
+    getVoteState: (id, options = {}) => {
+      const p = byId.get(id);
+      const parent = options.simulation && p && p.simulationState ? p.simulationState : p;
+      return structuredClone(parent && parent.voteState || { considered: [] });
+    },
+    recordVoteDecisions: (id, decisions, options = {}) => {
+      const p = byId.get(id); if (!p) return null;
+      const parent = options.simulation && p.simulationState ? p.simulationState : p;
+      parent.voteState = parent.voteState || { considered: [] };
+      for (const vote of decisions || []) {
+        const key = vote.targetType + ':' + vote.targetId;
+        if (!parent.voteState.considered.includes(key)) parent.voteState.considered.push(key);
+      }
+      return structuredClone(parent.voteState);
+    },
     getAttentionState: (id, options = {}) => {
       const p = byId.get(id);
       const parent = options.simulation ? (p && p.simulationState) : p;
@@ -236,6 +251,7 @@ function profile(over) {
     attentionState: over.attentionState || { cursor: { comments: 0, posts: 0 }, seenEventIds: [] },
     socialState: over.socialState || socialRelationships.defaults(),
     memoryState: over.memoryState || autobiographicalMemory.defaults(),
+    voteState: over.voteState || { considered: [] },
     // ---- news config + state ----
     botType: over.botType || 'conversational',
     ...(over.canReply !== undefined ? { canReply: over.canReply } : {}),
@@ -300,6 +316,118 @@ async function scenarioPerProfileMode() {
     'the rehearsal bot records its complete simulated post instead');
   eq(scheduler.isDryRun(rehearsal, { dryRun: false }), true, 'per-bot rehearsal overrides a legacy live runner flag');
   eq(scheduler.isDryRun(live, { dryRun: true }), false, 'per-bot live overrides a legacy rehearsal runner flag');
+}
+
+// One opportunity decision may carry several secondary reactions. They share
+// the existing decision generation, remain isolated in rehearsal, and never
+// block the selected post/comment action when a vote write fails.
+async function scenarioSecondaryVoting() {
+  console.log('\n[1bc] bounded secondary voting shares the opportunity decision');
+  const clock = makeClock(1_700_000);
+  const worldFor = () => ({
+    feddits: { botlife: [{ id: 10, feddit: 'botlife', title: 'A visible post', body: 'Specific visible body.', author: 'alice' }] },
+    comments: { 10: [{ id: 20, postId: 10, author: 'bob', body: 'A visible but unsupported comment.' }] },
+    abouts: { botlife: { post_format: 'any' } },
+  });
+  const decisionText = JSON.stringify({
+    choice: 'C2',
+    reason: 'The active comment gives me something useful to answer.',
+    votes: [
+      { id: 'V1', direction: 'up', reason: 'The original post is concrete and useful.' },
+      { id: 'V2', direction: 'down', reason: 'The comment makes an unsupported factual claim.' },
+    ],
+  });
+  const responder = (opts) => opts.kind && opts.kind.includes('decision')
+    ? decisionText
+    : 'A concise reply to the visible comment.';
+
+  const rehearsal = profile({
+    id: 'vote-rehearsal', dryRun: true, mode: 'comment', commentsPerHour: 0,
+    canReply: true, canStartDiscussions: false, canShareLinks: false,
+    readFeddits: ['botlife'], postFeddits: ['botlife'],
+  });
+  rehearsal.simulationState = {
+    sched: { nextPostAt: null, nextCommentAt: null, backoffUntil: 0, sentPosts: [], sentComments: [] },
+    repliedTo: [], voteState: { considered: [] },
+    attentionState: { cursor: { comments: 0, posts: 0 }, seenEventIds: [] },
+    socialState: socialRelationships.defaults(), memoryState: autobiographicalMemory.defaults(),
+  };
+  const rehearsalStore = makeStore([rehearsal]);
+  const rehearsalClient = makeFeddit(worldFor());
+  rehearsalClient.calls.vote = [];
+  rehearsalClient.voteAllowance = async () => ({
+    ok: true, status: 200,
+    data: { vote_allowance: { limited: true, limit: 15, used: 0, remaining: 2, on_probation: false } },
+  });
+  rehearsalClient.vote = async (request) => { rehearsalClient.calls.vote.push(request); return { ok: true, status: 200 }; };
+  const rehearsalProviders = makeProviders({ textFor: responder });
+  const rehearsalScheduler = scheduler.createScheduler({
+    store: rehearsalStore, providers: rehearsalProviders, feddit: rehearsalClient,
+    now: clock.now, random: () => 0, getDeepseekKey: KEY,
+  });
+  const rehearsalResult = await rehearsalScheduler.simulateNow(rehearsal.id, 'comment');
+  ok(rehearsalResult.ok, 'rehearsal completes its selected reply');
+  eq(rehearsalProviders.stats().calls, 2, 'voting adds no model call beyond decision plus reply generation');
+  eq(rehearsalClient.calls.vote.length, 0, 'rehearsal never writes votes to Feddit');
+  eq(rehearsalClient.calls.comment.length, 0, 'rehearsal never publishes its selected reply');
+  eq(rehearsal.voteState.considered.length, 0, 'rehearsal voting does not touch live considered-state');
+  eq(rehearsal.simulationState.voteState.considered.length, 2, 'rehearsal records both up/down candidates in isolated state');
+  const rehearsalCard = rehearsal.activity.findLast((entry) => entry.kind === 'comment' && entry.dryRun);
+  eq(rehearsalCard.simulation.decision.votes.map((vote) => vote.status).join(','), 'simulated,simulated',
+    'rehearsal results expose both simulated reactions and their status');
+
+  const live = profile({
+    id: 'vote-live', dryRun: false, mode: 'comment', commentsPerHour: 1,
+    canReply: true, canStartDiscussions: false, canShareLinks: false,
+    readFeddits: ['botlife'], postFeddits: ['botlife'],
+    sched: { nextPostAt: null, nextCommentAt: clock.now() - 1, backoffUntil: 0, sentPosts: [], sentComments: [] },
+  });
+  const liveStore = makeStore([live]);
+  const liveClient = makeFeddit(worldFor());
+  liveClient.calls.vote = [];
+  liveClient.voteAllowance = rehearsalClient.voteAllowance;
+  liveClient.vote = async (request) => {
+    liveClient.calls.vote.push(request);
+    return request.targetId === 10
+      ? { ok: false, status: 500, error: 'temporary vote failure' }
+      : { ok: true, status: 200, data: { score: 0 } };
+  };
+  const liveProviders = makeProviders({ textFor: responder });
+  const liveScheduler = scheduler.createScheduler({
+    store: liveStore, providers: liveProviders, feddit: liveClient,
+    now: clock.now, random: () => 0, getDeepseekKey: KEY,
+  });
+  await liveScheduler.runTick();
+  eq(liveClient.calls.vote.length, 2, 'one opportunity can attempt multiple authoritative vote writes');
+  eq(liveClient.calls.comment.length, 1, 'a failed ancillary vote does not cancel the selected reply');
+  eq(live.voteState.considered.length, 2, 'live up/down decisions are durably considered even when one write fails');
+  eq(liveProviders.stats().calls, 2, 'live voting also adds zero extra model calls');
+
+  const exhausted = profile({
+    id: 'vote-exhausted', dryRun: false, mode: 'comment', commentsPerHour: 1,
+    canReply: true, canStartDiscussions: false, canShareLinks: false,
+    readFeddits: ['botlife'], postFeddits: ['botlife'],
+    sched: { nextPostAt: null, nextCommentAt: clock.now() - 1, backoffUntil: 0, sentPosts: [], sentComments: [] },
+  });
+  const exhaustedClient = makeFeddit(worldFor());
+  exhaustedClient.calls.vote = [];
+  exhaustedClient.voteAllowance = async () => ({
+    ok: true, status: 200,
+    data: { vote_allowance: { limited: true, limit: 3, used: 3, remaining: 0, on_probation: true } },
+  });
+  exhaustedClient.vote = async (request) => { exhaustedClient.calls.vote.push(request); return { ok: true, status: 200 }; };
+  const exhaustedProviders = makeProviders({ textFor: (opts) => opts.kind && opts.kind.includes('decision')
+    ? '{"choice":"C1","reason":"The post is worth answering."}'
+    : 'A reply that still proceeds.' });
+  const exhaustedScheduler = scheduler.createScheduler({
+    store: makeStore([exhausted]), providers: exhaustedProviders, feddit: exhaustedClient,
+    now: clock.now, random: () => 0, getDeepseekKey: KEY,
+  });
+  await exhaustedScheduler.runTick();
+  eq(exhaustedClient.calls.vote.length, 0, 'exhausted authoritative allowance produces no vote writes');
+  ok(!exhaustedProviders.prompts[0].includes('SECONDARY VOTING'),
+    'exhausted allowance does not waste model output on public vote reasons');
+  eq(exhaustedClient.calls.comment.length, 1, 'allowance exhaustion does not block the main reply action');
 }
 
 // Format an epoch-ms as a GDELT seendate string ("20260819T091500Z").
@@ -3312,6 +3440,7 @@ async function scenarioDeepseekReasoning() {
   await scenarioTargetingDedupe();
   await scenarioReliableAttention();
   await scenarioPerProfileMode();
+  await scenarioSecondaryVoting();
   await scenarioImmediateSimulation();
   await scenarioNewsDiscussion();
   await scenarioRealCandidateCompetition();
