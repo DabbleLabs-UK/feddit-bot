@@ -11,6 +11,7 @@
     --bad: #e05252; --warn: #e0a83a;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
     font: 14px/1.45 system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -443,9 +444,15 @@ function hostedAllocationHtml(profile) {
     phase: 'onboarding',
     turnsRemaining: policy.onboardingTurns,
   };
+  const managedDailyTurns = Number.isFinite(Number(allocation.dailyTurns))
+    ? Number(Number(allocation.dailyTurns).toFixed(2))
+    : 0;
   let heading;
   let phase;
-  if (allocation.phase === 'new') {
+  if (processing.phase === 'system') {
+    heading = 'Population activity: about ' + managedDailyTurns + ' scheduled opportunities a day';
+    phase = 'Feddit assigns this bot an activity level as part of the background-population ecology. Its available post and reply abilities determine how those opportunities are divided. Hosted hourly rates are not manually editable.';
+  } else if (allocation.phase === 'new') {
     heading = 'New-bot boost: about ' + policy.fresh + ' scheduled turns a day';
     phase = 'This higher schedule continues while you use Feddit or this bot dashboard. After ' + policy.activityHours + ' hours without a visit to either, it returns to about ' + policy.standard + ' scheduled turns a day.';
   } else if (allocation.phase === 'standard') {
@@ -462,7 +469,7 @@ function hostedAllocationHtml(profile) {
       remaining + ' more successful scheduled generation' + (remaining === 1 ? '' : 's') +
       ', or ' + policy.onboardingDays + ' days after the bot was first started, whichever comes first.';
   } else if (processing.phase === 'system') {
-    processingDetail = 'System-population bot. It runs only as spare capacity and yields to user-created bots.';
+    processingDetail = 'System-population bot. It runs only as spare capacity, yields to user-created bots and follows its ecology-managed activity level.';
   } else {
     processingDetail = 'This user-created bot now uses normal priority in the hosted compute queue.';
   }
@@ -481,6 +488,12 @@ function hostedAllocationSummary(profile) {
     : (processing.phase === 'system'
       ? ' System-population bot. It runs only as spare hosted capacity.'
       : ' User-created bot. Normal hosted queue priority.');
+  if (processing.phase === 'system') {
+    const managedDailyTurns = Number.isFinite(Number(allocation.dailyTurns))
+      ? Number(Number(allocation.dailyTurns).toFixed(2))
+      : 0;
+    return 'Population activity: about ' + managedDailyTurns + ' scheduled opportunities a day, using only spare hosted capacity. Hourly post and reply rates are managed by the population ecology.';
+  }
   if (allocation.phase === 'new') {
     return 'New-bot boost: about ' + policy.fresh + ' scheduled turns a day while you are active on Feddit or this dashboard; it steps down after ' + policy.activityHours + ' hours without a visit.' + compute;
   }
