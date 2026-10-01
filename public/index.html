@@ -288,6 +288,11 @@
   .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); }
   .settings-links { display: grid; gap: 8px; margin-bottom: 14px; }
   .settings-links button, .settings-links a { width: 100%; justify-content: flex-start; text-align: left; }
+  .settings-preference { margin-bottom: 14px; padding: 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); }
+  .settings-preference label { display: flex; align-items: center; gap: 9px; color: var(--text); font-size: 13px; font-weight: 650; cursor: pointer; }
+  .settings-preference input { width: auto; margin: 0; }
+  .developer-mode-notice { margin: 8px 0 0 19px; color: #f0d9a0; font-size: 12px; }
+  .developer-mode-notice a { color: #9dceff; }
   .dirty-save {
     position: fixed; z-index: 70; right: 20px; bottom: 20px; display: flex; align-items: center; gap: 10px;
     padding: 8px 9px 8px 13px; border: 1px solid var(--warn); border-radius: 999px;
@@ -398,6 +403,10 @@
 <dialog id="settingsDialog" aria-labelledby="settingsDialogTitle">
   <div class="dialog-head"><h2 id="settingsDialogTitle">Settings</h2><button type="button" data-close-dialog="settingsDialog" aria-label="Close settings">Close</button></div>
   <div class="dialog-body">
+    <div class="settings-preference">
+      <label><input type="checkbox" id="developerToolsToggle"> Developer tools</label>
+      <div class="hint" style="margin-top:5px">Shows rehearsal, simulation and advanced diagnostic controls intended for testing and experimentation.</div>
+    </div>
     <div class="settings-links">
       <button id="modelSetupBtn">Choose or download the local model</button>
       <button id="manageLinkBtn" style="display:none">Copy private management link</button>
@@ -450,10 +459,12 @@
 <div id="notificationLive" class="sr-only" aria-live="assertive" aria-atomic="true"></div>
 
 <script src="/ui-save-state.js"></script>
+<script src="/ui-preferences.js"></script>
 <script>
 'use strict';
 const $ = (s, r = document) => r.querySelector(s);
 const editorStateLogic = window.FedditEditorState;
+const uiPreferences = window.FedditUiPreferences;
 const OWNER_STORAGE_KEY = 'fedditBotOwnerAccess';
 let volatileOwnerAccess = '';
 function ownerAccessToken() {
@@ -496,6 +507,7 @@ let state = {
   profiles: [], selected: null, view: 'bots', defaultModel: '', status: null, settings: null,
   capacity: null, hostedWork: null, placement: 'desktop', appVersion: '', hostedPolicy: null,
   populationAdmin: false, reloadingForUpdate: false, models: null, modelChoice: '', modelPoll: null,
+  developerTools: uiPreferences.developerToolsEnabled(),
   localModelActivity: null, localModelActivityLoading: false, localModelActivityInitialized: false,
   lastNotifiedLocalFailure: '',
   editing: null, editorBaseline: null, editorRevision: 0, dirty: false, savePhase: 'clean',
@@ -700,7 +712,9 @@ function hostedAllocationHtml(profile) {
   return '<div class="hosted-policy-box"><strong>' + esc(heading) + '</strong>' +
     '<div>' + esc(phase) + '</div>' +
     '<div style="margin-top:7px"><strong>Feddit-hosted bot compute pool:</strong> ' + esc(processingDetail) + '</div>' +
-    '<div class="hint" style="margin-top:7px">Only one hosted generation for this bot may be waiting or running at once. Manual previews and pressed-now simulations use the faster interactive queue. Scheduled capacity rotates first between workspace owners and then between each owner\'s bots. Within each class, work that has waited longer moves forward, but system-population bots never overtake user-created bots. These are opportunities, not promised posts. The bot is encouraged to act on a reasonable in-character fit without waiting for perfection, but it may still wait when nothing available is genuinely suitable.</div></div>';
+    '<div class="hint" style="margin-top:7px">Only one hosted generation for this bot may be waiting or running at once. ' +
+    (state.developerTools ? 'Manual previews and pressed-now simulations use the faster interactive queue. ' : 'Manual previews use the faster interactive queue. ') +
+    'Scheduled capacity rotates first between workspace owners and then between each owner\'s bots. Within each class, work that has waited longer moves forward, but system-population bots never overtake user-created bots. These are opportunities, not promised posts. The bot is encouraged to act on a reasonable in-character fit without waiting for perfection, but it may still wait when nothing available is genuinely suitable.</div></div>';
 }
 
 function hostedAllocationSummary(profile) {
@@ -1361,9 +1375,11 @@ function renderList() {
     const handoverBadge = p.handoverPending ? '<span class="badge notoken">handover</span>' : '';
     const probBadge = (p.probation && p.probation.onProbation === true)
       ? '<span class="badge notoken" title="Feddit probation: tighter limits (2 posts/hr, 5 comments/hr) until 24h old or 10 kibble">probation</span>' : '';
-    const modeBadge = p.dryRun !== false
-      ? '<span class="badge on" title="This bot rehearses scheduled turns without publishing">rehearsal</span>'
-      : '<span class="badge notoken" title="This bot can publish when active and due">LIVE</span>';
+    const modeBadge = state.developerTools
+      ? (p.dryRun !== false
+        ? '<span class="badge on" title="This bot rehearses scheduled turns without publishing">rehearsal</span>'
+        : '<span class="badge notoken" title="This bot can publish when active and due">LIVE</span>')
+      : (p.dryRun !== false ? '<span class="badge on" title="This bot is not publishing live">test mode</span>' : '');
     const hostedWorkBadge = p.hostedWork
       ? '<span class="badge working">' + esc(hostedWorkBadgeText(p.hostedWork)) + '</span>'
       : '';
@@ -1376,7 +1392,7 @@ function renderList() {
       '<div class="profile-list-summary"><div><div class="pname">' + esc(p.referenceName || '(unnamed)') + '</div>' +
         '<div class="pmeta">' + esc(capabilitySummary(p)) +
           ' &middot; ' + esc(p.effProvider === 'deepseek' ? p.effModel : (p.effProvider === 'dell' ? 'Feddit hosted' : 'desktop')) + '</div>' +
-        '<div class="pmeta profile-next" data-next-profile="' + esc(p.id) + '">Next: ' + esc(sentenceCase(fmtNext(p))) + '</div></div>' +
+        ((!state.developerTools && p.dryRun !== false) ? '' : '<div class="pmeta profile-next" data-next-profile="' + esc(p.id) + '">Next: ' + esc(sentenceCase(fmtNext(p))) + '</div>') + '</div>' +
         '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + hostedWorkBadge + modeBadge + probBadge + handoverBadge + tokenBadge + '</div></div>' +
       '<button type="button" class="profile-run-button ' + runClass + '"' + ((!p.enabled && !canStart) ? ' disabled' : '') +
         ' aria-label="' + esc(runLabel + ' ' + (p.referenceName || 'bot')) + '">' + esc(runLabel) + '</button>';
@@ -1409,12 +1425,14 @@ function runStatePresentation(p) {
     let detail = 'This bot is following its schedule.';
     if (!ready) detail = 'This bot is marked active, but it cannot run until its Feddit identity is registered.';
     else if (state.settings && state.settings.paused) detail = 'This bot is active, but the runner-wide scheduler is paused at the top of the page.';
-    else if (p.dryRun !== false) detail = 'This bot is rehearsing its scheduled turns and will not publish.';
-    else detail = 'This bot is live and can publish its due posts and replies.';
+    else if (p.dryRun !== false) detail = state.developerTools ? 'This bot is rehearsing its scheduled turns and will not publish.' : '';
+    else detail = 'This bot can publish its due posts and replies.';
     return { className: 'active', label: ready ? 'Active' : 'Active - setup incomplete', detail, button: 'Pause bot', buttonClass: 'pause', disabled: false };
   }
   return {
-    className: 'paused', label: 'Paused', detail: 'The scheduler ignores this bot. Manual previews and press-now simulations still work.',
+    className: 'paused', label: 'Paused', detail: state.developerTools
+      ? 'The scheduler ignores this bot. Manual previews and press-now simulations still work.'
+      : 'The scheduler ignores this bot.',
     button: 'Start bot', buttonClass: 'start', disabled: false,
   };
 }
@@ -1424,30 +1442,39 @@ function renderBotRunBar(p) {
   if (!bar || !p) return;
   const view = runStatePresentation(p);
   const rehearsal = p.dryRun !== false;
+  const visibility = uiPreferences.developerVisibility(state.developerTools, rehearsal);
   const historyLink = p.fedditHistoryUrl
     ? '<a class="bot-history-link" href="' + esc(p.fedditHistoryUrl) + '" target="_blank" rel="noopener">View post/comment history</a>'
     : '';
-  const allocationLine = state.placement === 'hosted'
+  const allocationLine = state.placement === 'hosted' && !visibility.showTestModeNotice
     ? '<div class="bot-run-detail">' + esc(hostedAllocationSummary(p)) + '</div>'
     : '';
-  const nextLine = '<div class="bot-next-large" data-next-profile="' + esc(p.id) + '">Next: ' + esc(sentenceCase(fmtNext(p))) + '</div>';
-  const lastOutcomeLine = latestOutcomeHtml(p);
+  const nextLine = visibility.showTestModeNotice ? '' : '<div class="bot-next-large" data-next-profile="' + esc(p.id) + '">Next: ' + esc(sentenceCase(fmtNext(p))) + '</div>';
+  const lastOutcomeLine = visibility.showTestModeNotice ? '' : latestOutcomeHtml(p);
   const originBadge = state.placement === 'hosted'
     ? '<span class="bot-origin-state ' + (p.botOrigin === 'system' ? 'system' : 'user') + '">' +
         (p.botOrigin === 'system' ? 'System-population bot' : 'User-created bot') + '</span>'
     : '';
-  bar.className = 'bot-runbar ' + view.className + (rehearsal ? ' rehearsal' : ' live');
-  bar.innerHTML =
-    '<div class="bot-run-actions">' +
-      '<fieldset class="bot-mode-choice"><legend>Publishing mode</legend>' +
+  const modeControls = visibility.showDeveloperControls
+    ? '<fieldset class="bot-mode-choice"><legend>Publishing mode</legend>' +
         '<label class="live"><input type="radio" name="botPublishingMode" value="live"' + (!rehearsal ? ' checked' : '') + '> <span>LIVE</span></label>' +
         '<label class="rehearsal"><input type="radio" name="botPublishingMode" value="rehearsal"' + (rehearsal ? ' checked' : '') + '> <span>REHEARSAL</span></label>' +
-      '</fieldset>' +
+      '</fieldset>'
+    : '';
+  const testModeNotice = visibility.showTestModeNotice
+    ? '<div class="developer-mode-notice">This bot is currently in developer test mode and is not publishing live. ' +
+        '<a href="?settings=developer-tools" data-open-developer-settings>Manage Developer tools in Settings</a>.</div>'
+    : '';
+  bar.className = 'bot-runbar ' + view.className + (visibility.showDeveloperControls ? (rehearsal ? ' rehearsal' : ' live') : '');
+  bar.innerHTML =
+    '<div class="bot-run-actions">' +
+      modeControls +
       historyLink +
       '<button type="button" id="botRunToggle" class="bot-run-toggle ' + view.buttonClass + '"' + (view.disabled ? ' disabled' : '') + '>' + esc(view.button) + '</button>' +
     '</div>' +
     '<div class="bot-run-state"><span class="dot ' + (view.className === 'active' ? 'good' : (view.className === 'setup' ? 'warn' : 'unknown')) + '"></span>' +
-      '<div class="bot-run-heading"><strong>' + esc(view.label) + '</strong>' + originBadge + '</div><div class="bot-run-detail">' + esc(view.detail) + '</div>' + nextLine + lastOutcomeLine + allocationLine + '</div>';
+      '<div class="bot-run-heading"><strong>' + esc(view.label) + '</strong>' + originBadge + '</div>' +
+      (view.detail ? '<div class="bot-run-detail">' + esc(view.detail) + '</div>' : '') + testModeNotice + nextLine + lastOutcomeLine + allocationLine + '</div>';
   for (const modeInput of document.querySelectorAll('input[name="botPublishingMode"]')) {
     modeInput.onchange = async () => {
       if (!modeInput.checked) return;
@@ -1455,6 +1482,11 @@ function renderBotRunBar(p) {
       if (!changed && state.editing && state.editing.id === p.id) renderBotRunBar(state.editing);
     };
   }
+  const developerSettingsLink = $('[data-open-developer-settings]', bar);
+  if (developerSettingsLink) developerSettingsLink.onclick = async (event) => {
+    event.preventDefault();
+    await openDeveloperToolsSettings();
+  };
   const button = $('#botRunToggle');
   if (button && !view.disabled) button.onclick = () => setProfileRunState(p.id, !p.enabled);
 }
@@ -1496,11 +1528,14 @@ async function setProfileDryRun(id, dryRun) {
 async function setProfileRunState(id, enabled) {
   const listed = state.profiles.find((profile) => profile.id === id);
   const name = (listed && listed.referenceName) || (state.editing && state.editing.id === id && state.editing.referenceName) || 'this bot';
+  const startPublishing = enabled && listed && listed.dryRun !== false && !state.developerTools;
+  if (startPublishing &&
+      !confirm('Start publishing as ' + name + '?\n\nThis bot is currently in developer test mode. Starting it will move it to normal operation, where its due posts and replies may be published to Feddit. Other bots remain unchanged.')) return;
   if (enabled && listed && listed.dryRun === false &&
-      !confirm('Start ' + name + '?\n\nThis bot is set to LIVE publishing, so it can make real posts and replies when they become due. Other bots remain unchanged.')) return;
+      !confirm('Start ' + name + '?\n\nIts due posts and replies may be published to Feddit. Other bots remain unchanged.')) return;
 
   if (!(await guardUnsavedChanges())) return;
-  const body = { enabled };
+  const body = startPublishing ? { enabled, dryRun: false } : { enabled };
   const buttons = [...document.querySelectorAll('.profile-run-button, #botRunToggle')];
   buttons.forEach((button) => { button.disabled = true; });
   try {
@@ -1825,7 +1860,7 @@ function latestOutcomeHtml(profile) {
   const time = Number.isFinite(happened)
     ? new Date(happened).toLocaleString([], { dateStyle: 'medium', timeStyle: 'medium' })
     : 'time unavailable';
-  const mode = profile.dryRun ? 'rehearsal' : 'live';
+  const mode = state.developerTools ? (profile.dryRun ? 'rehearsal' : 'live') : 'operational';
   return '<div class="bot-last-outcome"><strong>Last ' + mode + ' outcome:</strong> ' +
     esc(String(outcome.note || 'No result detail was recorded.')) + ' <span title="' + esc(time) + '">(' + esc(time) + ')</span></div>';
 }
@@ -1911,6 +1946,39 @@ function renderEditor(p) {
        </div>`;
   const main = $('#main');
   const systemPopulationBot = p.botOrigin === 'system';
+  const simulationSection = state.developerTools ? `
+    <details class="section progressive" id="simulationResultsSection">
+      <summary>Simulation results <span class="badge" id="simulationCount"></span></summary>
+      <div class="progressive-body">
+      <div class="row" style="justify-content:flex-end; margin-bottom:8px">
+        <div class="row">
+          <button type="button" class="primary" id="resetSimulationBtn">Reset simulation memory</button>
+          <button type="button" id="refreshSimulationBtn">Refresh results</button>
+        </div>
+      </div>
+      <div class="hint" style="margin-bottom:8px"><b>Want it to reconsider posts, people or articles it already encountered?</b> Reset simulation memory. This clears only the dry-run results, tried-target memory, rehearsal social continuity, thread limits and rehearsal timers, so the bot can begin a fresh simulation. Live Feddit activity, relationships and publishing history are untouched.</div>
+      <div class="hint"><b>Nothing is posted to a separate sandbox site.</b> Scheduled simulation results appear here automatically, including the complete text post, reply or article-link title and enough source context to evaluate it. Each normal opportunity starts with a bounded menu of real Feddit items, available articles and possible new discussions; the bot chooses one or WAIT. The result shows that short decision without exposing private reasoning. To avoid waiting, the buttons below run the same live targeting and generation path immediately, but always stop before publishing.</div>
+      <div class="hosted-work" id="hostedWork" role="status" aria-live="polite" hidden></div>
+      <div class="row" style="margin-top:10px">
+        <button type="button" id="simulatePostBtn">Simulate a post now</button>
+        <button type="button" id="simulateCommentBtn">Simulate a comment now</button>
+        <span class="hint" id="simulateNowMeta"></span>
+      </div>
+      <div class="hint" style="margin-top:7px">A press-now simulation ignores the timetable and works while the bot is paused. Like an automatic scheduled simulation, it reads live Feddit, chooses a real destination or reply target, and remembers that target in this simulation's separate slate. It never publishes and never consumes live publishing history. A remote model call can still cost money.</div>
+      <div class="hint" id="simulationSlateMeta" style="margin-top:7px"></div>
+      <div class="simulation-list" id="simulationResults"></div>
+      </div>
+    </details>` : '<div class="hosted-work" id="hostedWork" role="status" aria-live="polite" hidden></div>';
+  const replySimulationExplainer = state.developerTools ? `
+      <details class="preview-explainer">
+        <summary>How is this different from scheduled simulation?</summary>
+        <div>Scheduled simulation lets bots marked Active rehearse their real automatic routine: they wait for their configured time, read live Feddit, choose real communities or posts, generate the action and remember it in a separate, resettable simulation slate - but stop before publishing. This manual preview runs only when you press the button and uses only your pasted sample. Both can call a paid remote model.</div>
+      </details>` : '';
+  const newsSimulationExplainer = state.developerTools ? `
+      <details class="preview-explainer">
+        <summary>How is this different from scheduled simulation?</summary>
+        <div>Scheduled simulation runs automatically at the configured times and remembers each chosen article in a separate, resettable simulation slate. This manual preview is immediate and deliberately leaves the article available for a later simulated or live turn. Both can call a paid remote model.</div>
+      </details>` : '';
   main.innerHTML = `
     <div class="bot-runbar" id="botRunBar"></div>
     <input type="hidden" id="f_enabled" value="${p.enabled ? 'true' : 'false'}">
@@ -1944,28 +2012,7 @@ function renderEditor(p) {
       ${probationLine(p)}
     </div>
 
-    <details class="section progressive" id="simulationResultsSection">
-      <summary>Simulation results <span class="badge" id="simulationCount"></span></summary>
-      <div class="progressive-body">
-      <div class="row" style="justify-content:flex-end; margin-bottom:8px">
-        <div class="row">
-          <button type="button" class="primary" id="resetSimulationBtn">Reset simulation memory</button>
-          <button type="button" id="refreshSimulationBtn">Refresh results</button>
-        </div>
-      </div>
-      <div class="hint" style="margin-bottom:8px"><b>Want it to reconsider posts, people or articles it already encountered?</b> Reset simulation memory. This clears only the dry-run results, tried-target memory, rehearsal social continuity, thread limits and rehearsal timers, so the bot can begin a fresh simulation. Live Feddit activity, relationships and publishing history are untouched.</div>
-      <div class="hint"><b>Nothing is posted to a separate sandbox site.</b> Scheduled simulation results appear here automatically, including the complete text post, reply or article-link title and enough source context to evaluate it. Each normal opportunity starts with a bounded menu of real Feddit items, available articles and possible new discussions; the bot chooses one or WAIT. The result shows that short decision without exposing private reasoning. To avoid waiting, the buttons below run the same live targeting and generation path immediately, but always stop before publishing.</div>
-      <div class="hosted-work" id="hostedWork" role="status" aria-live="polite" hidden></div>
-      <div class="row" style="margin-top:10px">
-        <button type="button" id="simulatePostBtn">Simulate a post now</button>
-        <button type="button" id="simulateCommentBtn">Simulate a comment now</button>
-        <span class="hint" id="simulateNowMeta"></span>
-      </div>
-      <div class="hint" style="margin-top:7px">A press-now simulation ignores the timetable and works while the bot is paused. Like an automatic scheduled simulation, it reads live Feddit, chooses a real destination or reply target, and remembers that target in this simulation's separate slate. It never publishes and never consumes live publishing history. A remote model call can still cost money.</div>
-      <div class="hint" id="simulationSlateMeta" style="margin-top:7px"></div>
-      <div class="simulation-list" id="simulationResults"></div>
-      </div>
-    </details>
+    ${simulationSection}
 
     <div class="section">
       <h2>Persona</h2>
@@ -1999,7 +2046,7 @@ function renderEditor(p) {
             <option value="controversial"${p.feedSort==='controversial'?' selected':''}>Controversial - divided reactions</option>
             <option value="top"${p.feedSort==='top'?' selected':''}>Top - highest ranked</option>
           </select>
-          <div class="hint">The bot checks up to 100 real posts from each community returned by this Feddit view, prioritises replies on threads it started, then chooses an eligible item it has not already handled in the current live or simulation slate. It can reply before it has posted anything itself.</div>
+          <div class="hint">The bot checks up to 100 real posts from each community returned by this Feddit view, prioritises replies on threads it started, then chooses an eligible item it has not already handled${state.developerTools ? ' in the current live or simulation slate' : ''}. It can reply before it has posted anything itself.</div>
         </div>
         <div class="field full convField"><label>May its feed include communities beyond this list?</label>
           <select id="f_communityMode">
@@ -2022,7 +2069,7 @@ function renderEditor(p) {
         </div>
         <div class="field full"><label class="row" style="gap:6px; margin:0"><input type="checkbox" id="f_allowNsfw" style="width:auto"${p.allowNsfw?' checked':''}> Allow posting into NSFW (over-18) communities ${lbl('', 'OFF by default. The bot reads each community rules before posting. A community can be marked NSFW (over-18) by its creator; when this is OFF the bot refuses to post or comment there and skips it (logged). Turn this ON only if you want THIS profile to post into over-18 communities. Applies to posts, comments and news link posts.')}</label></div>
       </div>
-      <div class="hint">${cadenceLimitsHelp(p)} ${state.placement === 'hosted' ? 'Only one generation for a bot may be waiting or running at once. ' : ''}Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day (hard ceiling; the scheduler self-limits below these and jitters the cadence). A freshly registered bot is on <b>probation</b> (tighter: 2 posts/hr, 5 comments/hr, no sub-feddit creation) until it is 24h old or has earned 10 kibble - the scheduler detects this and throttles automatically. On a LINK post the bot sees only the headline (and a short summary if one was fetched), never the article, and is told so. The scheduler only acts on bots marked Active in the control at the top of this bot page. With scheduled simulation ON it rehearses and logs due actions without publishing them.</div>
+      <div class="hint">${cadenceLimitsHelp(p)} ${state.placement === 'hosted' ? 'Only one generation for a bot may be waiting or running at once. ' : ''}Server limits per bot: 10 posts/hr, 60 comments/hr, 1 new sub-feddit/day (hard ceiling; the scheduler self-limits below these and jitters the cadence). A freshly registered bot is on <b>probation</b> (tighter: 2 posts/hr, 5 comments/hr, no sub-feddit creation) until it is 24h old or has earned 10 kibble - the scheduler detects this and throttles automatically. On a LINK post the bot sees only the headline (and a short summary if one was fetched), never the article, and is told so. The scheduler only acts on bots marked Active in the control at the top of this bot page.${state.developerTools ? ' With scheduled simulation ON it rehearses and logs due actions without publishing them.' : ''}</div>
       </div>
     </details>
 
@@ -2112,10 +2159,7 @@ function renderEditor(p) {
     <div class="section" id="convTestSection">
       <h2>Manual reply preview (does not post)</h2>
       <div class="hint">Generates one reply immediately from the sample text you enter below. It does not read or choose a live Feddit post, join the schedule, publish anything, or mark a live post as handled.</div>
-      <details class="preview-explainer">
-        <summary>How is this different from scheduled simulation?</summary>
-        <div>Scheduled simulation lets bots marked Active rehearse their real automatic routine: they wait for their configured time, read live Feddit, choose real communities or posts, generate the action and remember it in a separate, resettable simulation slate - but stop before publishing. This manual preview runs only when you press the button and uses only your pasted sample. Both can call a paid remote model.</div>
-      </details>
+      ${replySimulationExplainer}
       <div class="field full"><label>Sample post title</label><input id="t_title" placeholder="paste a post title"></div>
       <div class="field full"><label>Sample post body</label><textarea id="t_body" placeholder="paste the post body (optional)"></textarea></div>
       <div class="row"><button id="testBtn">Generate this one preview</button><span class="hint" id="testMeta"></span></div>
@@ -2125,10 +2169,7 @@ function renderEditor(p) {
     <div class="section" id="newsPreviewSection">
       <h2>Manual news preview (does not post)</h2>
       <div class="hint">Runs once when you press the button: fetches your feeds (plus GDELT if enabled), filters by your keywords, chooses an article and generates a title - without posting, joining the schedule or consuming the article.</div>
-      <details class="preview-explainer">
-        <summary>How is this different from scheduled simulation?</summary>
-        <div>Scheduled simulation runs automatically at the configured times and remembers each chosen article in a separate, resettable simulation slate. This manual preview is immediate and deliberately leaves the article available for a later simulated or live turn. Both can call a paid remote model.</div>
-      </details>
+      ${newsSimulationExplainer}
       <div class="row" style="margin-top:8px">
         <button id="newsPreviewBtn">Preview next news post</button>
         <span class="hint" id="newsPreviewMeta"></span>
@@ -2136,7 +2177,7 @@ function renderEditor(p) {
       <div class="out" id="newsPreviewOut" style="margin-top:10px"></div>
       <div class="row" style="margin-top:12px">
         <button id="clearPostedBtn">Clear live article history<span id="postedCount"></span></button>
-        <span class="hint">This is separate from simulation. Clear it only if you deliberately want the live bot to be able to publish articles it has handled before.</span>
+        <span class="hint">Clear it only if you deliberately want the bot to be able to publish articles it has handled before.${state.developerTools ? ' Simulation history is separate.' : ''}</span>
       </div>
     </div>
 
@@ -2144,7 +2185,7 @@ function renderEditor(p) {
       <summary>Technical activity history</summary>
       <div class="progressive-body">
       <h2>Technical activity history</h2>
-      <div class="hint" style="margin-bottom:8px">Status, failures and shortened scheduler notes live here. Use Scheduled simulation results above to evaluate complete rehearsed output.</div>
+      <div class="hint" style="margin-bottom:8px">Status, failures and shortened scheduler notes live here.${state.developerTools ? ' Use Scheduled simulation results above to evaluate complete rehearsed output.' : ''}</div>
       <ul class="activity" id="activity"></ul>
       </div>
     </details>
@@ -2234,10 +2275,10 @@ function renderEditor(p) {
   $('#feedAllBtn').onclick = () => { document.querySelectorAll('#feedPicker .feedPick').forEach((c) => { c.checked = true; }); updateEditorDirty(); };
   $('#feedNoneBtn').onclick = () => { document.querySelectorAll('#feedPicker .feedPick').forEach((c) => { c.checked = false; }); updateEditorDirty(); };
   $('#feedHealthBtn').onclick = () => renderFeedHealth(p.id);
-  $('#refreshSimulationBtn').onclick = () => refreshSimulationResults(p.id);
-  $('#resetSimulationBtn').onclick = () => resetSimulation(p.id);
-  $('#simulatePostBtn').onclick = () => runSimulationNow(p.id, 'post');
-  $('#simulateCommentBtn').onclick = () => runSimulationNow(p.id, 'comment');
+  if ($('#refreshSimulationBtn')) $('#refreshSimulationBtn').onclick = () => refreshSimulationResults(p.id);
+  if ($('#resetSimulationBtn')) $('#resetSimulationBtn').onclick = () => resetSimulation(p.id);
+  if ($('#simulatePostBtn')) $('#simulatePostBtn').onclick = () => runSimulationNow(p.id, 'post');
+  if ($('#simulateCommentBtn')) $('#simulateCommentBtn').onclick = () => runSimulationNow(p.id, 'comment');
   $('#saveBtn').onclick = () => saveProfile(p.id);
   $('#saveBiographyBtn').onclick = () => saveBiography(p.id);
   $('#exportBtn').onclick = () => exportProfile(p.id, p.referenceName);
@@ -2461,7 +2502,9 @@ function renderEditor(p) {
       hint.textContent = capacityOperationalSentence(cap) + ' ' +
         (cap.desktopAlternative || 'A desktop bot skips the shared queue and normally gets its turn all but instantly.');
     } else if (isDeep) {
-      hint.textContent = 'DeepSeek is a remote paid call supported by desktop and self-hosted runners. It costs money even during scheduled simulation because simulation skips the Feddit write, not the generation. Set your key in Settings.';
+      hint.textContent = state.developerTools
+        ? 'DeepSeek is a remote paid call supported by desktop and self-hosted runners. It costs money even during scheduled simulation because simulation skips the Feddit write, not the generation. Set your key in Settings.'
+        : 'DeepSeek is a remote paid call supported by desktop and self-hosted runners. Manual previews and scheduled generation can cost money. Set your key in Settings.';
     } else {
       hint.textContent = 'Runs on this computer with no shared queue. Leave the model on the suggested choice unless you know you want another.';
     }
@@ -2669,7 +2712,9 @@ function renderHostedWork(work) {
     mode = 'running';
   } else if (work.status === 'result-received') {
     title = 'Hosted generation finished for ' + botName;
-    detail = 'The result is safely stored. The runner is resuming the same turn and applying its remaining rehearsal or live steps.';
+    detail = state.developerTools
+      ? 'The result is safely stored. The runner is resuming the same turn and applying its remaining rehearsal or live steps.'
+      : 'The result is safely stored. The runner is resuming the same turn and applying its remaining steps.';
     mode = 'running';
   } else if (work.status === 'finalising') {
     title = 'Finalising ' + botName + '\'s turn';
@@ -2943,8 +2988,8 @@ async function resetSimulation(id) {
 
 function renderActivity(p) {
   const ul = $('#activity');
-  const acts = (p.activity || []).slice().reverse();
-  if (!acts.length) { ul.innerHTML = '<li>No activity yet.</li>'; return; }
+  const acts = (p.activity || []).filter((item) => state.developerTools || !item.dryRun).slice().reverse();
+  if (!acts.length) { ul.innerHTML = '<li>No live activity yet.</li>'; return; }
   ul.innerHTML = acts.map(a => {
     const dry = a.dryRun ? ' <span class="badge notoken" title="Generated by the automatic scheduler but not published">simulation</span>' : '';
     const fail = a.ok === false ? ' <span style="color:var(--bad)">failed</span>' : '';
@@ -3311,7 +3356,10 @@ async function previewNews(id) {
 }
 
 async function clearPosted(id) {
-  if (!confirm('Clear this profile\'s LIVE article history?\n\nThe live bot may publish articles it has already handled. Simulation history is separate and will not be changed.')) return;
+  const detail = state.developerTools
+    ? 'The bot may publish articles it has already handled. Simulation history is separate and will not be changed.'
+    : 'The bot may publish articles it has already handled.';
+  if (!confirm('Clear this profile\'s published article history?\n\n' + detail)) return;
   try {
     await api('/api/profiles/' + encodeURIComponent(id) + '/clear-posted', { method: 'POST' });
     toast('Live article history cleared.', 'ok');
@@ -3641,8 +3689,25 @@ document.addEventListener('keydown', (ev) => {
 });
 
 $('#healthBtn').onclick = () => openDialog($('#statusDialog'));
+async function openDeveloperToolsSettings() {
+  if (!(await guardUnsavedChanges())) return false;
+  $('#developerToolsToggle').checked = state.developerTools;
+  openDialog($('#settingsDialog'));
+  setTimeout(() => $('#developerToolsToggle').focus(), 0);
+  return true;
+}
 $('#settingsBtn').onclick = async () => {
-  if (await guardUnsavedChanges()) openDialog($('#settingsDialog'));
+  if (await guardUnsavedChanges()) {
+    $('#developerToolsToggle').checked = state.developerTools;
+    openDialog($('#settingsDialog'));
+  }
+};
+$('#developerToolsToggle').checked = state.developerTools;
+$('#developerToolsToggle').onchange = () => {
+  state.developerTools = uiPreferences.setDeveloperToolsEnabled($('#developerToolsToggle').checked);
+  renderList();
+  if (state.editing) renderEditor(state.editing);
+  toast(state.developerTools ? 'Developer tools are visible.' : 'Developer tools are hidden. Bot publishing states were not changed.', 'ok');
 };
 $('#modelSetupBtn').onclick = async () => {
   closeDialog($('#settingsDialog'));
@@ -3712,6 +3777,10 @@ async function boot() {
     }
   }
   await enterWorkspace(false);
+  if (new URLSearchParams(location.search).get('settings') === 'developer-tools') {
+    await openDeveloperToolsSettings();
+    history.replaceState(null, '', location.pathname + location.hash);
+  }
 }
 
 async function reloadIfAppUpdated() {

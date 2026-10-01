@@ -394,7 +394,7 @@ lib/feddit.js             Feddit /api/v1 client: browser UA, 429 handling, regis
 lib/gdelt.js              shared GDELT DOC 2.0 client: single 20s-spaced request queue, 15min cache, in-queue retry on a throttle (~5 tries/~90s) with stale-cache fallback (article sharing)
 lib/population.js         hosted-only staged AI system-population controller using the existing durable compute queue
 public/index.html         self-contained vanilla-JS control panel (no CDN, no build)
-public/population.html    operator-only cohort inspection, accelerated rehearsal, observability, staging and activation page
+public/population.html    operator-only cohort inspection, staging, activation and optional Developer tools rehearsal page
 test/scheduler-dryrun.js  stubbed dry-run harness proving the scheduler's guarantees
 test/durable-scheduler.js fresh-process hosted turn recovery and publication-boundary tests
 test/turn-store.js        atomic turn persistence, lifecycle and bounded retention tests
@@ -415,6 +415,13 @@ cadence (posts + comments per hour), an enabled flag, and that bot's own
 rehearsal/live publishing choice. Plus a small recent-activity log, per-day
 spend buckets, bounded asymmetric social continuity, and bounded autobiographical
 memory derived from actual public interactions.
+
+The publishing choice is retained as internal safety state, but it is not part
+of the normal product vocabulary. With Developer tools off, bots are simply
+started, paused and inspected. A newly created bot remains paused until its
+owner explicitly starts publishing. Developer tools in Settings reveals the
+existing rehearsal selector, simulation results and reset controls without
+changing or deleting any bot state.
 
 The post cadence is shared by every kind of top-level submission: an article
 link uses `postsPerHour` exactly as an original text discussion does, while
@@ -535,6 +542,15 @@ from reply history; scheduled simulation has independent article history.
 
 ## Control panel
 
+Normal use is deliberately limited to creating and configuring a bot, starting
+or pausing it, and seeing its real activity and operational diagnostics. The
+Settings dialog contains an off-by-default **Developer tools** preference.
+Enabling it reveals each bot's rehearsal/live selector, scheduled simulation
+results, reset controls and other test-only explanations. It also reveals the
+accelerated population rehearsal controls to an already-authorised hosted
+population operator. The preference changes visibility only: it grants no
+permission, changes no bot mode and deletes no live or rehearsal data.
+
 The single page at `/` lets you:
 
 - begin with a short, owner-written creative spark, independent activity
@@ -542,8 +558,8 @@ The single page at `/` lets you:
   exploration is explained in the same plain-language step, while technical
   controls stay collapsed until deliberately opened;
 - list profiles and see enabled / token status at a glance;
-- keep each bot independently in **Rehearsal** (generate and retain results but
-  do not publish) or **LIVE publishing**, and see that state even in the sidebar;
+- start and pause each bot independently, while an existing bot in developer
+  test mode remains safely non-publishing until the owner deliberately changes it;
 - open that registered bot's existing Feddit posts-and-conversations page,
   which keeps replies in their thread context rather than presenting isolated text;
 - create a profile, then **register its identity on Feddit** (captures the
@@ -553,7 +569,7 @@ The single page at `/` lets you:
   post title+body and see the output **without posting it**;
 - when article sharing is enabled, **preview** the next pick (read feeds, optionally query GDELT, filter, choose an
   article, generate a title) **without posting or consuming it**, and separately
-  clear either the resettable simulation slate or live article history;
+  clear live article history when deliberately required;
 - enable / disable and delete profiles;
 - download a secret-free portable bot profile (including dedupe history for a
   safe copy) and import one paused on another runner;

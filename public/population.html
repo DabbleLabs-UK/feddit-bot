@@ -96,7 +96,7 @@ select { width:100%; padding:8px; border:1px solid #526373; border-radius:5px; b
       <button id="expandAll">Expand all</button>
       <button id="collapseAll">Collapse all</button>
     </div>
-    <p class="hint">Generation does not register or activate anything. Review the compact seeds, then stage them as disabled rehearsal profiles. Starting rehearsal still publishes nothing. LIVE activation is a separate explicit action.</p>
+    <p class="hint" id="generationSafety"></p>
     <div id="message"></div>
   </section>
   <div id="cohorts"><div class="empty">Loading population state...</div></div>
@@ -104,11 +104,16 @@ select { width:100%; padding:8px; border:1px solid #526373; border-radius:5px; b
   <section class="panel" id="detachedProfilesPanel" hidden></section>
   <section class="panel" id="archivedPanel" hidden></section>
 </main>
+<script src="/ui-preferences.js"></script>
 <script>
 'use strict';
 const OWNER_STORAGE_KEY = 'fedditBotOwnerAccess';
 const $ = (selector, root = document) => root.querySelector(selector);
 const esc = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+const developerTools = window.FedditUiPreferences.developerToolsEnabled();
+$('#generationSafety').textContent = developerTools
+  ? 'Generation does not register or activate anything. Review the compact seeds, then stage them as disabled rehearsal profiles. Starting rehearsal still publishes nothing. LIVE activation is a separate explicit action.'
+  : 'Generation does not register or activate anything. Review the compact seeds, then stage them as paused profiles. Activating them is a separate explicit action.';
 function ownerToken() { try { return localStorage.getItem(OWNER_STORAGE_KEY) || ''; } catch { return ''; } }
 async function api(path, options = {}) {
   const headers = options.body ? {'Content-Type':'application/json'} : {};
@@ -123,6 +128,12 @@ async function api(path, options = {}) {
 function message(value, error) {
   $('#message').textContent = value || '';
   $('#message').className = error ? 'error' : 'meta';
+}
+function statusLabel(status) {
+  if (developerTools) return status;
+  if (status === 'rehearsal') return 'test mode';
+  if (status === 'live') return 'active';
+  return status;
 }
 function configurationLabel(configuration) {
   const config = configuration || {};
@@ -149,13 +160,13 @@ function candidateHtml(candidate) {
       ' visible actions in 7 days. Opportunity direction: about ' + Math.round(Number(activity.postOpportunityShare || 0) * 100) +
       '% posts / ' + Math.round(Number(activity.replyOpportunityShare || 0) * 100) + '% replies.</p>'
     : '';
-  if (!seed) return '<div class="candidate"><h3>Candidate ' + (candidate.slot + 1) + ' <span class="status ' + esc(candidate.status) + '">' + esc(candidate.status) + '</span></h3>' +
+  if (!seed) return '<div class="candidate"><h3>Candidate ' + (candidate.slot + 1) + ' <span class="status ' + esc(candidate.status) + '">' + esc(statusLabel(candidate.status)) + '</span></h3>' +
     '<p class="meta">Attempts: ' + esc(attempts || 'not started') + '</p>' +
     (candidate.error ? '<p class="error">' + esc(candidate.error) + '</p>' : '') + '</div>';
   const controls = candidate.profileId && !candidate.archived
     ? '<div class="row actions"><button data-profile-action="archive" data-profile-id="' + esc(candidate.profileId) + '" data-profile-name="' + esc(seed.username) + '">Archive from bot dashboard</button></div>'
     : (candidate.archived ? '<p class="meta">Archived from the ordinary bot dashboard. Restore or permanently forget it in Archived bots at the bottom of this page.</p>' : '');
-  return '<div class="candidate"><h3>' + esc(seed.username) + ' <span class="status ' + esc(candidate.status) + '">' + esc(candidate.status) + '</span></h3>' +
+  return '<div class="candidate"><h3>' + esc(seed.username) + ' <span class="status ' + esc(candidate.status) + '">' + esc(statusLabel(candidate.status)) + '</span></h3>' +
     '<p>' + esc(seed.biography) + '</p>' +
     '<p><b>Temperament:</b> ' + esc(seed.temperament) + '</p>' +
     '<p><b>Interests:</b> ' + esc(seed.interests.join(', ')) + '</p>' +
@@ -174,7 +185,7 @@ function renderArchived(items) {
   if (!items.length) { panel.hidden = true; panel.innerHTML = ''; return; }
   panel.hidden = false;
   panel.innerHTML = '<h2 style="margin-top:0">Archived bots</h2>' +
-    '<p>These bots are paused and hidden from the ordinary dashboard. Restoring is safe and returns a bot in paused rehearsal mode.</p>' +
+    '<p>These bots are paused and hidden from the ordinary dashboard. Restoring is safe and returns a bot paused in developer test mode. <a href="/?settings=developer-tools">Manage Developer tools in Settings</a>.</p>' +
     '<p class="hint"><b>Permanently forget</b> is different: it deletes this runner\'s profile and protected token. It does not erase the bot account or its existing posts and comments from Feddit, and this interface will no longer be able to control that identity.</p>' +
     items.map((item) => '<div class="candidate"><div class="row"><h3 style="margin:0">' + esc(item.username) + '</h3><span class="status archived">archived</span></div>' +
       '<p class="meta">Archived ' + esc(item.archivedAt) + (item.cohortId ? '. Cohort ' + esc(item.cohortId.slice(-8)) : '') + '.</p>' +
@@ -210,10 +221,10 @@ function renderHiddenCohorts(items) {
   panel.hidden = false;
   panel.innerHTML = '<h2 style="margin-top:0">Hidden cohort records</h2>' +
     '<p>These records are hidden only to declutter this page. Their bot profiles, Feddit identities and public activity are untouched.</p>' +
-    '<p class="hint"><b>Permanently remove record</b> deletes the cohort\'s generation and rehearsal record only. It still does not delete, pause or change any bot created from it.</p>' +
+    '<p class="hint"><b>Permanently remove record</b> deletes the cohort record only. It still does not delete, pause or change any bot created from it.</p>' +
     items.map((item) => {
       const code = String(item.id).slice(-8);
-      return '<div class="candidate"><div class="row"><h3 style="margin:0">Cohort ' + esc(code) + '</h3><span class="status ' + esc(item.status) + '">' + esc(item.status) + '</span></div>' +
+      return '<div class="candidate"><div class="row"><h3 style="margin:0">Cohort ' + esc(code) + '</h3><span class="status ' + esc(item.status) + '">' + esc(statusLabel(item.status)) + '</span></div>' +
         '<p class="meta">Hidden ' + esc(item.hiddenAt) + '. Created ' + esc(item.createdAt) + '. ' + Number(item.requestedCount) + ' requested bots; ' + Number(item.linkedProfiles) + ' linked profiles remain.</p>' +
         (item.direction ? '<p>' + esc(item.direction) + '</p>' : '') +
         '<div class="row actions"><button data-cohort-record-action="restore-record" data-cohort-id="' + esc(item.id) + '">Restore record to page</button>' +
@@ -229,7 +240,7 @@ function bindCohortRecordActions() {
       const code = button.dataset.cohortCode || String(id).slice(-8);
       let body = {};
       if (action === 'forget-record') {
-        const typed = prompt('This deletes only the cohort generation and rehearsal record. It does not delete or change any bot profile, Feddit identity, post or comment.\n\nType the cohort code to continue:\n' + code);
+        const typed = prompt('This deletes only the cohort record. It does not delete or change any bot profile, Feddit identity, post or comment.\n\nType the cohort code to continue:\n' + code);
         if (typed !== code) { if (typed != null) message('The cohort code did not match. Nothing was removed.', true); return; }
         if (!confirm('Final confirmation: permanently remove cohort record ' + code + '? Its bots will remain unchanged.')) return;
         body = {confirmCohort:code, confirmation:'PERMANENTLY REMOVE RECORD'};
@@ -262,7 +273,7 @@ function bindProfileActions() {
       button.disabled = true;
       try {
         await api('/api/population/profiles/' + encodeURIComponent(id) + '/' + action, {method:'POST', body});
-        message(action === 'archive' ? name + ' was paused and archived.' : action === 'restore' ? name + ' was restored in paused rehearsal mode.' : name + ' was permanently forgotten by this runner.');
+        message(action === 'archive' ? name + ' was paused and archived.' : action === 'restore' ? name + ' was restored paused in developer test mode.' : name + ' was permanently forgotten by this runner.');
         await load();
       } catch (error) { message(error.message, true); button.disabled = false; }
     };
@@ -272,6 +283,7 @@ function countList(items, empty = 'none') {
   return (items || []).length ? items.map((item) => esc(item.name) + ' ' + Number(item.count)).join(', ') : empty;
 }
 function rehearsalHtml(cohort) {
+  if (!developerTools) return '';
   const run = cohort.rehearsalRun;
   const eligible = ['staged','rehearsal'].includes(cohort.status);
   if (!run) return eligible ? '<div class="rehearsal"><h3>Accelerated rehearsal</h3>' +
@@ -312,7 +324,7 @@ function rehearsalHtml(cohort) {
 function cohortActions(cohort) {
   const stage = ['ready','stage-failed'].includes(cohort.status)
     ? '<button data-action="stage">Stage accounts</button>' : '';
-  const rehearsal = ['staged','rehearsal','live'].includes(cohort.status)
+  const rehearsal = developerTools && ['staged','rehearsal','live'].includes(cohort.status)
     ? '<button data-action="rehearsal">Start rehearsal</button>' : '';
   const live = ['staged','rehearsal','live'].includes(cohort.status)
     ? '<button class="live" data-action="live">Activate LIVE</button>' : '';
@@ -343,13 +355,14 @@ function render(data) {
       : '';
     const open = openCohorts.has(cohort.id) || (firstCohortRender && cohort.status === 'generating');
     return '<details class="cohort" data-id="' + esc(cohort.id) + '" ' + (open ? 'open' : '') + '>' +
-    '<summary><span class="cohort-summary"><b>Cohort ' + esc(cohort.id.slice(-8)) + '</b><span class="status ' + esc(cohort.status) + '">' + esc(cohort.status) + '</span>' +
+    '<summary><span class="cohort-summary"><b>Cohort ' + esc(cohort.id.slice(-8)) + '</b><span class="status ' + esc(cohort.status) + '">' + esc(statusLabel(cohort.status)) + '</span>' +
     '<span class="meta">' + Number(cohort.requestedCount) + ' bots; created ' + esc(cohort.createdAt) + (cohort.direction ? '; ' + esc(cohort.direction) : '') + '</span></span></summary>' +
     '<div class="cohort-body">' +
     '<p class="meta">AI-generated system population. Requested ' + Number(cohort.requestedCount) + '. Compute: hosted pool. Queue class: synthetic. Created ' + esc(cohort.createdAt) + '.</p>' +
     (cohort.direction ? '<p><b>Creative direction:</b> ' + esc(cohort.direction) + '</p>' : '') +
     '<p><b>Structured controls:</b> ' + configurationLabel(cohort.configuration) + '.</p>' +
     distributionLine +
+    (!developerTools && cohort.status === 'rehearsal' ? '<p class="warning">This cohort is currently in developer test mode and is not publishing live. <a href="/?settings=developer-tools">Manage Developer tools in Settings</a>.</p>' : '') +
     '<div class="row actions">' + cohortActions(cohort) + '</div>' +
     rehearsalHtml(cohort) +
     (cohort.candidates || []).map(candidateHtml).join('') + '</div></details>';

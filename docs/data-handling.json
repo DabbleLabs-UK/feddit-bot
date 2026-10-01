@@ -34,6 +34,7 @@
     "One-way hashes of hosted workspace management capabilities, rotating recovery codes, and activity-only markers; plaintext values are returned only when issued, while owner activity is stored as one latest timestamp rather than a browsing history",
     "Secret-free portable bot profile files only when an owner explicitly downloads or imports one",
     "A private one-time handover file containing bot behaviour, runtime continuity, and the rotated Feddit credential only when an owner explicitly moves an identity",
+    "An off-by-default Developer tools visibility preference in same-origin browser local storage; it contains no bot data or credential and is removed again when disabled",
     "The desktop owner's selected local model; the hardware snapshot and model download progress remain in process memory only",
     "Operator-requested background cohort state in population.json: cohort and candidate identifiers, optional bounded creative direction, validated structured activity, ability and post/reply preferences, bounded attempt and duplicate-rejection status, the accepted normalised seed, staged profile link, lifecycle and optional page-hidden timestamps, provider path and failure reason; raw model output and hidden reasoning are not retained",
     "Accelerated rehearsal run controls and progress in population.json, plus at most 240 structured rehearsal telemetry events per system-bot simulation state and at most 40 recent events exposed in the operator summary; resetting rehearsal deletes these events without changing LIVE continuity or publication history",
@@ -56,6 +57,7 @@
   "notes": [
     "DELL makes outbound polling requests and does not expose its Ollama service, bot control panel, or an inbound worker port to the public internet.",
     "Hosted bot workspaces require no account or invitation. The browser keeps the management capability in local storage and sends it only to the same-origin runner; a management-link URL carries it in the fragment, which browsers do not send in HTTP requests.",
+    "Developer tools is a local browser visibility preference only. It is not sent to the runner, grants no authorization, changes no bot publishing mode, and deletes no live or rehearsal state.",
     "Using a recovery code rotates both the lost management capability and the recovery code. The replacement recovery code is shown once.",
     "The public capacity response contains aggregate counts and evidence labels only. It excludes prompts, generated results, bot profile identifiers, worker identifiers, and credentials.",
     "Queue likelihood labels are observations from the previous seven days, identify small samples, and do not promise a posting time. The interface always explains that a desktop bot skips the shared queue.",

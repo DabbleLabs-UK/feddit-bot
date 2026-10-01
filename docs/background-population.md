@@ -44,6 +44,20 @@ Generation alone cannot register an account or publish. Staging cannot start a
 bot. Rehearsal never publishes. A LIVE activation is therefore always a
 separate deliberate operator decision.
 
+## Normal operator view and Developer tools
+
+The normal population page keeps generation, inspection, staging, editing,
+explicit live activation, pausing and safe decluttering visible. Accelerated
+rehearsal, rehearsal reset and rehearsal-only evidence are hidden by default.
+The shared **Developer tools** preference in the bot workspace Settings dialog
+reveals those existing controls when deliberate testing is needed.
+
+This preference is only a browser UI choice. It does not change a cohort or
+bot's stored mode, remove evidence, alter the scheduler, or grant population
+operator access. A staged or existing rehearsal bot remains non-publishing
+while the preference is off and receives a compact safety notice with a route
+back to Settings.
+
 ## Decluttering cohort records
 
 The operator page renders cohorts as compact collapsed summaries. Expand one

@@ -36,6 +36,15 @@ assert.match(populationHtml, /Activate LIVE/);
 assert.match(populationHtml, /Accelerated rehearsal/);
 assert.match(populationHtml, /Run rehearsal/);
 assert.match(populationHtml, /Reset rehearsal state/);
+assert.match(populationHtml, /<script src="\/ui-preferences\.js"><\/script>/);
+assert.match(populationHtml, /const developerTools = window\.FedditUiPreferences\.developerToolsEnabled\(\)/);
+assert.match(populationHtml, /if \(!developerTools\) return '';/,
+  'accelerated rehearsal is hidden unless Developer tools is enabled');
+assert.match(populationHtml, /const rehearsal = developerTools &&/,
+  'the cohort rehearsal action is hidden unless Developer tools is enabled');
+assert.match(populationHtml, /This cohort is currently in developer test mode and is not publishing live/);
+assert.match(populationHtml, /await api\('\/api\/population'\)/,
+  'population authorization still comes from the protected API');
 assert.match(populationHtml, /Expand all/);
 assert.match(populationHtml, /Collapse all/);
 assert.match(populationHtml, /Hide cohort record/);
@@ -168,7 +177,7 @@ assert.doesNotMatch(html, /Switch this bot to rehearsal/);
 assert.match(html, /Other bots remain unchanged/);
 assert.match(html, /scheduler RUNNING/);
 assert.match(html, /This bot is rehearsing its scheduled turns and will not publish/);
-assert.match(html, /This bot is live and can publish its due posts and replies/);
+assert.match(html, /This bot can publish its due posts and replies/);
 assert.match(html, /View post\/comment history/);
 assert.doesNotMatch(html, /View posts and conversations on Feddit/);
 assert.match(html, /class="bot-history-link"/);
@@ -200,6 +209,8 @@ assert.match(html, /What it was replying to/);
 assert.match(html, /Why this reached the bot/);
 assert.match(html, /Earlier app versions kept only this shortened summary/);
 assert.match(html, /Technical activity history/);
+assert.match(html, /filter\(\(item\) => state\.developerTools \|\| !item\.dryRun\)/,
+  'ordinary technical activity excludes rehearsal-only history');
 assert.match(html, /Manual reply preview \(does not post\)/);
 assert.match(html, /does not read or choose a live Feddit post/);
 assert.match(html, /Preview failed\\n/);
@@ -231,6 +242,19 @@ assert.match(html, /loadStatus\(\);[\s\S]*loadProfiles\(\)\.catch[\s\S]*loadCapa
 assert.match(html, /id="healthBtn"[\s\S]*aria-haspopup="dialog"[\s\S]*aria-controls="statusDialog"/);
 assert.match(html, /<dialog id="statusDialog" aria-labelledby="statusDialogTitle">/);
 assert.match(html, /<dialog id="settingsDialog" aria-labelledby="settingsDialogTitle">/);
+assert.match(html, /id="developerToolsToggle"/);
+assert.match(html, /Shows rehearsal, simulation and advanced diagnostic controls intended for testing and experimentation/);
+assert.match(html, /<script src="\/ui-preferences\.js"><\/script>/);
+assert.match(html, /developerTools: uiPreferences\.developerToolsEnabled\(\)/,
+  'Developer tools is initialised from the off-by-default local preference');
+assert.match(html, /const modeControls = visibility\.showDeveloperControls/,
+  'publishing mode controls are conditional');
+assert.match(html, /const simulationSection = state\.developerTools \?/,
+  'simulation controls are conditional');
+assert.match(html, /This bot is currently in developer test mode and is not publishing live/);
+assert.match(html, /startPublishing \? \{ enabled, dryRun: false \} : \{ enabled \}/,
+  'a hidden test-mode bot changes mode only through an explicit start action');
+assert.match(html, /Bot publishing states were not changed/);
 assert.ok(html.indexOf('<dialog id="statusDialog"') < html.indexOf('<div class="layout">'),
   'diagnostics live in a modal rather than a persistent workspace strip');
 assert.match(html, /class="runnerbar" id="runnerBar"/);
