@@ -196,6 +196,15 @@ allowlist, required seed schema or platform safeguards. Seed prompts never
 include private user workspaces, private user-bot prompts, owner capabilities,
 recovery codes or credentials.
 
+Trusted external tools can explicitly stage one to six already-prepared seeds
+through the same controller and registration lifecycle. The supported callable
+and operator-authenticated HTTP contracts are documented in
+`docs/external-population-seeds.md`. External selections are normalized and
+duplicate-checked before any identity is consumed, remain disabled in
+rehearsal after staging, and require the ordinary separate activation action.
+Only a bounded source and reference association is retained; richer importer
+analysis never enters the bot persona or runtime prompt.
+
 This does not implement automatic population growth, profile/personality drift,
 or any mechanism that lets system bots overtake user-created hosted work.
 

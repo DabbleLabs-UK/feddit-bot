@@ -154,8 +154,24 @@ async function run() {
     eq(ordinarySession.status, 201, 'fixture can create an ordinary hosted owner');
     const ordinary = await request(port, 'GET', '/api/population', undefined, ordinarySession.json.accessToken);
     eq(ordinary.status, 404, 'ordinary hosted owners cannot discover the operator API');
+    const ordinaryExternalStage = await request(port, 'POST', '/api/population/external-seeds/stage', {
+      populationSeeds: [],
+      provenance: { source: 'subreddit-culture-importer' },
+    }, ordinarySession.json.accessToken);
+    eq(ordinaryExternalStage.status, 404,
+      'ordinary hosted owners cannot discover or call external population staging');
     const ordinaryProfiles = await request(port, 'GET', '/api/profiles', undefined, ordinarySession.json.accessToken);
     eq(ordinaryProfiles.json.profiles.length, 0, 'ordinary hosted owners cannot see system-population profiles');
+
+    const malformedExternalStage = await request(port, 'POST', '/api/population/external-seeds/stage', {
+      populationSeeds: [{ username: 'incomplete_seed' }],
+      provenance: { source: 'subreddit-culture-importer', reference: 'server-fixture' },
+    }, accessToken);
+    eq(malformedExternalStage.status, 422, 'authorised malformed external staging receives a validation response');
+    eq(malformedExternalStage.json.error.code, 'EXTERNAL_SEED_VALIDATION_FAILED',
+      'external staging API returns a stable top-level error code');
+    eq(malformedExternalStage.json.results[0].code, 'MALFORMED_SEED',
+      'external staging API returns a stable per-seed error code');
 
     const initial = await request(port, 'GET', '/api/population', undefined, accessToken);
     eq(initial.status, 200, 'configured existing owner can inspect population state');
