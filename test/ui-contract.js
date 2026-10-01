@@ -76,6 +76,12 @@ assert.match(html, /\.capacity-action[\s\S]*background: #f4f8fc;[\s\S]*color: #1
 assert.match(html, /more successful scheduled generation/);
 assert.match(html, /system-population bots never overtake user-created bots/);
 assert.match(html, /opportunities, not promised posts/i);
+assert.match(html, /instead of the population ecology\\'s six-per-day ceiling/);
+assert.match(html, /follows the separate custom post and reply frequencies below/);
+assert.match(html, /separate post and reply frequencies above are the real scheduling target/);
+assert.match(html, /Population ecology allowance: at most 6 scheduled hosted opportunities a day/);
+assert.match(html, /Feddit-hosted allowance: at most 6 scheduled hosted generations a day for this user-created bot/);
+assert.doesNotMatch(html, /at most 6 scheduled hosted generations a day per bot/);
 assert.match(html, /function hostedWorkBadgeText/);
 assert.match(html, /result received/);
 assert.match(html, /The result is safely stored/);

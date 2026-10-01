@@ -508,6 +508,96 @@ async function run() {
   }
 
   {
+    const custom = makeProfile('custom-system-cadence', false);
+    custom.botOrigin = 'system';
+    custom.ownerId = null;
+    custom.populationCadenceMode = 'custom';
+    custom.postsPerHour = 1;
+    custom.commentsPerHour = 0;
+    custom.populationActivity = populationActivity.initialState({}, {
+      nowMs: 10_000,
+      quantile: 0.2,
+    });
+    custom.populationActivity.recentOpportunities = [1000, 2000, 3000, 4000, 5000, 6000];
+    const h = harness({
+      profiles: [custom],
+      admitHostedTurn: () => ({ admit: true, reason: 'spare-capacity' }),
+    });
+    try {
+      const runtime = h.scheduler();
+      for (let index = 0; index < 8; index++) {
+        await runtime.runTick();
+        await settle();
+        const turn = h.turnStore.activeForProfile(custom.id);
+        ok(turn, 'custom population cadence creates opportunity ' + (index + 1) + ' beyond the ecology ceiling');
+        completeJob(h.queue, turn.generations[0].jobId, JSON.stringify({
+          choice: 'WAIT',
+          reason: 'Nothing available is suitable for this test opportunity.',
+        }));
+        runtime.reconcileDurableTurns();
+        await settle();
+        const finished = h.turnStore.get(turn.id);
+        eq(finished.status, 'completed', 'custom opportunity ' + (index + 1) + ' reaches a durable terminal state');
+        eq(finished.result.action, 'wait', 'WAIT remains a normal custom-cadence outcome');
+        eq(custom.sched.nextPostAt, h.now() + 60 * 60 * 1000,
+          'WAIT schedules one later custom opportunity without an immediate retry');
+        h.advance(custom.sched.nextPostAt - h.now());
+      }
+      ok(custom.populationActivity.recentOpportunities.length > populationActivity.MAX_OPPORTUNITIES_PER_DAY,
+        'custom population cadence exceeds the ecology six-opportunity history ceiling');
+
+      h.advance(5 * 60 * 60 * 1000);
+      await runtime.runTick();
+      await settle();
+      const lateTurn = h.turnStore.activeForProfile(custom.id);
+      ok(lateTurn, 'one overdue custom opportunity is created after scheduler starvation');
+      completeJob(h.queue, lateTurn.generations[0].jobId, JSON.stringify({
+        choice: 'WAIT',
+        reason: 'The late opportunity still has no suitable item.',
+      }));
+      runtime.reconcileDurableTurns();
+      await settle();
+      eq(custom.sched.nextPostAt, h.now() + 60 * 60 * 1000,
+        'scheduler starvation does not trigger catch-up bursts for custom cadence');
+    } finally {
+      h.cleanup();
+    }
+  }
+
+  {
+    const custom = makeProfile('custom-system-yield', false);
+    custom.botOrigin = 'system';
+    custom.ownerId = null;
+    custom.populationCadenceMode = 'custom';
+    custom.postsPerHour = 1;
+    custom.commentsPerHour = 0;
+    custom.populationActivity = populationActivity.initialState({}, {
+      nowMs: 10_000,
+      quantile: 0.2,
+    });
+    custom.populationActivity.recentOpportunities = [1000, 2000, 3000, 4000, 5000, 6000];
+    const h = harness({
+      profiles: [custom],
+      admitHostedTurn: () => ({
+        admit: false,
+        reason: 'synthetic-yields-to-shared-capacity',
+      }),
+    });
+    try {
+      await h.scheduler().runTick();
+      await settle();
+      eq(h.turnStore.listActive().length, 0,
+        'custom population cadence still yields before using occupied hosted capacity');
+      eq(custom.populationActivity.recentCapacitySkips.length, 1,
+        'custom capacity pressure remains observable');
+      eq(custom.sched.nextPostAt, h.now() + 60 * 60 * 1000,
+        'custom capacity yield follows the configured cadence instead of the ecology six-per-day wait');
+    } finally {
+      h.cleanup();
+    }
+  }
+
+  {
     const h = harness({ profiles: [makeProfile('rehearsal-bot', true)] });
     try {
       const beforeRestart = h.scheduler();

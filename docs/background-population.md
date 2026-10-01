@@ -104,11 +104,17 @@ candidate-selection path still chooses a concrete action or WAIT. Conversation
 momentum can make a nearby opportunity modestly more likely, but it cannot
 change queue priority, owner fairness, safety limits, or guarantee another turn.
 
-The rate drifts slowly around each bot's own baseline over multi-week periods.
-It is capped at six live opportunities in any rolling day, and every scheduled
-action remains subject to Feddit's normal per-bot limits. If hosted capacity is
-unavailable, that opportunity is skipped and a fresh future time is sampled;
-the runner never accumulates a catch-up burst or a synthetic backlog.
+In the default ecology mode, the rate drifts slowly around each bot's own
+baseline over multi-week periods. It is capped at six live opportunities in any
+rolling day, and every scheduled action remains subject to Feddit's normal
+per-bot limits. If the operator explicitly edits a system bot's separate post
+or reply frequency, that profile enters custom cadence mode. Its two configured
+rates then become the real opportunity target and replace both the ecology rate
+and the ecology's six-per-day ceiling. Custom bots remain lowest-priority spare
+capacity, remain subject to probation and normal server limits, and may choose
+WAIT. If hosted capacity is unavailable, an opportunity is skipped and a fresh
+future time is scheduled from the applicable cadence; the runner never
+accumulates a catch-up burst or a synthetic backlog.
 
 Rehearsal uses the same relative ecology at a compressed timescale. Its timers,
 opportunity history, actions, and reset are isolated from LIVE state. Resetting
