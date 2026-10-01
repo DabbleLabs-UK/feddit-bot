@@ -12,7 +12,25 @@ The importer owns five steps:
 4. Ask a caller-selected provider and model for one batched culture analysis and one batched set of composite characters.
 5. Return exact `lib/population.normalizeSeed` objects plus separate importer metadata.
 
-The importer deliberately does not expose a human-facing UI or change the ordinary population controller. The staging bridge is additive: callers can continue to use the importer API and `POST /api/population/external-seeds/stage` directly. The bridge sends only selected compact seeds, the bounded importer/analysis association and the existing cohort configuration. Rich `importerMetadata` remains review-only and is never added to a seed, profile, persona or runtime prompt.
+The ordinary backend remains independent of its optional human-facing UI and does not change the population controller. The Developer-tools UI calls the same public staged methods through short-lived private runner sessions. The staging bridge is additive: callers can continue to use the importer API and `POST /api/population/external-seeds/stage` directly. The bridge sends only selected compact seeds, the bounded importer/analysis association and the existing cohort configuration. Rich `importerMetadata` remains review-only and is never added to a seed, profile, persona or runtime prompt.
+
+## Developer-tools UI
+
+The existing Settings dialog exposes **Import subreddit culture** only while Developer tools is enabled. It is available on a desktop runner and to the existing hosted population operator. It does not appear to ordinary hosted workspace owners.
+
+The UI keeps the workflow explicit:
+
+1. choose a subreddit, bounded post/comment sample and recent window, then fetch or refresh the private cache;
+2. choose one of the runner's already-connected providers and models, then inspect the normalized culture summary and anonymous contributor evidence;
+3. select contributor influences and archetypes, choose one to six candidates and target Feddit communities, then generate fictional composites;
+4. review, select and edit every compact population-seed field;
+5. explicitly stage the selected candidates through the frozen external-seed boundary.
+
+Fetch, analysis and generation do not stage anything. Staging stops at disabled rehearsal profiles; activation and LIVE publishing remain separate population actions. Long-running operations expose progress and cancellation. Provider or validation failures remain visible in the session, and partial staging results are shown per seed.
+
+The raw Reddit corpus remains server-side. A runner keeps at most eight in-memory review sessions per authorised operator for up to six hours; browser responses contain bounded source counts and provenance, normalized analysis, generated candidates, progress, errors and staging outcomes. Navigating back to the bot list or collapsing a section does not clear the current in-page review state.
+
+Hosted staging reuses the current population operator capability. Desktop generation can use local Ollama or another already-connected provider, but the population boundary is hosted. The desktop UI therefore asks for the existing hosted private management link only when the operator explicitly stages. The loopback runner extracts that capability in memory and forwards the compact request to the link's HTTPS origin; it does not save the link in the import session, cache, bot profile, cohort or browser storage.
 
 ## Source adapter
 
@@ -154,9 +172,8 @@ Deterministic contributor aggregation, duplicate detection, username checks and 
 
 The result is a characterization of a bounded recent sample, not a definitive account of a community or person. Listing endpoints may omit old, removed, private or inaccessible content. Parent relationships are complete only when the relevant comments occur in the sample. Scores are mutable snapshots. Anonymous contributor observations are retained as evidence-linked behavioural descriptions and must not be treated as psychological diagnoses.
 
-The following future work belongs in the main integration line, not this tangent:
+The following future work remains outside this integration:
 
-- a review UI and operator controls;
 - explicit retention controls and cache cleanup policy;
 - a production OAuth/source-credential flow if anonymous public JSON is insufficient;
-- a deliberate merge decision for richer provenance and psychology metadata.
+- a deliberate decision about any future runtime use of richer provenance and psychology metadata.
