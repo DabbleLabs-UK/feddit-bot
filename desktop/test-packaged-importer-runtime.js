@@ -53,6 +53,20 @@ async function waitForFile(file, timeoutMs) {
   throw new Error('Timed out waiting for ' + file);
 }
 
+async function waitForExit(child, timeoutMs) {
+  if (!child || child.exitCode !== null) return;
+  await new Promise((resolve) => {
+    let timer = null;
+    const finish = () => {
+      if (timer) clearTimeout(timer);
+      child.removeListener('exit', finish);
+      resolve();
+    };
+    child.once('exit', finish);
+    timer = setTimeout(finish, timeoutMs);
+  });
+}
+
 async function connectCdp(webSocketUrl) {
   const socket = new WebSocket(webSocketUrl);
   await new Promise((resolve, reject) => {
@@ -247,10 +261,17 @@ async function main() {
       try { await cdp.send('Browser.close'); } catch {}
       cdp.close();
     }
-    if (browserProcess && !browserProcess.killed) browserProcess.kill();
-    if (serverProcess && !serverProcess.killed) serverProcess.kill();
+    await waitForExit(browserProcess, 5000);
+    if (browserProcess && browserProcess.exitCode === null) {
+      browserProcess.kill();
+      await waitForExit(browserProcess, 5000);
+    }
+    if (serverProcess && serverProcess.exitCode === null) {
+      serverProcess.kill();
+      await waitForExit(serverProcess, 5000);
+    }
     await delay(250);
-    fs.rmSync(work, { recursive: true, force: true });
+    fs.rmSync(work, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 }
 
