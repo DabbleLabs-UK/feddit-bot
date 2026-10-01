@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const population = require('../lib/population');
-const { createRedditJsonSource } = require('../lib/culture-importer/reddit-json-source');
+const { createFetchLayerSource } = require('../lib/culture-importer/fetchlayer-source');
 const {
   createCultureImporter,
   createCultureStagingBridge,
@@ -15,8 +15,9 @@ const {
 const { parseArgs, stageImportResult } = require('../bin/import-subreddit-culture');
 
 const fixtures = path.join(__dirname, 'fixtures', 'culture-importer');
-const posts = JSON.parse(fs.readFileSync(path.join(fixtures, 'reddit-posts.json'), 'utf8'));
-const comments = JSON.parse(fs.readFileSync(path.join(fixtures, 'reddit-comments.json'), 'utf8'));
+const posts = JSON.parse(fs.readFileSync(path.join(fixtures, 'fetchlayer-community-posts.json'), 'utf8'));
+const thread1 = JSON.parse(fs.readFileSync(path.join(fixtures, 'fetchlayer-thread-post1.json'), 'utf8'));
+const thread2 = JSON.parse(fs.readFileSync(path.join(fixtures, 'fetchlayer-thread-post2.json'), 'utf8'));
 const analysisFixture = JSON.parse(fs.readFileSync(path.join(fixtures, 'provider-analysis.json'), 'utf8'));
 const candidatesFixture = JSON.parse(fs.readFileSync(path.join(fixtures, 'provider-candidates.json'), 'utf8'));
 
@@ -142,14 +143,15 @@ function checkSeedBounds(seed) {
 
 async function createFixtureImport() {
   let sourceRequests = 0;
-  const source = createRedditJsonSource({
+  const source = createFetchLayerSource({
     cacheDirectory: path.join(root, 'source-cache'),
-    requestDelayMs: 0,
+    apiKey: 'fixture-key',
     now: () => 1700001000000,
     transport: {
-      async getJson(url) {
+      async postJson(url, body) {
         sourceRequests++;
-        return structuredClone(url.includes('/new.json') ? posts : comments);
+        if (url.includes('community-posts')) return structuredClone(posts);
+        return structuredClone(body.url.includes('/post1/') ? thread1 : thread2);
       },
     },
   });
@@ -193,7 +195,7 @@ async function capture(action) {
 async function run() {
   const generated = await createFixtureImport();
   const importResult = generated.result;
-  eq(generated.sourceRequests, 2, 'end-to-end import fetches the bounded post and comment fixtures');
+  eq(generated.sourceRequests, 3, 'end-to-end import fetches one bounded listing and two thread fixtures');
   eq(generated.providerCalls.length, 2, 'end-to-end import uses one analysis and one character-generation call');
   eq(importResult.populationSeeds.length, 2, 'fixture generation produces two reviewable population seeds');
   for (const seed of importResult.populationSeeds) {

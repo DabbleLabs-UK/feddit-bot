@@ -1,0 +1,54 @@
+{
+  "blocked": false,
+  "id": "post1",
+  "fullname": "t3_post1",
+  "subreddit": "ExampleSub",
+  "author": "PostStarter",
+  "title": "The weekly oddly specific question",
+  "permalink": "https://www.reddit.com/r/ExampleSub/comments/post1/the_weekly_question/",
+  "comments": [
+    {
+      "id": "comment1",
+      "fullname": "t1_comment1",
+      "parentFullname": "t3_post1",
+      "author": "DryWit",
+      "createdAt": "2023-11-14T22:15:00.000Z",
+      "score": 20,
+      "bodyText": "Obviously the correct answer is a ceremonial turnip.",
+      "permalink": "https://www.reddit.com/r/ExampleSub/comments/post1/the_weekly_question/comment1/",
+      "depth": 0,
+      "children": [
+        {
+          "id": "comment2",
+          "fullname": "t1_comment2",
+          "parentFullname": "t1_comment1",
+          "author": "LiteralReply",
+          "createdAt": "2023-11-14T22:16:40.000Z",
+          "score": 12,
+          "bodyText": "You cannot just say ceremonial without explaining the ceremony.",
+          "permalink": "https://www.reddit.com/r/ExampleSub/comments/post1/the_weekly_question/comment2/",
+          "depth": 1,
+          "children": [
+            {
+              "id": "comment3",
+              "fullname": "t1_comment3",
+              "parentFullname": "t1_comment2",
+              "author": "DryWit",
+              "createdAt": "2023-11-14T22:18:20.000Z",
+              "score": 18,
+              "bodyText": "The ceremony is mostly paperwork and one very nervous goat.",
+              "permalink": "https://www.reddit.com/r/ExampleSub/comments/post1/the_weekly_question/comment3/",
+              "depth": 2,
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "commentCountFromTree": 3,
+  "commentPagesRequested": 1,
+  "commentPagesScraped": 1,
+  "remainingMoreCommentsCount": 0,
+  "transport": "new-reddit-html"
+}

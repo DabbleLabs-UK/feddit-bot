@@ -7,12 +7,13 @@ const path = require('node:path');
 
 const population = require('../lib/population');
 const { createCultureImporter } = require('../lib/culture-importer');
-const { createRedditJsonSource } = require('../lib/culture-importer/reddit-json-source');
+const { createFetchLayerSource } = require('../lib/culture-importer/fetchlayer-source');
 const { createCultureImportUiSessions } = require('../lib/culture-importer/ui-sessions');
 
 const fixtures = path.join(__dirname, 'fixtures', 'culture-importer');
-const posts = JSON.parse(fs.readFileSync(path.join(fixtures, 'reddit-posts.json'), 'utf8'));
-const comments = JSON.parse(fs.readFileSync(path.join(fixtures, 'reddit-comments.json'), 'utf8'));
+const posts = JSON.parse(fs.readFileSync(path.join(fixtures, 'fetchlayer-community-posts.json'), 'utf8'));
+const thread1 = JSON.parse(fs.readFileSync(path.join(fixtures, 'fetchlayer-thread-post1.json'), 'utf8'));
+const thread2 = JSON.parse(fs.readFileSync(path.join(fixtures, 'fetchlayer-thread-post2.json'), 'utf8'));
 const analysisFixture = JSON.parse(fs.readFileSync(path.join(fixtures, 'provider-analysis.json'), 'utf8'));
 const candidatesFixture = JSON.parse(fs.readFileSync(path.join(fixtures, 'provider-candidates.json'), 'utf8'));
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'feddit-culture-integration-'));
@@ -67,14 +68,15 @@ function fakeStore() {
 
 async function run() {
   let sourceRequests = 0;
-  const source = createRedditJsonSource({
+  const source = createFetchLayerSource({
     cacheDirectory: path.join(root, 'source-cache'),
-    requestDelayMs: 0,
+    apiKey: 'fixture-key',
     now: () => Date.parse('2026-10-02T10:00:00.000Z'),
     transport: {
-      async getJson(url) {
+      async postJson(url, body) {
         sourceRequests++;
-        return structuredClone(url.includes('/new.json') ? posts : comments);
+        if (url.includes('community-posts')) return structuredClone(posts);
+        return structuredClone(body.url.includes('/post1/') ? thread1 : thread2);
       },
     },
   });
@@ -120,7 +122,7 @@ async function run() {
   eq(session.task.state, 'completed', 'fixture subreddit import completes');
   eq(session.source.posts, 2, 'fixture import exposes the bounded post count');
   eq(session.source.comments, 4, 'fixture import exposes the bounded comment count');
-  eq(sourceRequests, 2, 'fixture import performs no live source requests');
+  eq(sourceRequests, 3, 'fixture import performs only mocked source requests');
 
   sessions.analyse(owner, session.id, { provider: 'ollama', model: 'fixture-model' });
   session = await sessions.wait(owner, session.id);

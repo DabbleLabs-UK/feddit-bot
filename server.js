@@ -78,8 +78,7 @@ const populationController = createPopulationController({
 const cultureImporter = createCultureImporter({
   sourceOptions: {
     cacheDirectory: path.join(store.DATA_DIR, 'culture-import-cache'),
-    accessToken: process.env.REDDIT_ACCESS_TOKEN,
-    userAgent: process.env.REDDIT_USER_AGENT,
+    apiKey: process.env.FETCHLAYER_API_KEY,
   },
 });
 const cultureImportSessions = createCultureImportUiSessions({

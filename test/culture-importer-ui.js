@@ -212,6 +212,9 @@ async function run() {
     window: { since: '2026-09-01T00:00:00.000Z' },
     posts: 1,
     comments: 1,
+    provider: '',
+    complete: true,
+    warnings: [],
     cache: { key: 'fixture-cache', hit: true },
   }, 'browser session receives bounded source counts and provenance rather than the raw corpus');
   ok(!Object.hasOwn(session, 'corpus'), 'raw source corpus is never exposed by the UI session');

@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const providers = require('../lib/providers');
 const secrets = require('../lib/secrets');
-const { createRedditJsonSource } = require('../lib/culture-importer/reddit-json-source');
+const { createFetchLayerSource } = require('../lib/culture-importer/fetchlayer-source');
 const {
   createCultureImporter,
   createCultureStagingBridge,
@@ -36,7 +36,7 @@ function usage() {
     '  --server-url URL      Feddit bot server hosting the external-seed staging endpoint',
     '  --out PATH            Write the correlated staging result to a file instead of stdout',
     '',
-    'Optional REDDIT_ACCESS_TOKEN and REDDIT_USER_AGENT environment variables configure the source adapter.',
+    'FETCHLAYER_API_KEY configures the third-party source adapter. Reddit OAuth and the official API are not used.',
     'The dell provider needs a programmatic hosted queue and is not initialized by this standalone CLI.',
     'FEDDIT_BOT_OWNER_TOKEN supplies the existing population operator capability for the stage action.',
     'Import and generation never stage candidates. The stage action submits the selected seeds once and never splits or retries them.',
@@ -136,10 +136,9 @@ async function main(argv = process.argv.slice(2)) {
   process.once('SIGTERM', cancel);
   try {
     providers.configureRuntime({ secrets, placement: 'desktop' });
-    const source = createRedditJsonSource({
+    const source = createFetchLayerSource({
       cacheDirectory: args['cache-dir'],
-      accessToken: process.env.REDDIT_ACCESS_TOKEN,
-      userAgent: process.env.REDDIT_USER_AGENT,
+      apiKey: process.env.FETCHLAYER_API_KEY,
     });
     const importer = createCultureImporter({ source, providerClient: providers });
     const result = await importer.run({

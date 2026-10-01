@@ -584,6 +584,10 @@ provider-selected culture analysis, fictional candidate review and an explicit
 staging action. Fetch, analysis and generation do not stage or activate bots;
 staging stops at disabled rehearsal profiles. The preference changes visibility only: it grants no
 permission, changes no bot mode and deletes no live or rehearsal data.
+The source fetch uses FetchLayer through a separate server-side
+`FETCHLAYER_API_KEY`; it does not use Reddit OAuth, Reddit's official API, or a
+direct-Reddit fallback. Source corpora retain the existing private six-hour
+cache and show bounded completeness warnings when some thread data is missing.
 
 The single page at `/` lets you:
 
