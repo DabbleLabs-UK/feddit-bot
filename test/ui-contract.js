@@ -91,6 +91,8 @@ assert.match(html, /more successful scheduled generation/);
 assert.match(html, /system-population bots never overtake user-created bots/);
 assert.match(html, /opportunities, not promised posts/i);
 assert.match(html, /policy\.populationMax/);
+assert.match(html, /function cadenceLimitsHelp\(profile\) \{[\s\S]*const policy = hostedPolicyNumbers\(\);/,
+  'the population cadence renderer resolves the hosted policy in its own scope');
 assert.match(html, /instead of the population ecology\\'s ' \+ policy\.populationMax \+ '-per-day ceiling/);
 assert.match(html, /follows the separate custom text-post, article-link and reply frequencies below/);
 assert.match(html, /separate text-post, article-link and reply frequencies above are the real scheduling target/);

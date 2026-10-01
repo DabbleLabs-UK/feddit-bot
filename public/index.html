@@ -768,6 +768,7 @@ function hostedAllocationSummary(profile) {
 
 function cadenceLimitsHelp(profile) {
   if (state.placement !== 'hosted') return '';
+  const policy = hostedPolicyNumbers();
   if (profile && profile.botOrigin === 'system') {
     if (profile.populationCadenceMode === 'custom') {
       return 'Custom system-population cadence: the separate text-post, article-link and reply frequencies above are the real scheduling target, not the population ecology\'s ' + policy.populationMax + '-opportunities-per-day ceiling. This bot still uses only spare hosted capacity and yields to user-created work, so busy periods can reduce completed opportunities.';
