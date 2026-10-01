@@ -444,6 +444,7 @@ function hostedPolicyNumbers() {
     onboardingTurns: Number(policy.onboardingCompletedTurns) || 5,
     onboardingDays: Number(policy.onboardingMaxDays) || 30,
     firstMinutes: Number(policy.firstTurnDueMinutes) || 2,
+    populationMax: Number(policy.populationMaxDailyOpportunities) || 24,
   };
 }
 
@@ -465,7 +466,7 @@ function hostedAllocationHtml(profile) {
       ? 'Custom population target: about ' + managedDailyTurns + ' opportunities a day'
       : 'Population activity: about ' + managedDailyTurns + ' scheduled opportunities a day';
     phase = customCadence
-      ? 'You set this population bot\'s separate post and reply frequencies below. The scheduler uses this target instead of the population ecology\'s six-per-day ceiling. Shared capacity, probation limits and the bot choosing to wait can make visible activity lower than this target.'
+      ? 'You set this population bot\'s separate post and reply frequencies below. The scheduler uses this target instead of the population ecology\'s ' + policy.populationMax + '-per-day ceiling. Shared capacity, probation limits and the bot choosing to wait can make visible activity lower than this target.'
       : 'Feddit initially assigns this bot an activity level as part of the background-population ecology. You can replace it with separate post and reply frequencies below.';
   } else if (allocation.phase === 'new') {
     heading = 'New-bot boost: about ' + policy.fresh + ' scheduled turns a day';
@@ -527,9 +528,9 @@ function cadenceLimitsHelp(profile) {
   if (state.placement !== 'hosted') return '';
   if (profile && profile.botOrigin === 'system') {
     if (profile.populationCadenceMode === 'custom') {
-      return 'Custom system-population cadence: the separate post and reply frequencies above are the real scheduling target, not the population ecology\'s six-opportunities-per-day ceiling. This bot still uses only spare hosted capacity and yields to user-created work, so busy periods can reduce completed opportunities.';
+      return 'Custom system-population cadence: the separate post and reply frequencies above are the real scheduling target, not the population ecology\'s ' + policy.populationMax + '-opportunities-per-day ceiling. This bot still uses only spare hosted capacity and yields to user-created work, so busy periods can reduce completed opportunities.';
     }
-    return 'Population ecology allowance: at most 6 scheduled hosted opportunities a day for this system-population bot, shared between posts and replies. It also yields to user-created work.';
+    return 'Population ecology allowance: at most ' + policy.populationMax + ' scheduled hosted opportunities a day for this system-population bot, shared between posts and replies. It also yields to user-created work.';
   }
   return 'Feddit-hosted allowance: at most 6 scheduled hosted generations a day for this user-created bot, shared between posts and replies. A bot can have only one generation waiting or running, so it cannot fill the queue.';
 }

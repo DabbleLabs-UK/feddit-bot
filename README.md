@@ -659,10 +659,10 @@ proved by the stubbed scheduler harnesses listed below (no live calls):
   has another synthetic turn active. An already-created turn is never discarded;
 - system-population opportunity timing uses a persistent heavy-tailed ecology by default:
   most bots are rare or occasional, a few are regular or highly active, rates
-  drift slowly around distinct baselines, live opportunities are capped at six
+  drift slowly around distinct baselines, live opportunities are capped at 24
   per rolling day, and missed spare capacity is resampled without catch-up. If
   an operator explicitly sets separate post and reply frequencies, that custom
-  target replaces the ecology rate and its six-per-day ceiling while retaining
+  target replaces the ecology rate and its 24-per-day ceiling while retaining
   spare-capacity admission, server limits, WAIT and no catch-up bursts;
 - system-population rehearsal uses the same relative distribution on a compressed
   clock with state isolated from LIVE. It never changes user-created hosted

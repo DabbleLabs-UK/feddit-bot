@@ -21,6 +21,8 @@ eq(advertised.newBotBoostHours, 72, 'new-bot boost lasts 72 hours');
 eq(advertised.ownerActivityBoostHours, 72, 'owner activity keeps the boost alive for 72 hours');
 eq(advertised.firstTurnDueMinutes, 2, 'first turn becomes due promptly');
 eq(advertised.maxActiveJobsPerBot, 1, 'only one active job is allowed per bot');
+eq(advertised.populationMaxDailyOpportunities, 24,
+  'the public runtime policy advertises the population ecology ceiling');
 eq(advertised.onboardingCompletedTurns, 5, 'compute onboarding is bounded by completed turns');
 eq(advertised.onboardingMaxDays, 30, 'compute onboarding has a wall-clock long-stop');
 eq(advertised.queueOrder, 'interactive-then-owner-and-profile-fair-share', 'fair queue order is public');

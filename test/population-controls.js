@@ -99,17 +99,30 @@ const quiet = activity.assignCohort(seeds.slice(0, 12), {
   nowMs: 1, offset: 0.42, activity: 'quiet', strength: 'hard',
 });
 ok(quiet.every((state) => state.band === 'rare'), 'hard quiet maps into the existing rare ecology band');
+ok(quiet.every((state) => state.currentDailyOpportunities === 1),
+  'hard quiet starts at about 0.04 combined opportunities per hour');
 const occasional = activity.assignCohort(seeds.slice(0, 12), {
   nowMs: 1, offset: 0.42, activity: 'occasional', strength: 'hard',
 });
 ok(occasional.every((state) => state.band === 'occasional'),
   'hard occasional maps into the existing occasional ecology band');
+ok(occasional.every((state) => state.currentDailyOpportunities === 3),
+  'hard occasional starts at about 0.13 combined opportunities per hour');
+const regular = activity.assignCohort(seeds.slice(0, 12), {
+  nowMs: 1, offset: 0.42, activity: 'regular', strength: 'hard',
+});
+ok(regular.every((state) => state.band === 'regular'),
+  'hard regular maps into the existing regular ecology band');
+ok(regular.every((state) => state.currentDailyOpportunities === 12),
+  'hard regular starts at about 0.5 combined opportunities per hour');
 const active = activity.assignCohort(seeds.slice(0, 12), {
   nowMs: 1, offset: 0.42, activity: 'active', strength: 'hard',
 });
 ok(active.every((state) => state.band === 'active'), 'hard active maps into the existing active ecology band');
+ok(active.every((state) => state.currentDailyOpportunities === 24),
+  'hard active starts at one combined opportunity per hour');
 ok(active.every((state) => state.currentDailyOpportunities <= activity.MAX_OPPORTUNITIES_PER_DAY),
-  'active cohorts remain within the existing six-live-opportunity ceiling');
+  'active cohorts remain within the 24-live-opportunity ceiling');
 
 const softRegular = activity.assignCohort(seeds.slice(0, 12), {
   nowMs: 1, offset: 0, activity: 'regular', strength: 'soft',

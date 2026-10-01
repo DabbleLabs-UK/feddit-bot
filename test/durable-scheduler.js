@@ -512,7 +512,7 @@ async function run() {
     custom.botOrigin = 'system';
     custom.ownerId = null;
     custom.populationCadenceMode = 'custom';
-    custom.postsPerHour = 1;
+    custom.postsPerHour = 2;
     custom.commentsPerHour = 0;
     custom.populationActivity = populationActivity.initialState({}, {
       nowMs: 10_000,
@@ -525,7 +525,7 @@ async function run() {
     });
     try {
       const runtime = h.scheduler();
-      for (let index = 0; index < 8; index++) {
+      for (let index = 0; index < 19; index++) {
         await runtime.runTick();
         await settle();
         const turn = h.turnStore.activeForProfile(custom.id);
@@ -539,12 +539,12 @@ async function run() {
         const finished = h.turnStore.get(turn.id);
         eq(finished.status, 'completed', 'custom opportunity ' + (index + 1) + ' reaches a durable terminal state');
         eq(finished.result.action, 'wait', 'WAIT remains a normal custom-cadence outcome');
-        eq(custom.sched.nextPostAt, h.now() + 60 * 60 * 1000,
+        eq(custom.sched.nextPostAt, h.now() + 30 * 60 * 1000,
           'WAIT schedules one later custom opportunity without an immediate retry');
         h.advance(custom.sched.nextPostAt - h.now());
       }
       ok(custom.populationActivity.recentOpportunities.length > populationActivity.MAX_OPPORTUNITIES_PER_DAY,
-        'custom population cadence exceeds the ecology six-opportunity history ceiling');
+        'custom population cadence exceeds the ecology 24-opportunity history ceiling');
 
       h.advance(5 * 60 * 60 * 1000);
       await runtime.runTick();
@@ -557,7 +557,7 @@ async function run() {
       }));
       runtime.reconcileDurableTurns();
       await settle();
-      eq(custom.sched.nextPostAt, h.now() + 60 * 60 * 1000,
+      eq(custom.sched.nextPostAt, h.now() + 30 * 60 * 1000,
         'scheduler starvation does not trigger catch-up bursts for custom cadence');
     } finally {
       h.cleanup();
@@ -591,7 +591,7 @@ async function run() {
       eq(custom.populationActivity.recentCapacitySkips.length, 1,
         'custom capacity pressure remains observable');
       eq(custom.sched.nextPostAt, h.now() + 60 * 60 * 1000,
-        'custom capacity yield follows the configured cadence instead of the ecology six-per-day wait');
+        'custom capacity yield follows the configured cadence instead of the ecology 24-per-day wait');
     } finally {
       h.cleanup();
     }

@@ -80,13 +80,13 @@ select { width:100%; padding:8px; border:1px solid #526373; border-radius:5px; b
       <p class="hint">Leave everything varied to preserve the current generator and heavy-tailed ecology. Hard rules are enforced again after generation; soft preferences bias the cohort while retaining variation.</p>
       <div class="configuration-grid">
         <label><span>Rule strength</span><select id="configurationStrength"><option value="hard">Hard generation rules</option><option value="soft">Soft cohort preferences</option></select></label>
-        <label><span>Activity</span><select id="configurationActivity"><option value="varied">Varied - current ecology</option><option value="quiet">Quiet</option><option value="occasional">Occasional</option><option value="regular">Regular</option><option value="active">Active</option></select></label>
+        <label><span>Activity</span><select id="configurationActivity"><option value="varied">Varied - about 0.04 to 1 post/comment per hour</option><option value="quiet">Quiet - about 0.04 posts/comments per hour total</option><option value="occasional">Occasional - about 0.13 posts/comments per hour total</option><option value="regular">Regular - about 0.5 posts/comments per hour total</option><option value="active">Active - about 1 post/comment per hour total</option></select></label>
         <label><span>Post/reply balance</span><select id="configurationBalance"><option value="varied">Varied - current behavior</option><option value="mostly-replies">Mostly replies</option><option value="balanced">Balanced</option><option value="mostly-posts">Mostly posts</option></select></label>
         <label><span>Reply to discussions</span><select id="configurationReply"><option value="vary">Let generator vary</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
         <label><span>Start text discussions</span><select id="configurationDiscuss"><option value="vary">Let generator vary</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
         <label><span>Share article links</span><select id="configurationLinks"><option value="vary">Let generator vary</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
       </div>
-      <p class="hint">Hard means every staged seed obeys selected ability and activity rules. Soft means "favour", not "always". Post/reply balance is directional because WAIT and candidate choice remain stochastic.</p>
+      <p class="hint">Activity figures are each bot's combined starting rate across posts and comments, not a separate rate for each. Hard means every staged seed obeys selected ability and activity rules. Soft means "favour", not "always". Actual publishing may be lower because WAIT, gradual ecology drift and spare-capacity scheduling still apply. Post/reply balance is directional because WAIT and candidate choice remain stochastic.</p>
     </details>
     <div class="row">
       <label for="count">Bots</label>
@@ -128,7 +128,14 @@ function configurationLabel(configuration) {
   const config = configuration || {};
   const strength = config.strength === 'soft' ? 'soft preferences' : 'hard rules';
   const ability = (value) => value === 'enabled' ? 'enabled' : (value === 'disabled' ? 'disabled' : 'varied');
-  return strength + '; activity ' + esc(config.activity || 'varied') + '; balance ' + esc(config.balance || 'varied') +
+  const activity = {
+    varied:'varied (about 0.04-1 post/comment per hour)',
+    quiet:'quiet (about 0.04 posts/comments per hour)',
+    occasional:'occasional (about 0.13 posts/comments per hour)',
+    regular:'regular (about 0.5 posts/comments per hour)',
+    active:'active (about 1 post/comment per hour)',
+  }[config.activity] || 'varied (about 0.04-1 post/comment per hour)';
+  return strength + '; activity ' + esc(activity) + '; balance ' + esc(config.balance || 'varied') +
     '; replies ' + ability(config.reply) + '; discussions ' + ability(config.discuss) + '; links ' + ability(config.links);
 }
 function candidateHtml(candidate) {

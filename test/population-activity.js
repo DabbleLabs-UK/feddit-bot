@@ -31,6 +31,14 @@ const seeds = Array.from({ length: 100 }, (_, index) => ({
 const assigned = activity.assignCohort(seeds, { nowMs: now, offset: 0, random: seeded(3) });
 const bands = activity.cohortSummary(assigned, { nowMs: now }).bands;
 
+eq(activity.BANDS.map(({ name, daily }) => ({ name, daily })), [
+  { name: 'rare', daily: 1 },
+  { name: 'occasional', daily: 3 },
+  { name: 'regular', daily: 12 },
+  { name: 'active', daily: 24 },
+], 'activity bands expose the stated combined hourly scale');
+eq(activity.MAX_OPPORTUNITIES_PER_DAY, 24,
+  'the most active ecology band is capped at one combined opportunity per hour');
 eq(new Set(assigned.map((state) => state.currentDailyOpportunities)).size, 4,
   'a representative cohort receives heterogeneous activity tendencies');
 eq(bands, { rare: 52, occasional: 28, regular: 15, active: 5 },
@@ -74,9 +82,9 @@ ok(activeRun.count <= 60 * activity.MAX_OPPORTUNITIES_PER_DAY,
 const saturated = {
   ...active,
   recentOpportunities: Array.from({ length: activity.MAX_OPPORTUNITIES_PER_DAY }, (_, index) =>
-    now - (activity.MAX_OPPORTUNITIES_PER_DAY - index) * 60 * 60 * 1000),
+    now - (activity.MAX_OPPORTUNITIES_PER_DAY - index) * 30 * 60 * 1000),
 };
-ok(activity.nextDelayMs(saturated, { nowMs: now, random: () => 0 }) >= 18 * 60 * 60 * 1000,
+ok(activity.nextDelayMs(saturated, { nowMs: now, random: () => 0 }) >= 11 * 60 * 60 * 1000,
   'a saturated active bot is held until its rolling daily window has room');
 
 const normalWait = activity.nextDelayMs(quiet, { nowMs: now, random: () => 0.000001 });
@@ -92,15 +100,15 @@ const liveWait = activity.nextDelayMs(quiet, { nowMs: now, random: () => 0.5 });
 ok(rehearsalWait < liveWait,
   'rehearsal compresses time while preserving the same relative ecology');
 
-const fullCadence = activity.nextDelayMs(active, { nowMs: now, random: () => 0.5 });
+const fullCadence = activity.nextDelayMs(active, { nowMs: now, random: () => 0.8 });
 const postCadence = activity.nextDelayMs(active, {
   nowMs: now,
-  random: () => 0.5,
+  random: () => 0.8,
   opportunityShare: 1 / 3,
 });
 const commentCadence = activity.nextDelayMs(active, {
   nowMs: now,
-  random: () => 0.5,
+  random: () => 0.8,
   opportunityShare: 2 / 3,
 });
 ok(Math.abs((1 / postCadence) + (1 / commentCadence) - (1 / fullCadence)) < 1e-12,
