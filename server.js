@@ -733,6 +733,33 @@ async function handleApi(req, res, urlPath, query) {
         return sendJson(res, 409, { error: error.message });
       }
     }
+    if (method === 'POST' && urlPath === '/api/population/external-seeds/stage') {
+      const body = await readBody(req);
+      try {
+        const result = await populationController.stageExternalSeeds(body);
+        return sendJson(res, 200, result);
+      } catch (error) {
+        if (error && error.name === 'ExternalPopulationSeedError') {
+          return sendJson(res, error.statusCode || 422, {
+            ok: false,
+            error: {
+              code: error.code,
+              message: error.message,
+            },
+            association: error.association || null,
+            results: error.results || [],
+          });
+        }
+        return sendJson(res, 409, {
+          ok: false,
+          error: {
+            code: 'EXTERNAL_SEED_STAGING_FAILED',
+            message: error.message,
+          },
+          results: [],
+        });
+      }
+    }
     const populationRoute = urlPath.match(/^\/api\/population\/cohorts\/([^/]+)\/(stage|activate|rehearsal-run|reset-rehearsal|hide-record|restore-record|forget-record)$/);
     if (method === 'POST' && populationRoute) {
       const cohortId = decodeURIComponent(populationRoute[1]);

@@ -433,6 +433,7 @@ test/population-controls.js structured hard/soft ability, ecology and post/reply
 test/rehearsal-observability.js deterministic structured telemetry summaries and warning fixtures
 docs/data-handling.json   collection, storage and transmission source of truth
 docs/background-population.md lifecycle, fairness, provenance and operator boundary
+docs/external-population-seeds.md authenticated shared-core staging contract for prepared seeds
 ```
 
 ## What a profile holds
@@ -625,6 +626,7 @@ POST   /api/activity                      refresh authenticated owner activity a
 GET    /api/activity.gif                  capability-limited Feddit visit marker (no page/referrer data)
 GET    /api/population                    operator-only staged background cohorts
 POST   /api/population/cohorts            operator-only request for 1-6 compact AI seeds with optional bounded creative direction
+POST   /api/population/external-seeds/stage operator-only normalize, duplicate-check and stage selected external seeds
 POST   /api/population/cohorts/:id/stage  register reviewed seeds as disabled rehearsal profiles
 POST   /api/population/cohorts/:id/activate explicitly start a staged cohort in rehearsal or LIVE mode
 POST   /api/population/cohorts/:id/rehearsal-run start one bounded accelerated, non-publishing cohort rehearsal
