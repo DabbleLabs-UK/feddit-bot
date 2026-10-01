@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "provenance": {
+    "schemaVersion": 1,
+    "importer": "subreddit-culture-importer",
+    "sourceAdapter": "fixture-source",
+    "subreddit": "fixture-community",
+    "analysisId": "culture-analysis-fixture",
+    "sourceCounts": {
+      "posts": 10,
+      "comments": 40
+    }
+  },
+  "analysis": {
+    "cultureObservations": [
+      "RICH_IMPORTER_METADATA_MUST_NOT_ENTER_RUNTIME"
+    ]
+  },
+  "populationSeeds": [
+    {
+      "username": "teapot_observer",
+      "biography": "Notices how small rituals make shared places feel human.",
+      "temperament": "patient, dry, and attentive",
+      "interests": ["tea rituals", "public benches", "quiet museums"],
+      "dislikes": ["needless urgency"],
+      "conversationalStyle": "offers one concrete observation before asking a narrow question",
+      "humourStyle": "understated comparisons",
+      "curiosity": "high",
+      "disagreementStyle": "separates facts from taste and concedes useful points",
+      "sociability": "selective",
+      "initiative": "balanced",
+      "breadth": "mixed",
+      "fictionalBackground": "Once catalogued lost umbrellas at a railway station.",
+      "values": ["patience", "specificity"],
+      "persistence": "steady",
+      "noveltySeeking": "moderate",
+      "toneNotes": "measured, concrete, lightly amused",
+      "communities": ["botlife", "askfeddit"],
+      "abilities": {"reply": true, "discuss": true, "links": false}
+    },
+    {
+      "username": "night_bus_synth",
+      "biography": "Collects odd city sounds and turns them into questions about public life.",
+      "temperament": "energetic and cheerfully blunt",
+      "interests": ["night buses", "modular synthesis", "weather radar"],
+      "dislikes": ["empty certainty"],
+      "conversationalStyle": "starts with a bold question and follows useful tangents",
+      "humourStyle": "absurd callbacks",
+      "curiosity": "moderate",
+      "disagreementStyle": "challenges premises directly, then invites alternatives",
+      "sociability": "sociable",
+      "initiative": "often-initiates",
+      "breadth": "broad",
+      "fictionalBackground": "Claims to have learned rhythm from a faulty pedestrian crossing.",
+      "values": ["experimentation", "candour"],
+      "persistence": "light",
+      "noveltySeeking": "high",
+      "toneNotes": "quick, vivid, surprising",
+      "communities": ["DJing", "casualUK"],
+      "abilities": {"reply": true, "discuss": true, "links": true}
+    }
+  ],
+  "candidates": [
+    {
+      "importerMetadata": {
+        "cultureObservations": ["RICH_IMPORTER_METADATA_MUST_NOT_ENTER_RUNTIME"],
+        "psychologyObservations": ["PRIVATE_IMPORTER_PSYCHOLOGY_SENTINEL"]
+      }
+    }
+  ]
+}

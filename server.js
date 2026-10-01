@@ -29,6 +29,9 @@ const { createOwnerStore } = require('./lib/owners');
 const modelCatalog = require('./lib/model-catalog');
 const { createModelInstaller } = require('./lib/model-installer');
 const { createPopulationController } = require('./lib/population');
+const { createCultureImporter } = require('./lib/culture-importer');
+const { createCultureImportUiSessions, CultureImportUiError } = require('./lib/culture-importer/ui-sessions');
+const { createDesktopCultureStager } = require('./lib/culture-importer/desktop-staging');
 
 const ollama = providers.ollama; // the ollama provider (status/isBusy/generate)
 
@@ -72,6 +75,19 @@ const populationController = createPopulationController({
     return store.updateProfile(profile.id, patch, { allowContinuity: true });
   },
 });
+const cultureImporter = createCultureImporter({
+  sourceOptions: {
+    cacheDirectory: path.join(store.DATA_DIR, 'culture-import-cache'),
+    accessToken: process.env.REDDIT_ACCESS_TOKEN,
+    userAgent: process.env.REDDIT_USER_AGENT,
+  },
+});
+const cultureImportSessions = createCultureImportUiSessions({
+  importer: cultureImporter,
+  existingSeeds() {
+    return store.listProfiles().map((profile) => profile.populationSeed).filter(Boolean);
+  },
+});
 
 function activeDefaultModel() {
   const settings = store.getSettings();
@@ -109,6 +125,21 @@ function sendJson(res, status, obj) {
     'Cache-Control': 'no-store',
   });
   res.end(body);
+}
+
+function sendCultureImportError(res, error) {
+  const status = Number(error && error.statusCode) ||
+    (error instanceof CultureImportUiError ? 409 : 422);
+  return sendJson(res, status, {
+    ok: false,
+    error: {
+      code: String(error && (error.code || error.name) || 'CULTURE_IMPORT_FAILED'),
+      message: String(error && error.message || 'The culture importer action failed.'),
+      phase: String(error && error.phase || ''),
+    },
+    association: error && error.association || null,
+    results: error && Array.isArray(error.results) ? error.results : [],
+  });
 }
 
 function readBody(req) {
@@ -162,6 +193,12 @@ function ownerPolicyContext(profile) {
 
 function isPopulationAdmin(owner) {
   return PLACEMENT === 'hosted' && owner && populationAdminOwnerIds.has(String(owner.id));
+}
+
+function cultureImporterOwner(owner) {
+  if (PLACEMENT === 'desktop') return 'desktop';
+  if (isPopulationAdmin(owner)) return 'hosted:' + owner.id;
+  return '';
 }
 
 function canManageProfile(profile, owner) {
@@ -709,6 +746,48 @@ async function handleApi(req, res, urlPath, query) {
     }
   }
 
+  // The private culture importer runs in the desktop Developer-tools surface,
+  // or in the hosted operator workspace. Long provider calls are represented
+  // by short-lived in-memory sessions; source corpora stay server-side.
+  if (urlPath === '/api/culture-imports' || urlPath.startsWith('/api/culture-imports/')) {
+    const importOwner = cultureImporterOwner(requestOwner);
+    if (!importOwner) return sendJson(res, 404, { error: 'Not found' });
+    try {
+      if (method === 'POST' && urlPath === '/api/culture-imports') {
+        const body = await readBody(req);
+        return sendJson(res, 202, { session: cultureImportSessions.create(importOwner, body) });
+      }
+      const cultureRoute = urlPath.match(/^\/api\/culture-imports\/([^/]+)(?:\/(analyse|generate|cancel|stage))?$/);
+      if (!cultureRoute) return sendJson(res, 404, { error: 'Unknown culture importer route' });
+      const sessionId = decodeURIComponent(cultureRoute[1]);
+      const action = cultureRoute[2] || '';
+      if (method === 'GET' && !action) {
+        return sendJson(res, 200, { session: cultureImportSessions.get(importOwner, sessionId) });
+      }
+      if (method !== 'POST' || !action) return sendJson(res, 404, { error: 'Unknown culture importer route' });
+      const body = await readBody(req);
+      if (action === 'analyse') {
+        return sendJson(res, 202, { session: cultureImportSessions.analyse(importOwner, sessionId, body) });
+      }
+      if (action === 'generate') {
+        return sendJson(res, 202, { session: cultureImportSessions.generate(importOwner, sessionId, body) });
+      }
+      if (action === 'cancel') {
+        return sendJson(res, 200, { session: cultureImportSessions.cancel(importOwner, sessionId) });
+      }
+      const stageExternalSeeds = PLACEMENT === 'hosted'
+        ? populationController.stageExternalSeeds.bind(populationController)
+        : createDesktopCultureStager(body.managementLink);
+      const result = await cultureImportSessions.stage(importOwner, sessionId, body, stageExternalSeeds);
+      return sendJson(res, 200, {
+        result,
+        session: cultureImportSessions.get(importOwner, sessionId),
+      });
+    } catch (error) {
+      return sendCultureImportError(res, error);
+    }
+  }
+
   // Hosted operator-only creation of a background population. Authorisation
   // reuses the existing private workspace capability; the configured owner ID
   // grants this narrow admin surface without introducing another browser key.
@@ -731,6 +810,33 @@ async function handleApi(req, res, urlPath, query) {
         return sendJson(res, 201, { cohort: populationController.getCohort(cohort.id) });
       } catch (error) {
         return sendJson(res, 409, { error: error.message });
+      }
+    }
+    if (method === 'POST' && urlPath === '/api/population/external-seeds/stage') {
+      const body = await readBody(req);
+      try {
+        const result = await populationController.stageExternalSeeds(body);
+        return sendJson(res, 200, result);
+      } catch (error) {
+        if (error && error.name === 'ExternalPopulationSeedError') {
+          return sendJson(res, error.statusCode || 422, {
+            ok: false,
+            error: {
+              code: error.code,
+              message: error.message,
+            },
+            association: error.association || null,
+            results: error.results || [],
+          });
+        }
+        return sendJson(res, 409, {
+          ok: false,
+          error: {
+            code: 'EXTERNAL_SEED_STAGING_FAILED',
+            message: error.message,
+          },
+          results: [],
+        });
       }
     }
     const populationRoute = urlPath.match(/^\/api\/population\/cohorts\/([^/]+)\/(stage|activate|rehearsal-run|reset-rehearsal|hide-record|restore-record|forget-record)$/);
