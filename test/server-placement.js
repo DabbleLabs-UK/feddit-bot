@@ -143,6 +143,16 @@ async function localPlacementContract(placement) {
     const populationPage = await requestJson(runner.port, 'GET', '/population.html');
     eq(populationPage.status, 404, placement + ' does not expose the hosted population operator page');
 
+    const cultureSession = await requestJson(runner.port, 'GET', '/api/culture-imports/not-present');
+    if (placement === 'desktop') {
+      eq(cultureSession.status, 404, 'desktop exposes the private importer session API');
+      eq(cultureSession.json.error.code, 'IMPORT_SESSION_NOT_FOUND',
+        'desktop importer returns the stable missing-session contract');
+    } else {
+      eq(cultureSession.status, 404, placement + ' does not expose the desktop importer API');
+      eq(cultureSession.json.error, 'Not found', placement + ' hides the importer API boundary');
+    }
+
     const created = await requestJson(runner.port, 'POST', '/api/profiles', {
       fedditUsername: placement + '_draft',
       enabled: false,
@@ -242,6 +252,15 @@ async function hostedPlacementContract() {
     const ownerHeaders = { 'X-Feddit-Bot-Owner': session.json.accessToken };
     const ordinaryPopulation = await requestJson(runner.port, 'GET', '/api/population', undefined, ownerHeaders);
     eq(ordinaryPopulation.status, 404, 'ordinary hosted owners cannot discover the population operator API');
+    const ordinaryCultureImporter = await requestJson(
+      runner.port,
+      'GET',
+      '/api/culture-imports/not-present',
+      undefined,
+      ownerHeaders,
+    );
+    eq(ordinaryCultureImporter.status, 404,
+      'ordinary hosted owners cannot discover the population culture importer API');
     const hostedProviders = await requestJson(runner.port, 'GET', '/api/providers', undefined, ownerHeaders);
     eq(hostedProviders.status, 200, 'hosted owner can read the common provider state');
     eq(hostedProviders.json.providers.length, 1, 'hosted provider state exposes only managed compute');

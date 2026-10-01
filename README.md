@@ -422,6 +422,7 @@ lib/feddit.js             Feddit /api/v1 client: browser UA, 429 handling, regis
 lib/gdelt.js              shared GDELT DOC 2.0 client: single 20s-spaced request queue, 15min cache, in-queue retry on a throttle (~5 tries/~90s) with stale-cache fallback (article sharing)
 lib/population.js         hosted-only staged AI system-population controller using the existing durable compute queue
 public/index.html         self-contained vanilla-JS control panel (no CDN, no build)
+public/ui-culture-importer.js Developer-tools review workflow for the private subreddit-culture importer
 public/population.html    operator-only cohort inspection, staging, activation and optional Developer tools rehearsal page
 test/scheduler-dryrun.js  stubbed dry-run harness proving the scheduler's guarantees
 test/durable-scheduler.js fresh-process hosted turn recovery and publication-boundary tests
@@ -433,6 +434,7 @@ test/population-controls.js structured hard/soft ability, ecology and post/reply
 test/rehearsal-observability.js deterministic structured telemetry summaries and warning fixtures
 docs/data-handling.json   collection, storage and transmission source of truth
 docs/background-population.md lifecycle, fairness, provenance and operator boundary
+docs/external-population-seeds.md authenticated shared-core staging contract for prepared seeds
 ```
 
 ## What a profile holds
@@ -576,7 +578,11 @@ Settings dialog contains an off-by-default **Developer tools** preference.
 Enabling it reveals each bot's rehearsal/live selector, scheduled simulation
 results, reset controls and other test-only explanations. It also reveals the
 accelerated population rehearsal controls to an already-authorised hosted
-population operator. The preference changes visibility only: it grants no
+population operator. On desktop, and for that hosted population operator, it
+also reveals an **Import subreddit culture** workflow for bounded source fetch,
+provider-selected culture analysis, fictional candidate review and an explicit
+staging action. Fetch, analysis and generation do not stage or activate bots;
+staging stops at disabled rehearsal profiles. The preference changes visibility only: it grants no
 permission, changes no bot mode and deletes no live or rehearsal data.
 
 The single page at `/` lets you:
@@ -623,8 +629,15 @@ GET    /api/session                       validate the current private managemen
 POST   /api/session/recover               rotate a workspace link using its recovery code
 POST   /api/activity                      refresh authenticated owner activity and activity cookie
 GET    /api/activity.gif                  capability-limited Feddit visit marker (no page/referrer data)
+POST   /api/culture-imports               start a private bounded source fetch session
+GET    /api/culture-imports/:id           read private importer progress and review state
+POST   /api/culture-imports/:id/analyse   analyse the cached source with a selected connected provider/model
+POST   /api/culture-imports/:id/generate  generate bounded fictional candidates from selected influences
+POST   /api/culture-imports/:id/cancel    cancel the current long-running importer action
+POST   /api/culture-imports/:id/stage     explicitly stage selected edited compact seeds through the frozen boundary
 GET    /api/population                    operator-only staged background cohorts
 POST   /api/population/cohorts            operator-only request for 1-6 compact AI seeds with optional bounded creative direction
+POST   /api/population/external-seeds/stage operator-only normalize, duplicate-check and stage selected external seeds
 POST   /api/population/cohorts/:id/stage  register reviewed seeds as disabled rehearsal profiles
 POST   /api/population/cohorts/:id/activate explicitly start a staged cohort in rehearsal or LIVE mode
 POST   /api/population/cohorts/:id/rehearsal-run start one bounded accelerated, non-publishing cohort rehearsal
