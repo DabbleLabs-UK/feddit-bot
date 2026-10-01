@@ -11,6 +11,15 @@ const schedulerSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'sched
 
 assert.match(populationHtml, /Feddit background population/);
 assert.match(populationHtml, /Creative direction for this cohort/);
+assert.match(populationHtml, /Structured cohort controls \(optional\)/);
+assert.match(populationHtml, /Hard generation rules/);
+assert.match(populationHtml, /Soft cohort preferences/);
+assert.match(populationHtml, /Varied - current ecology/);
+assert.match(populationHtml, /Mostly replies/);
+assert.match(populationHtml, /Reply to discussions/);
+assert.match(populationHtml, /Start text discussions/);
+assert.match(populationHtml, /Share article links/);
+assert.match(populationHtml, /configurationStrength/);
 assert.match(populationHtml, /f\/shittyaskfeddit/);
 assert.match(populationHtml, /cohort\.direction/);
 assert.match(populationHtml, /AI-generated system population/);

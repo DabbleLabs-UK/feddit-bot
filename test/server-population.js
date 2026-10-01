@@ -287,10 +287,27 @@ async function run() {
     eq(archiveDetached.json.archived, 0, 'bulk detached archive reports when there was nothing to archive');
 
     const direction = 'Prefer f/shittyaskfeddit and answer with playful, deliberately misplaced confidence.';
-    const created = await request(port, 'POST', '/api/population/cohorts', { count: 2, direction }, accessToken);
+    const rejectedConfiguration = await request(port, 'POST', '/api/population/cohorts', {
+      count: 2,
+      configuration: {
+        strength: 'hard', reply: 'disabled', discuss: 'disabled', links: 'disabled',
+      },
+    }, accessToken);
+    eq(rejectedConfiguration.status, 409, 'contradictory hard cohort controls are rejected at the API boundary');
+    ok(/cannot disable/i.test(rejectedConfiguration.json.error), 'configuration rejection clearly explains the contradiction');
+
+    const configuration = {
+      strength: 'hard', activity: 'quiet', balance: 'mostly-replies',
+      reply: 'enabled', discuss: 'disabled', links: 'vary',
+    };
+    const created = await request(port, 'POST', '/api/population/cohorts', {
+      count: 2, direction, configuration,
+    }, accessToken);
     eq(created.status, 201, 'operator can request a bounded staged cohort');
     eq(created.json.cohort.requestedCount, 2, 'operator request preserves the bounded cohort size');
     eq(created.json.cohort.direction, direction, 'operator request preserves the bounded creative direction');
+    eq(created.json.cohort.configuration, configuration,
+      'operator request preserves validated structured cohort controls');
     eq(created.json.cohort.status, 'generating', 'generation alone does not stage or activate accounts');
 
     const jobs = JSON.parse(fs.readFileSync(path.join(dataDir, 'jobs.json'), 'utf8')).jobs;
@@ -300,6 +317,8 @@ async function run() {
     eq(jobs[0].allocationClass, 'synthetic', 'durable seed job cannot overtake user work');
     ok(jobs[0].payload.prompt.includes(direction), 'durable seed job receives the creative direction');
     ok(!JSON.stringify(jobs[0].payload).includes('private_user_bot'), 'population job contains no private user profile data');
+    ok(jobs[0].payload.prompt.includes('HARD generation constraints'),
+      'durable population job carries structured hard rules separately from creative direction');
   } finally {
     if (child.exitCode == null) child.kill();
     if (child.exitCode == null) {

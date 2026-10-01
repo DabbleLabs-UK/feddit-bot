@@ -401,6 +401,7 @@ test/turn-store.js        atomic turn persistence, lifecycle and bounded retenti
 test/job-queue.js         queue priority, fairness, recovery and evidence tests
 test/worker.js            worker authentication, URL, model and transport tests
 test/population.js        bounded seed generation, duplicate rejection, staging, accelerated rehearsal, activation and privacy tests
+test/population-controls.js structured hard/soft ability, ecology and post/reply balance controls
 test/rehearsal-observability.js deterministic structured telemetry summaries and warning fixtures
 docs/data-handling.json   collection, storage and transmission source of truth
 docs/background-population.md lifecycle, fairness, provenance and operator boundary
@@ -733,7 +734,8 @@ proved by the stubbed scheduler harnesses listed below (no live calls):
 Run the principal harnesses with `node test/scheduler-dryrun.js`,
 `node test/durable-scheduler.js`, `node test/turn-store.js`, and
 `node test/job-queue.js`. The hosted population lifecycle is covered by
-`node test/population.js` and the deterministic ecology distribution and drift
-checks are covered by `node test/population-activity.js`.
+`node test/population.js`; structured cohort constraints are covered by
+`node test/population-controls.js`; and deterministic ecology distribution and
+drift checks are covered by `node test/population-activity.js`.
 Structured rehearsal summaries and warning thresholds are covered by
 `node test/rehearsal-observability.js`.

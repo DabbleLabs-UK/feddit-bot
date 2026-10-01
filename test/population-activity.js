@@ -60,6 +60,10 @@ function simulateOpportunities(initial, days, seed) {
 
 const quiet = activity.initialState({}, { nowMs: now, quantile: 0.2, random: seeded(7) });
 const active = activity.initialState({}, { nowMs: now, quantile: 0.98, random: seeded(7) });
+const legacyQuiet = structuredClone(quiet);
+delete legacyQuiet.postOpportunityShare;
+eq(activity.normalizeState(legacyQuiet, { nowMs: now }).postOpportunityShare, 1 / 3,
+  'existing ecology state migrates to the previous one-third post share');
 const quietRun = simulateOpportunities(quiet, 60, 11);
 const activeRun = simulateOpportunities(active, 60, 11);
 ok(quietRun.count < activeRun.count / 3,

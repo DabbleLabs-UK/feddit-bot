@@ -725,7 +725,7 @@ async function handleApi(req, res, urlPath, query) {
     if (method === 'POST' && urlPath === '/api/population/cohorts') {
       const body = await readBody(req);
       try {
-        const cohort = populationController.createCohort(body.count, body.direction);
+        const cohort = populationController.createCohort(body.count, body.direction, body.configuration);
         await populationController.tick();
         return sendJson(res, 201, { cohort: populationController.getCohort(cohort.id) });
       } catch (error) {

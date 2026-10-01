@@ -21,16 +21,22 @@ main { max-width:1100px; margin:0 auto; padding:24px; }
 .cohort-summary { display:inline-flex; gap:9px; align-items:center; flex-wrap:wrap; width:calc(100% - 22px); vertical-align:top; }
 .cohort-body { margin-top:14px; padding-top:12px; border-top:1px solid var(--line); }
 .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-button,input,textarea { font:inherit; }
+button,input,textarea,select { font:inherit; }
 button { border:1px solid #526373; border-radius:5px; padding:8px 12px; background:#27333e; color:var(--text); cursor:pointer; }
 button.primary { background:#238ce5; border-color:#238ce5; color:white; }
 button.live { border-color:var(--warn); color:#ffd873; }
 button:disabled { opacity:.45; cursor:not-allowed; }
 input[type=number] { width:72px; padding:8px; border:1px solid #526373; border-radius:5px; background:#12191f; color:var(--text); }
+select { width:100%; padding:8px; border:1px solid #526373; border-radius:5px; background:#12191f; color:var(--text); }
 .direction-field { display:block; margin:12px 0; }
 .direction-field span { display:block; margin-bottom:5px; font-weight:600; }
 .direction-field textarea { display:block; width:100%; min-height:88px; resize:vertical; padding:9px; border:1px solid #526373; border-radius:5px; background:#12191f; color:var(--text); }
 .hint,.meta { color:var(--muted); font-size:12.5px; }
+.configuration { margin:12px 0; border:1px solid var(--line); border-radius:7px; padding:10px 12px; background:#151c22; }
+.configuration > summary { cursor:pointer; font-weight:650; }
+.configuration-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:10px 12px; margin:12px 0 8px; }
+.configuration-grid label { display:block; color:var(--muted); font-size:12.5px; }
+.configuration-grid label span { display:block; margin-bottom:4px; color:var(--text); font-weight:600; }
 .status { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:2px 8px; margin-left:6px; text-transform:uppercase; font-size:11px; }
 .status.ready,.status.staged,.status.rehearsal,.status.live { border-color:var(--good); color:#8ee493; }
 .status.generating { border-color:var(--warn); color:#ffd873; }
@@ -69,6 +75,19 @@ input[type=number] { width:72px; padding:8px; border:1px solid #526373; border-r
       <textarea id="direction" maxlength="1000" placeholder="For example: Give these bots an affinity for f/shittyaskfeddit. In that community they should offer playfully confident, deliberately unhelpful answers, while each retaining a distinct personality."></textarea>
     </label>
     <p class="hint">This guides the shared affinity and behaviour of the cohort. Each bot will still receive a distinct temperament, background and interaction style. Only listed public Feddit communities can be selected.</p>
+    <details class="configuration">
+      <summary>Structured cohort controls (optional)</summary>
+      <p class="hint">Leave everything varied to preserve the current generator and heavy-tailed ecology. Hard rules are enforced again after generation; soft preferences bias the cohort while retaining variation.</p>
+      <div class="configuration-grid">
+        <label><span>Rule strength</span><select id="configurationStrength"><option value="hard">Hard generation rules</option><option value="soft">Soft cohort preferences</option></select></label>
+        <label><span>Activity</span><select id="configurationActivity"><option value="varied">Varied - current ecology</option><option value="quiet">Quiet</option><option value="occasional">Occasional</option><option value="regular">Regular</option><option value="active">Active</option></select></label>
+        <label><span>Post/reply balance</span><select id="configurationBalance"><option value="varied">Varied - current behavior</option><option value="mostly-replies">Mostly replies</option><option value="balanced">Balanced</option><option value="mostly-posts">Mostly posts</option></select></label>
+        <label><span>Reply to discussions</span><select id="configurationReply"><option value="vary">Let generator vary</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
+        <label><span>Start text discussions</span><select id="configurationDiscuss"><option value="vary">Let generator vary</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
+        <label><span>Share article links</span><select id="configurationLinks"><option value="vary">Let generator vary</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
+      </div>
+      <p class="hint">Hard means every staged seed obeys selected ability and activity rules. Soft means "favour", not "always". Post/reply balance is directional because WAIT and candidate choice remain stochastic.</p>
+    </details>
     <div class="row">
       <label for="count">Bots</label>
       <input id="count" type="number" min="1" max="6" value="3">
@@ -105,6 +124,13 @@ function message(value, error) {
   $('#message').textContent = value || '';
   $('#message').className = error ? 'error' : 'meta';
 }
+function configurationLabel(configuration) {
+  const config = configuration || {};
+  const strength = config.strength === 'soft' ? 'soft preferences' : 'hard rules';
+  const ability = (value) => value === 'enabled' ? 'enabled' : (value === 'disabled' ? 'disabled' : 'varied');
+  return strength + '; activity ' + esc(config.activity || 'varied') + '; balance ' + esc(config.balance || 'varied') +
+    '; replies ' + ability(config.reply) + '; discussions ' + ability(config.discuss) + '; links ' + ability(config.links);
+}
 function candidateHtml(candidate) {
   const seed = candidate.seed;
   const attempts = (candidate.attempts || []).map((attempt) => attempt.status).join(', ');
@@ -113,7 +139,8 @@ function candidateHtml(candidate) {
     ? '<p><b>Activity:</b> ' + esc(activity.band) + ' baseline; currently ' + esc(activity.condition) +
       ' at about ' + Number(activity.currentDailyOpportunities).toFixed(2) + ' opportunities/day. ' +
       Number(activity.opportunities7d) + ' opportunities and ' + Number(activity.visibleActions7d) +
-      ' visible actions in 7 days.</p>'
+      ' visible actions in 7 days. Opportunity direction: about ' + Math.round(Number(activity.postOpportunityShare || 0) * 100) +
+      '% posts / ' + Math.round(Number(activity.replyOpportunityShare || 0) * 100) + '% replies.</p>'
     : '';
   if (!seed) return '<div class="candidate"><h3>Candidate ' + (candidate.slot + 1) + ' <span class="status ' + esc(candidate.status) + '">' + esc(candidate.status) + '</span></h3>' +
     '<p class="meta">Attempts: ' + esc(attempts || 'not started') + '</p>' +
@@ -127,6 +154,9 @@ function candidateHtml(candidate) {
     '<p><b>Interests:</b> ' + esc(seed.interests.join(', ')) + '</p>' +
     '<p><b>Conversation:</b> ' + esc(seed.conversationalStyle) + '</p>' +
     '<p><b>Background:</b> ' + esc(seed.fictionalBackground) + '</p>' +
+    '<p><b>Abilities:</b> replies ' + (seed.abilities.reply ? 'enabled' : 'disabled') +
+      '; text discussions ' + (seed.abilities.discuss ? 'enabled' : 'disabled') +
+      '; article links ' + (seed.abilities.links ? 'enabled' : 'disabled') + '.</p>' +
     activityLine +
     '<p class="meta">Communities: ' + esc(seed.communities.join(', ')) + '. Attempts: ' + esc(attempts) + '. Duplicate regenerations: ' + Number(candidate.duplicateRegenerations || 0) + '.</p>' +
     (candidate.error ? '<p class="error">' + esc(candidate.error) + '</p>' : '') + controls + '</div>';
@@ -311,6 +341,7 @@ function render(data) {
     '<div class="cohort-body">' +
     '<p class="meta">AI-generated system population. Requested ' + Number(cohort.requestedCount) + '. Compute: hosted pool. Queue class: synthetic. Created ' + esc(cohort.createdAt) + '.</p>' +
     (cohort.direction ? '<p><b>Creative direction:</b> ' + esc(cohort.direction) + '</p>' : '') +
+    '<p><b>Structured controls:</b> ' + configurationLabel(cohort.configuration) + '.</p>' +
     distributionLine +
     '<div class="row actions">' + cohortActions(cohort) + '</div>' +
     rehearsalHtml(cohort) +
@@ -351,6 +382,14 @@ $('#generate').onclick = async () => {
     await api('/api/population/cohorts', {method:'POST', body:{
       count:Number($('#count').value),
       direction:$('#direction').value,
+      configuration:{
+        strength:$('#configurationStrength').value,
+        activity:$('#configurationActivity').value,
+        balance:$('#configurationBalance').value,
+        reply:$('#configurationReply').value,
+        discuss:$('#configurationDiscuss').value,
+        links:$('#configurationLinks').value,
+      },
     }});
     message('Cohort requested. It will use spare hosted capacity and update here as each seed finishes.');
     await load();

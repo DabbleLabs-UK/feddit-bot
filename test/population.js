@@ -240,7 +240,11 @@ async function run() {
     fs.rmSync(file, { force: true });
     const lifecycle = createPopulationController({ ...options, file: path.join(dir, 'lifecycle.json') });
     const cohortDirection = 'Give the cohort an affinity for f/shittyaskfeddit and playful, confidently unhelpful replies.';
-    const cohort = lifecycle.createCohort(2, cohortDirection);
+    const cohortConfiguration = {
+      strength: 'hard', activity: 'varied', balance: 'varied',
+      reply: 'disabled', discuss: 'vary', links: 'enabled',
+    };
+    const cohort = lifecycle.createCohort(2, cohortDirection, cohortConfiguration);
     await lifecycle.tick();
     eq(requests.length, 1, 'only one population generation is queued at a time');
     eq(requests[0].priority, 'background', 'population generation uses background queue priority');
@@ -250,6 +254,10 @@ async function run() {
     ok(requests[0].prompt.includes(cohortDirection), 'the bounded operator direction reaches the seed-generation prompt');
     ok(requests[0].prompt.includes('shittyaskfeddit'), 'the requested real community is available to population generation');
     ok(requests[0].prompt.includes('distinctly for this candidate'), 'shared direction still requires differentiated candidates');
+    ok(requests[0].prompt.includes('Reply to discussions: must be disabled'),
+      'hard reply constraint reaches the seed-generation prompt');
+    ok(requests[0].prompt.includes('Share article links: must be enabled'),
+      'hard article-sharing constraint reaches the seed-generation prompt');
     ok(!requests[0].prompt.includes('PRIVATE-WORKSPACE-SENTINEL'), 'generation prompt excludes private user profile data');
     ok(!requests[0].system.includes('PRIVATE-WORKSPACE-SENTINEL'), 'system prompt excludes private user profile data');
     await lifecycle.tick();
@@ -272,6 +280,7 @@ async function run() {
     const ready = lifecycle.getCohort(cohort.id);
     eq(ready.status, 'ready', 'a complete differentiated cohort becomes ready for inspection');
     eq(ready.direction, cohortDirection, 'cohort direction remains visible after generation');
+    eq(ready.configuration, cohortConfiguration, 'validated structured controls survive generation');
     eq(ready.candidates[1].duplicateRegenerations, 1, 'duplicate regeneration is visible in provenance');
     ok(ready.activityDistribution && ready.activityDistribution.bots === 2,
       'operator cohort output includes bounded ecology observability');
@@ -290,6 +299,8 @@ async function run() {
       'staged bots remain disabled and in rehearsal');
     ok(systemProfiles.every((profile) => profile.populationProvenance.lifecycle === 'staged'),
       'staged profiles retain inspectable AI-population provenance');
+    ok(systemProfiles.every((profile) => profile.canReply === false && profile.canShareLinks === true),
+      'post-inference normalisation carries hard ability constraints into staged ordinary profiles');
     ok(systemProfiles.every((profile) => profile.persona.includes(cohortDirection)),
       'the creative direction remains part of every staged bot\'s private behavioural prompt');
     ok(systemProfiles.every((profile) => profile.populationActivity &&
