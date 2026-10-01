@@ -32,6 +32,33 @@ assert.equal(settings.dryRun, true);
 const currentSettings = store.migrateSettings({ localDefaultModel: 'qwen3:4b' }, 4);
 assert.equal(currentSettings.localDefaultModel, 'qwen3:4b');
 
+const chatgptProviderUpgrade = store.migrateProfiles([{
+  id: 'chatgpt-plan-profile',
+  provider: 'chatgpt-plan',
+  chatgptModel: 'gpt-5.2-chat-latest',
+  model: 'local-fallback-must-not-run',
+}], 20)[0];
+assert.equal(chatgptProviderUpgrade.provider, 'chatgpt-plan',
+  'a saved ChatGPT plan connection survives the provider-schema migration');
+assert.equal(chatgptProviderUpgrade.chatgptModel, 'gpt-5.2-chat-latest',
+  'the selected account-visible ChatGPT model survives migration');
+const claudeProviderUpgrade = store.migrateProfiles([{
+  id: 'claude-plan-profile',
+  provider: 'claude-plan',
+  claudeModel: 'opus',
+}], 20)[0];
+assert.equal(claudeProviderUpgrade.provider, 'claude-plan',
+  'a saved Claude subscription provider survives migration');
+assert.equal(claudeProviderUpgrade.claudeModel, 'opus',
+  'the selected Claude model alias survives migration');
+const invalidProviderUpgrade = store.migrateProfiles([{
+  id: 'invalid-provider',
+  provider: 'unrecognised-paid-service',
+  chatgptModel: 'must-not-route',
+}], 20)[0];
+assert.equal(invalidProviderUpgrade.provider, 'ollama',
+  'unknown providers migrate to local Ollama rather than an unexpected paid route');
+
 const inheritedLiveMode = store.migrateProfiles([{ id: 'was-live' }], 6, false)[0];
 assert.equal(inheritedLiveMode.dryRun, false, 'an old live runner keeps its bots live during the schema-7 migration');
 const inheritedRehearsalMode = store.migrateProfiles([{ id: 'was-rehearsing' }], 6, true)[0];

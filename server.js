@@ -48,6 +48,7 @@ const jobQueue = createQueue({
 });
 const turnStore = createTurnStore({ file: path.join(store.DATA_DIR, 'turns.json') });
 providers.configureDellQueue(jobQueue);
+providers.configureRuntime({ secrets, placement: PLACEMENT });
 const hostedPreviewTasks = new Map();
 const hostedSimulationTasks = new Map();
 const ownerStore = createOwnerStore({ file: path.join(store.DATA_DIR, 'owners.json') });
@@ -537,7 +538,7 @@ async function handleApi(req, res, urlPath, query) {
 
   if (method === 'GET' && urlPath === '/api/runtime-state') {
     return sendJson(res, 200, {
-      busy: schedulerHandle.isBusy() || providers.ollamaBusy() || providers.deepseekInFlight() > 0,
+      busy: schedulerHandle.isBusy() || providers.ollamaBusy() || providers.deepseekInFlight() > 0 || providers.chatgptInFlight() > 0 || providers.claudeInFlight() > 0,
     });
   }
 
@@ -546,7 +547,7 @@ async function handleApi(req, res, urlPath, query) {
     if (PLACEMENT !== 'desktop' || !controlKey || !workerAuth.authorised(req.headers.authorization, controlKey)) {
       return sendJson(res, 404, { error: 'Not found' });
     }
-    if (schedulerHandle.isBusy() || providers.ollamaBusy() || providers.deepseekInFlight() > 0) {
+    if (schedulerHandle.isBusy() || providers.ollamaBusy() || providers.deepseekInFlight() > 0 || providers.chatgptInFlight() > 0 || providers.claudeInFlight() > 0) {
       return sendJson(res, 409, { error: 'The runner is currently generating or completing a bot action.' });
     }
     schedulerHandle.stop();
@@ -848,6 +849,49 @@ async function handleApi(req, res, urlPath, query) {
       settings,
       placement: PLACEMENT,
     });
+  }
+
+  // Common provider settings contract. Hosted workspaces expose only their
+  // managed provider; personal credentials and subscription connections remain
+  // local to desktop/self-hosted runners.
+  if (method === 'GET' && urlPath === '/api/providers') {
+    return sendJson(res, 200, { providers: await providers.statuses() });
+  }
+
+  if (method === 'POST' && urlPath === '/api/providers/chatgpt-plan/connect') {
+    if (PLACEMENT === 'hosted') return sendJson(res, 403, { error: 'Personal provider connections are not available in the hosted workspace.' });
+    try {
+      return sendJson(res, 202, await providers.connect('chatgpt-plan'));
+    } catch (error) {
+      return sendJson(res, error.status || 409, { error: error.message, code: error.code || 'PROVIDER_FAILED' });
+    }
+  }
+
+  if (method === 'DELETE' && urlPath === '/api/providers/chatgpt-plan') {
+    if (PLACEMENT === 'hosted') return sendJson(res, 403, { error: 'Personal provider connections are not available in the hosted workspace.' });
+    try {
+      return sendJson(res, 200, await providers.disconnect('chatgpt-plan'));
+    } catch (error) {
+      return sendJson(res, error.status || 409, { error: error.message, code: error.code || 'PROVIDER_FAILED' });
+    }
+  }
+
+  if (method === 'POST' && urlPath === '/api/providers/claude-plan/connect') {
+    if (PLACEMENT === 'hosted') return sendJson(res, 403, { error: 'Personal provider connections are not available in the hosted workspace.' });
+    try {
+      return sendJson(res, 202, await providers.connect('claude-plan'));
+    } catch (error) {
+      return sendJson(res, error.status || 409, { error: error.message, code: error.code || 'PROVIDER_FAILED' });
+    }
+  }
+
+  if (method === 'DELETE' && urlPath === '/api/providers/claude-plan') {
+    if (PLACEMENT === 'hosted') return sendJson(res, 403, { error: 'Personal provider connections are not available in the hosted workspace.' });
+    try {
+      return sendJson(res, 200, await providers.disconnect('claude-plan'));
+    } catch (error) {
+      return sendJson(res, error.status || 409, { error: error.message, code: error.code || 'PROVIDER_FAILED' });
+    }
   }
 
   // GET /api/settings - global runner settings (pause / spend controls).
@@ -1339,7 +1383,7 @@ async function handleApi(req, res, urlPath, query) {
 
       let source = existing;
       if (source.enabled) source = store.updateProfile(id, { enabled: false });
-      if (schedulerHandle.isBusy() || providers.ollamaBusy() || providers.deepseekInFlight() > 0) {
+      if (schedulerHandle.isBusy() || providers.ollamaBusy() || providers.deepseekInFlight() > 0 || providers.chatgptInFlight() > 0 || providers.claudeInFlight() > 0) {
         return sendJson(res, 409, {
           error: 'This source is paused, but the runner is still finishing work already in flight. Try Move bot identity again in a moment.',
           retrySafe: true,

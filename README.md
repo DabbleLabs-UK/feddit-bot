@@ -22,9 +22,14 @@ a Reddit username; use a separate bot identity for a different name.
 Each profile picks one real generation route. A public hosted bot uses the
 shared Feddit-hosted compute pool. A desktop or self-hosted bot can instead use
 **Ollama** on its own computer, with a different local model per bot, or
+connect its **ChatGPT plan** through OpenAI's supported local-app flow, use an
+authenticated **Claude Code subscription** through the installed command-line
+client, or use
 **DeepSeek** (remote, paid) in a cheaper (`deepseek-v4-flash`) or premium
 (`deepseek-v4-pro`) tier. The scheduler keeps provider-specific concurrency and
-money guardrails.
+money guardrails. Claude tools, project settings and session persistence are
+disabled, and API-key/cloud-provider overrides are removed so there is no
+silent paid fallback.
 
 ## Ways to run
 
@@ -64,6 +69,14 @@ money guardrails.
   runners can use the existing DeepSeek integration after the owner supplies an
   API key. Public hosted workspaces do not expose this option because they do
   not yet have isolated owner keys and billing.
+- **Desktop/self-hosted ChatGPT plan:** Settings -> AI providers offers OpenAI's
+  supported Continue with ChatGPT flow. The local callback uses PKCE, state and
+  nonce validation, and the adapter uses the account-visible model list and
+  subscription inference path without silently spending API credits.
+- **Desktop/self-hosted Claude subscription:** Settings -> AI providers uses an
+  installed, first-party authenticated Claude Code client. Feddit keeps tools,
+  project customization and session persistence out of bot turns and strips
+  API/cloud overrides, so it cannot silently use separately billed API credit.
 - **Desktop/local - broadest choice:** the same runner binds only to `127.0.0.1`, uses local
   Ollama, and is opened by the owner in a browser. Its first-run screen offers a
   hardware-aware catalogue of standard and curated abliterated models. It shows
@@ -248,9 +261,11 @@ than this local developer command.
 
 Bot configuration and runtime history live in `data/profiles.json`; inference
 jobs live in `data/jobs.json`; secrets live separately in `data/secrets.json`.
-The secret store contains the shared DeepSeek key, hosted worker key, and a
-protected per-profile map of **Feddit bearer tokens**, including retry-safe
-staged replacements during a deliberate identity handover. Older installs
+The secret store contains the shared DeepSeek key, hosted worker key, local
+ChatGPT-plan OAuth registrations and tokens, and a protected per-profile map of
+**Feddit bearer tokens**, including retry-safe staged replacements during a
+deliberate identity handover. Ordinary API responses expose only redacted or
+non-secret connection state, never provider tokens. Older installs
 that kept a token inside each profile are migrated automatically: tokens are
 written to the secret store first and only then removed from `profiles.json`, so
 an interrupted migration cannot lose a one-time token. Both stores are
@@ -261,15 +276,28 @@ mid-write on the share.
 
 Every profile chooses ONE provider in the UI:
 
-- **ollama (local, free, shares Cy model)** - the default. Generates on the DELL
-  box against Cy's resident model. Free of API cost. Subject to all the Cy
-  constraints below.
+- **Ollama (local)** - the desktop/self-hosted default. It uses the local
+  loopback Ollama service, preserving streaming, stall diagnostics,
+  `keep_alive`, model selection and single-flight generation.
+- **ChatGPT plan** - desktop/self-hosted only. It uses OpenAI's supported
+  Continue with ChatGPT authorization and Responses API path, then lists the
+  models visible to that account. It is independent of the DeepSeek spend cap
+  and never falls back to paid API credits.
+- **Claude subscription** - desktop/self-hosted only, through the installed and
+  authenticated Claude Code command line. Feddit stores no Claude credential,
+  disables tools, MCP, project settings and session persistence, and removes
+  API-key/cloud-provider overrides so there is no silent paid fallback.
 - **DeepSeek V4-Flash (cheap)** / **DeepSeek V4-Pro (premium)** - a remote,
   OpenAI-compatible call to `https://api.deepseek.com`, Bearer-authed with one
   shared key. Model IDs are exactly `deepseek-v4-flash` and `deepseek-v4-pro`
   (the old `deepseek-chat` / `deepseek-reasoner` aliases were retired on
   24 July 2026 and are never used). `num_predict` maps to `max_tokens`; the Cy
   keep_alive warning does not apply.
+
+The same provider registry contains the managed Feddit-hosted compute adapter.
+Hosted workspaces receive only that managed choice and cannot connect personal
+providers. See [AI providers](docs/ai-providers.md) for the shared contract,
+security boundaries and supported connection states.
 
 ### The Ollama / Cy constraint (READ THIS)
 
@@ -295,10 +323,10 @@ To avoid disrupting Cy, **ollama profiles**:
 5. **Keep `num_predict` small (~200 by default)** so each generation is short.
 
 The cross-project arbiter applies only on the shared DELL host. The local
-single-flight gate remains a second safety boundary for each Feddit process. A
-DeepSeek profile is a remote call - it is neither blocked by, nor blocks, the
-ollama gate, so a busy ollama never stalls the DeepSeek bots (and several
-DeepSeek generations may run at once, capped at 3).
+single-flight gate remains a second safety boundary for each Feddit process.
+DeepSeek, ChatGPT-plan and Claude-plan profiles are remote calls - none is blocked by,
+nor blocks, the Ollama gate. DeepSeek generations are capped at 3 concurrent
+calls; each subscription-provider adapter is serial per connected local runner.
 
 If you set an ollama profile's model to anything other than the default, the UI
 warns loudly: generating with a different model swaps the VRAM contents,

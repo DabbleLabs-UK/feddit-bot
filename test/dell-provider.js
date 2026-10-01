@@ -33,6 +33,13 @@ async function run() {
   ok(hashRequest(request) !== hashRequest({ ...request, prompt: 'Say goodbye.' }), 'prompt changes the dedupe hash');
   eq(scheduler.providerOf({ provider: 'dell' }), 'dell', 'scheduler preserves hosted placement');
   eq(scheduler.modelOf({ provider: 'dell', model: 'local-model' }, 'fallback'), 'local-model', 'hosted placement uses its worker model');
+  eq(scheduler.providerOf({ provider: 'chatgpt-plan' }), 'chatgpt-plan', 'scheduler preserves the explicit ChatGPT plan provider');
+  eq(scheduler.modelOf({ provider: 'chatgpt-plan', chatgptModel: 'gpt-account-model', model: 'local-model' }, 'fallback'),
+    'gpt-account-model', 'ChatGPT plan routing uses its account-visible model and not a local fallback');
+  eq(scheduler.providerOf({ provider: 'claude-plan' }), 'claude-plan', 'scheduler preserves the explicit Claude plan provider');
+  eq(scheduler.modelOf({ provider: 'claude-plan', claudeModel: 'opus', model: 'local-model' }, 'fallback'),
+    'opus', 'Claude plan routing uses its selected Claude Code model and not a local fallback');
+  eq(scheduler.providerOf({ provider: 'unknown-provider' }), 'ollama', 'unknown provider data falls back only to local Ollama');
 
   let reads = 0;
   let enqueued = null;

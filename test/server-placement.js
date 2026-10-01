@@ -242,6 +242,26 @@ async function hostedPlacementContract() {
     const ownerHeaders = { 'X-Feddit-Bot-Owner': session.json.accessToken };
     const ordinaryPopulation = await requestJson(runner.port, 'GET', '/api/population', undefined, ownerHeaders);
     eq(ordinaryPopulation.status, 404, 'ordinary hosted owners cannot discover the population operator API');
+    const hostedProviders = await requestJson(runner.port, 'GET', '/api/providers', undefined, ownerHeaders);
+    eq(hostedProviders.status, 200, 'hosted owner can read the common provider state');
+    eq(hostedProviders.json.providers.length, 1, 'hosted provider state exposes only managed compute');
+    eq(hostedProviders.json.providers[0].id, 'dell', 'hosted provider state does not expose personal connections');
+    const blockedConnection = await requestJson(
+      runner.port,
+      'POST',
+      '/api/providers/chatgpt-plan/connect',
+      {},
+      ownerHeaders,
+    );
+    eq(blockedConnection.status, 403, 'hosted owners cannot attach a personal ChatGPT account');
+    const blockedClaudeConnection = await requestJson(
+      runner.port,
+      'POST',
+      '/api/providers/claude-plan/connect',
+      {},
+      ownerHeaders,
+    );
+    eq(blockedClaudeConnection.status, 403, 'hosted owners cannot attach a personal Claude account');
     const activity = await requestJson(runner.port, 'POST', '/api/activity', undefined, {
       ...ownerHeaders,
       Host: 'feddit-bots.dabblelabs.uk',

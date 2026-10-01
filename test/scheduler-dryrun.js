@@ -556,6 +556,7 @@ function makeProviders(opts) {
   const cfg = opts || {};
   const o = { inFlight: 0, max: 0, calls: 0 };
   const d = { inFlight: 0, max: 0, calls: 0 };
+  const c = { inFlight: 0, max: 0, calls: 0 };
   const prompts = []; // every prompt passed to generate(), for prompt-content asserts
   const genCalls = []; // richer per-call record: { prompt, temperature, provider }
   let ollamaBusyFlag = false;
@@ -566,7 +567,7 @@ function makeProviders(opts) {
     ollamaBusy: () => ollamaBusyFlag,
     generate: async (gopts) => {
       prompts.push(gopts.prompt || '');
-      const n = o.calls + d.calls; // 0-based index of THIS call, before it runs
+      const n = o.calls + d.calls + c.calls; // 0-based index of THIS call, before it runs
       genCalls.push({
         prompt: gopts.prompt || '',
         temperature: gopts.temperature,
@@ -575,8 +576,10 @@ function makeProviders(opts) {
         kind: gopts.kind,
         priority: gopts.priority,
       });
-      const prov = gopts.provider === 'deepseek' ? 'deepseek' : 'ollama';
-      const s = prov === 'deepseek' ? d : o;
+      const prov = gopts.provider === 'deepseek'
+        ? 'deepseek'
+        : (gopts.provider === 'chatgpt-plan' ? 'chatgpt-plan' : 'ollama');
+      const s = prov === 'deepseek' ? d : (prov === 'chatgpt-plan' ? c : o);
       s.inFlight++; s.max = Math.max(s.max, s.inFlight); s.calls++;
       try {
         await Promise.resolve(); // yield so any real concurrency would be observed
@@ -589,7 +592,7 @@ function makeProviders(opts) {
       // headline echo) to exercise the anti-verbatim / similarity regeneration.
       const content = cfg.textFor
         ? cfg.textFor(gopts, n)
-        : 'Generated line one\n\nGenerated body text for call ' + (o.calls + d.calls);
+        : 'Generated line one\n\nGenerated body text for call ' + (o.calls + d.calls + c.calls);
       const usage = prov === 'deepseek'
         ? { inputTokens: 1000, outputTokens: 500, cachedInputTokens: cfg.deepseekCached || 0 }
         : { inputTokens: 20, outputTokens: 30, cachedInputTokens: 0 };
@@ -599,6 +602,7 @@ function makeProviders(opts) {
       calls: o.calls, maxConcurrent: o.max,
       ollama: { calls: o.calls, maxConcurrent: o.max },
       deepseek: { calls: d.calls, maxConcurrent: d.max },
+      chatgptPlan: { calls: c.calls, maxConcurrent: c.max },
     }),
   };
 }
@@ -1762,14 +1766,16 @@ async function scenarioHostedEligibility() {
 // skipped but ollama profiles keep running.
 // ============================================================================
 async function scenarioSpendCap() {
-  console.log('\n[7] spend cap skips deepseek, not ollama');
+  console.log('\n[7] spend cap skips deepseek, not ollama or ChatGPT plan');
   const clock = makeClock(1_600_000_000_000); // a real-ish epoch so day/month keys are sane
   const world = { feddits: { x: [{ id: 1, feddit: 'x', title: 't1', author: 'human' }] }, comments: {} };
   const oll = profile({ id: 'oll', fedditUsername: 'oll', mode: 'comment', commentsPerHour: 60, readFeddits: ['x'], provider: 'ollama' });
   const ds = profile({ id: 'ds', fedditUsername: 'ds', mode: 'comment', commentsPerHour: 60, readFeddits: ['x'], provider: 'deepseek' });
+  const chatgpt = profile({ id: 'chatgpt', fedditUsername: 'chatgpt', mode: 'comment', commentsPerHour: 60, readFeddits: ['x'], provider: 'chatgpt-plan', chatgptModel: 'account-model' });
   oll.sched.nextCommentAt = clock.now();
   ds.sched.nextCommentAt = clock.now();
-  const store = makeStore([oll, ds]);
+  chatgpt.sched.nextCommentAt = clock.now();
+  const store = makeStore([oll, ds, chatgpt]);
   store.updateSettings({ monthlyCapUsd: 5 });
   // Seed month-to-date spend OVER the cap ($6 > $5).
   store.recordSpend('ds', { dayKey: cost.dayKey(clock.now()), usage: {}, costUsd: 6 });
@@ -1780,6 +1786,9 @@ async function scenarioSpendCap() {
   ok(r.results.some((x) => x && x.skipped === 'spend-cap' && x.id === 'ds'), 'deepseek profile skipped: over the monthly cap');
   eq(providers.stats().deepseek.calls, 0, 'no DeepSeek generation while over the cap (no money burned)');
   eq(providers.stats().ollama.calls, 1, 'ollama profile STILL generated (cap is money-only, ollama is free)');
+  eq(providers.stats().chatgptPlan.calls, 1, 'ChatGPT plan profile STILL generated because API spend limits do not govern a subscription connection');
+  eq(providers.genCalls.find((call) => call.profileId === 'chatgpt').provider, 'chatgpt-plan',
+    'the subscription opportunity reaches the explicit provider without a fallback');
   ok(r.spend && r.spend.overCap === true, 'tick reports overCap=true');
 
   // Raise the cap: deepseek resumes on the next tick (still under cap now).
@@ -1835,7 +1844,7 @@ async function scenarioCostMaths() {
     const gates = [];
     dsMod.generate = () => {
       active++; maxActive = Math.max(maxActive, active);
-      return new Promise((resolve) => gates.push(() => { active--; resolve({ provider: 'deepseek', model: 'deepseek-v4-flash', text: '', usage: {}, ms: 0 }); }));
+      return new Promise((resolve) => gates.push(() => { active--; resolve({ provider: 'deepseek', model: 'deepseek-v4-flash', text: 'ok', usage: {}, ms: 0 }); }));
     };
     try {
       const runs = Array.from({ length: 6 }, () => providersReal.generate({ provider: 'deepseek', model: 'deepseek-v4-flash', apiKey: 'k' }));

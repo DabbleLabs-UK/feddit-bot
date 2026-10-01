@@ -14,7 +14,7 @@ try {
   const oldToken = 'feddit_' + '01'.repeat(32);
   const replacement = 'feddit_' + 'ab'.repeat(32);
 
-  assert.equal(secrets.empty().schemaVersion, 3);
+  assert.equal(secrets.empty().schemaVersion, 4);
   secrets.setFedditToken(profileId, oldToken);
   const staged = secrets.stageFedditHandover(profileId, replacement);
   assert.equal(staged.status, 'staged');
@@ -36,6 +36,30 @@ try {
   secrets.deleteProfileSecrets(profileId);
   assert.equal(secrets.getFedditToken(profileId), '');
   assert.equal(secrets.getFedditHandover(profileId), null);
+
+  const hostId = secrets.ensureChatgptHostId();
+  assert.match(hostId, /^urn:uuid:/);
+  secrets.saveChatgptRegistration('account-one', {
+    clientId: 'oaiapp_test',
+    subject: 'subject-one',
+    email: 'person@example.test',
+    accessToken: 'access-secret',
+    refreshToken: 'refresh-secret',
+    idToken: 'identity-secret',
+    expiresAt: Date.now() + 60000,
+    scopes: ['openid', 'chatgpt.tokens.use.direct'],
+    models: [{ id: 'gpt-test', label: 'GPT Test' }],
+  });
+  const active = secrets.getActiveChatgptRegistration();
+  assert.equal(active.clientId, 'oaiapp_test');
+  assert.equal(active.refreshToken, 'refresh-secret', 'protected store retains the refresh credential');
+  const safeView = secrets.publicChatgptView();
+  assert.equal(safeView.accounts[0].email, 'person@example.test');
+  assert.equal(JSON.stringify(safeView).includes('access-secret'), false, 'public account state excludes access tokens');
+  assert.equal(JSON.stringify(safeView).includes('refresh-secret'), false, 'public account state excludes refresh tokens');
+  assert.equal(JSON.stringify(safeView).includes('identity-secret'), false, 'public account state excludes ID tokens');
+  assert.equal(secrets.deleteChatgptRegistration('account-one'), true);
+  assert.equal(secrets.getActiveChatgptRegistration(), null);
 } finally {
   fs.rmSync(tempDir, { recursive: true, force: true });
 }

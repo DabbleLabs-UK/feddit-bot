@@ -259,7 +259,23 @@ assert.match(html, /startPublishing \? \{ enabled, dryRun: false \} : \{ enabled
 assert.match(html, /Bot publishing states were not changed/);
 assert.ok(html.indexOf('<dialog id="statusDialog"') < html.indexOf('<div class="layout">'),
   'diagnostics live in a modal rather than a persistent workspace strip');
-assert.match(html, /class="runnerbar" id="runnerBar"/);
+assert.match(html, /id="providerSettings"[\s\S]*aria-labelledby="providerSettingsTitle"/,
+  'ordinary Settings contains the shared AI provider section');
+assert.match(html, /id="providerCards"/);
+assert.match(html, /function renderProviderCards/);
+assert.match(html, /const cards = Array\.isArray\(state\.providers\)/,
+  'all provider labels and states come from the common provider contract');
+assert.match(html, /id === 'ollama'/);
+assert.match(html, /id === 'chatgpt-plan'/);
+assert.match(html, /id === 'claude-plan'/);
+assert.match(html, /id === 'deepseek'/);
+assert.match(html, /Continue with ChatGPT/);
+assert.match(html, /Disconnect and revoke/);
+assert.match(html, /Sign in through Claude Code/);
+assert.match(html, /Sign out of Claude Code on this computer/);
+assert.match(html, /id="f_claudeModel"/);
+assert.doesNotMatch(html, /id="runnerBar"/,
+  'the old one-provider runner strip is no longer maintained separately');
 assert.match(html, /function healthState/);
 assert.match(html, /Recent local model failure/);
 assert.match(html, /Open Status for details/);
@@ -313,7 +329,8 @@ assert.match(html, /id="f_newsMaxPerDomainPerDay"/);
 assert.match(html, /id="f_newsDomainDenylist"/);
 assert.match(html, /\[hidden\]\s*\{\s*display:\s*none\s*!important;\s*\}/);
 assert.match(populationHtml, /\[hidden\]\s*\{\s*display:none\s*!important;\s*\}/);
-assert.match(html, /state\.placement === 'hosted' && !systemPopulationBot \? ' hidden' : ''/);
+assert.match(html, /editorVariant\.showCadenceRates \? '' : ' hidden'/,
+  'placement-driven activity visibility is shared with desktop and hosted variants');
 assert.match(html, /You can replace it with separate text-post, article-link and reply frequencies below/);
 assert.match(html, /These are target frequencies for this population bot/);
 assert.match(html, /Local model working for/);

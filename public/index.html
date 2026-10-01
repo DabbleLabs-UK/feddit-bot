@@ -231,6 +231,24 @@
   .runnerbar b { color: var(--text); }
   .runnerbar input { width: 90px; display: inline-block; padding: 4px 7px; }
   .runnerbar button { padding: 4px 10px; }
+  .provider-settings { margin-top: 14px; }
+  .provider-settings > h3 { margin: 0 0 8px; font-size: 15px; }
+  .provider-list { display: grid; gap: 8px; }
+  .provider-card { border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); overflow: hidden; }
+  .provider-card > summary {
+    display: grid; grid-template-columns: minmax(120px, 1fr) auto; gap: 12px; align-items: center;
+    padding: 10px 12px; cursor: pointer; list-style-position: inside;
+  }
+  .provider-card[open] > summary { border-bottom: 1px solid var(--line); }
+  .provider-card-name { font-weight: 700; }
+  .provider-state { color: var(--dim); font-size: 12px; text-align: right; }
+  .provider-state.ready { color: #8ee493; }
+  .provider-state.busy, .provider-state.connecting { color: #f0d9a0; }
+  .provider-state.unavailable, .provider-state.failed, .provider-state.limit-reached { color: #ff9b9b; }
+  .provider-body { padding: 12px; }
+  .provider-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 9px; }
+  .provider-spend { display: flex; gap: 8px 14px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+  .provider-spend input { width: 90px; display: inline-block; padding: 4px 7px; }
   .capbanner {
     padding: 11px 16px; background: #3a1414; border-bottom: 1px solid var(--bad);
     color: #f3b9b9; font-weight: 600; font-size: 13.5px;
@@ -426,18 +444,13 @@
       <div class="hint" style="margin-top:5px">Shows rehearsal, simulation and advanced diagnostic controls intended for testing and experimentation.</div>
     </div>
     <div class="settings-links">
-      <button id="modelSetupBtn">Choose or download the local model</button>
       <button id="manageLinkBtn" style="display:none">Copy private management link</button>
       <a id="populationBtn" class="button-link" style="display:none" href="/population.html">Manage background population</a>
     </div>
-    <div class="runnerbar" id="runnerBar">
-      <span>DeepSeek key: <b id="dsKeyState">unknown</b></span>
-      <button id="setKeyBtn">Set / change key</button>
-      <button id="clearKeyBtn">Clear</button>
-      <span>Monthly cap: $<input type="number" id="capInput" min="0" step="0.5"></span>
-      <button id="saveCapBtn">Save cap</button>
-      <span id="spendState"></span>
-    </div>
+    <section class="provider-settings" id="providerSettings" aria-labelledby="providerSettingsTitle">
+      <h3 id="providerSettingsTitle">AI providers</h3>
+      <div class="provider-list" id="providerCards"><div class="hint">Checking provider connections...</div></div>
+    </section>
   </div>
 </dialog>
 
@@ -480,6 +493,7 @@
 <script src="/ui-preferences.js"></script>
 <script src="/ui-disclosure.js"></script>
 <script src="/ui-activity.js"></script>
+<script src="/ui-placement.js"></script>
 <script>
 'use strict';
 const $ = (s, r = document) => r.querySelector(s);
@@ -487,6 +501,7 @@ const editorStateLogic = window.FedditEditorState;
 const uiPreferences = window.FedditUiPreferences;
 const disclosureLogic = window.FedditUiDisclosure;
 const activityUiLogic = window.FedditUiActivity;
+const placementUiLogic = window.FedditUiPlacement;
 const OWNER_STORAGE_KEY = 'fedditBotOwnerAccess';
 let volatileOwnerAccess = '';
 function ownerAccessToken() {
@@ -528,6 +543,7 @@ function toast(msg, kind) {
 let state = {
   profiles: [], selected: null, view: 'bots', defaultModel: '', status: null, settings: null,
   capacity: null, hostedWork: null, placement: 'desktop', appVersion: '', hostedPolicy: null,
+  providers: [], providerPoll: null,
   populationAdmin: false, reloadingForUpdate: false, models: null, modelChoice: '', modelPoll: null,
   developerTools: uiPreferences.developerToolsEnabled(),
   localModelActivity: null, localModelActivityLoading: false, localModelActivityInitialized: false,
@@ -780,10 +796,8 @@ function cadenceLimitsHelp(profile) {
 
 function applyPlacementChrome() {
   const hosted = state.placement === 'hosted';
-  $('#runnerBar').style.display = hosted ? 'none' : '';
   $('#runState').style.display = hosted ? 'none' : '';
   $('#pauseBtn').style.display = hosted ? 'none' : '';
-  $('#modelSetupBtn').style.display = hosted ? 'none' : '';
   $('#localModelActivity').style.display = hosted ? 'none' : '';
   $('#manageLinkBtn').style.display = hosted && ownerAccessToken() ? '' : 'none';
   $('#populationBtn').style.display = hosted && state.populationAdmin ? '' : 'none';
@@ -881,7 +895,7 @@ async function recoverHostedWorkspace() {
 
 async function enterWorkspace(openNewBot) {
   applyPlacementChrome();
-  await Promise.all([loadStatus(), loadCapacity(), loadProfiles(), loadModels(), loadLocalModelActivity()]);
+  await Promise.all([loadStatus(), loadProviders(), loadCapacity(), loadProfiles(), loadModels(), loadLocalModelActivity()]);
   const selectedInstalled = state.models && state.models.installed.includes(state.models.selectedModel);
   if (state.placement === 'desktop' && !selectedInstalled) {
     renderModelSetup(true);
@@ -1180,6 +1194,162 @@ async function selectModel(model, firstRun) {
 }
 
 // ---- status -----------------------------------------------------------------
+function providerStateLabel(value) {
+  return ({
+    ready: 'Ready',
+    connecting: 'Connecting',
+    'auth-required': 'Authentication required',
+    unavailable: 'Unavailable',
+    busy: 'Busy',
+    'limit-reached': 'Allowance / limit reached',
+    failed: 'Request failed',
+  })[String(value || '')] || 'Unavailable';
+}
+
+function renderProviderCards() {
+  const root = $('#providerCards');
+  if (!root) return;
+  const open = new Set([...root.querySelectorAll('details[data-provider][open]')].map((card) => card.dataset.provider));
+  const spend = state.status && state.status.spend || {};
+  const cards = Array.isArray(state.providers) ? state.providers : [];
+  if (!cards.length) {
+    root.innerHTML = '<div class="hint">Provider status is unavailable.</div>';
+    return;
+  }
+  root.innerHTML = cards.map((provider) => {
+    const id = String(provider.id || '');
+    const stateName = String(provider.state || 'unavailable');
+    let body = '<div class="hint">' + esc(provider.detail || '') + '</div>';
+    if (id === 'ollama') {
+      body += '<div class="provider-actions"><button type="button" id="modelSetupBtn">Choose or download the local model</button></div>';
+    } else if (id === 'chatgpt-plan') {
+      const connected = stateName === 'ready' || stateName === 'busy' || Boolean(provider.account);
+      const account = provider.account || {};
+      if (account.email || account.name) {
+        body += '<div class="hint" style="margin-top:7px">Account: <b>' + esc(account.email || account.name) + '</b></div>';
+      }
+      if (Array.isArray(provider.models) && provider.models.length) {
+        body += '<div class="hint" style="margin-top:7px">Available models: ' +
+          provider.models.map((model) => esc(model.label || model.id)).join(', ') + '</div>';
+      }
+      body += '<div class="provider-actions">' + (connected
+        ? '<button type="button" id="disconnectChatgptBtn">Disconnect and revoke</button>'
+        : '<button type="button" class="primary" id="connectChatgptBtn">Continue with ChatGPT</button>') + '</div>';
+    } else if (id === 'claude-plan') {
+      const connected = stateName === 'ready' || stateName === 'busy' || Boolean(provider.account);
+      const account = provider.account || {};
+      if (account.email || account.plan) {
+        body += '<div class="hint" style="margin-top:7px">Account: <b>' + esc(account.email || 'Claude subscription') + '</b>' +
+          (account.plan ? ' - ' + esc(account.plan) : '') + '</div>';
+      }
+      body += '<div class="provider-actions">' + (connected
+        ? '<button type="button" id="disconnectClaudeBtn">Sign out of Claude Code on this computer</button>'
+        : '<button type="button" class="primary" id="connectClaudeBtn">Sign in through Claude Code</button>') + '</div>';
+    } else if (id === 'deepseek') {
+      const credential = provider.credential || {};
+      body += '<div class="provider-actions"><span>API key: <b id="dsKeyState">' +
+        esc(credential.hasKey ? (credential.redacted || 'configured') : 'not set') + '</b></span>' +
+        '<button type="button" id="setKeyBtn">Set / change key</button>' +
+        '<button type="button" id="clearKeyBtn"' + (credential.hasKey ? '' : ' disabled') + '>Clear</button></div>' +
+        '<div class="provider-spend"><label>Monthly cap: $<input type="number" id="capInput" min="0" step="0.5" value="' +
+        esc(spend.capUsd == null ? 0 : spend.capUsd) + '"></label><button type="button" id="saveCapBtn">Save cap</button>' +
+        '<span id="spendState">Today <b>$' + Number(spend.todayUsd || 0).toFixed(4) + '</b> - this month <b>$' +
+        Number(spend.monthUsd || 0).toFixed(4) + '</b></span></div>';
+    }
+    return '<details class="provider-card" data-provider="' + esc(id) + '"' + (open.has(id) ? ' open' : '') + '>' +
+      '<summary><span class="provider-card-name">' + esc(provider.label || id) + '</span>' +
+      '<span class="provider-state ' + esc(stateName) + '">' + esc(providerStateLabel(stateName)) + '</span></summary>' +
+      '<div class="provider-body">' + body + '</div></details>';
+  }).join('');
+  if ($('#modelSetupBtn')) $('#modelSetupBtn').onclick = async () => {
+    closeDialog($('#settingsDialog'));
+    await loadModels();
+    renderModelSetup(false);
+  };
+  if ($('#setKeyBtn')) $('#setKeyBtn').onclick = setDeepseekKey;
+  if ($('#clearKeyBtn')) $('#clearKeyBtn').onclick = clearDeepseekKey;
+  if ($('#saveCapBtn')) $('#saveCapBtn').onclick = saveCap;
+  if ($('#connectChatgptBtn')) $('#connectChatgptBtn').onclick = connectChatgpt;
+  if ($('#disconnectChatgptBtn')) $('#disconnectChatgptBtn').onclick = disconnectChatgpt;
+  if ($('#connectClaudeBtn')) $('#connectClaudeBtn').onclick = connectClaude;
+  if ($('#disconnectClaudeBtn')) $('#disconnectClaudeBtn').onclick = disconnectClaude;
+}
+
+async function loadProviders() {
+  try {
+    const result = await api('/api/providers');
+    state.providers = Array.isArray(result.providers) ? result.providers : [];
+    renderProviderCards();
+  } catch (error) {
+    const root = $('#providerCards');
+    if (root) root.innerHTML = '<div class="hint" style="color:var(--bad)">Could not load provider status: ' + esc(error.message) + '</div>';
+  }
+}
+
+function pollProviderConnection(providerId, connectedMessage) {
+  if (state.providerPoll) clearInterval(state.providerPoll);
+  let checks = 0;
+  state.providerPoll = setInterval(async () => {
+    checks++;
+    await loadProviders();
+    const provider = state.providers.find((item) => item.id === providerId);
+    if (!provider || provider.state !== 'connecting' || checks >= 300) {
+      clearInterval(state.providerPoll);
+      state.providerPoll = null;
+      if (provider && provider.state === 'ready') toast(connectedMessage, 'ok');
+    }
+  }, 2000);
+}
+
+async function connectChatgpt() {
+  const authWindow = window.open('about:blank', '_blank');
+  try {
+    const result = await api('/api/providers/chatgpt-plan/connect', { method: 'POST' });
+    if (authWindow) authWindow.location.href = result.authUrl;
+    else window.open(result.authUrl, '_blank', 'noopener');
+    await loadProviders();
+    pollProviderConnection('chatgpt-plan', 'ChatGPT plan connected.');
+  } catch (error) {
+    if (authWindow) authWindow.close();
+    toast('Could not start ChatGPT connection: ' + error.message, 'err');
+  }
+}
+
+async function connectClaude() {
+  try {
+    await api('/api/providers/claude-plan/connect', { method: 'POST' });
+    toast('Claude Code sign-in opened. Finish signing in there.', 'ok');
+    await loadProviders();
+    pollProviderConnection('claude-plan', 'Claude subscription connected.');
+  } catch (error) {
+    toast('Could not start Claude connection: ' + error.message, 'err');
+  }
+}
+
+async function disconnectClaude() {
+  if (!confirm('Sign out of Claude Code on this computer? This affects other Claude Code sessions here. Bots using it will stop until you sign in again or select another provider.')) return;
+  try {
+    await api('/api/providers/claude-plan', { method: 'DELETE' });
+    toast('Claude Code signed out on this computer.', 'ok');
+    await loadProviders();
+    if (state.editing) renderEditor(state.editing);
+  } catch (error) {
+    toast('Could not sign out of Claude Code: ' + error.message, 'err');
+  }
+}
+
+async function disconnectChatgpt() {
+  if (!confirm('Disconnect this ChatGPT account and revoke its saved tokens? Bots using it will stop until another provider is selected or the account is reconnected.')) return;
+  try {
+    await api('/api/providers/chatgpt-plan', { method: 'DELETE' });
+    toast('ChatGPT plan disconnected.', 'ok');
+    await loadProviders();
+    if (state.editing) renderEditor(state.editing);
+  } catch (error) {
+    toast('Could not disconnect ChatGPT: ' + error.message, 'err');
+  }
+}
+
 async function loadStatus() {
   try {
     const s = await api('/api/status');
@@ -1292,6 +1462,7 @@ function renderRunnerBar(s) {
   const ds = s.deepseek || {};
   const spend = s.spend || {};
   const keyState = $('#dsKeyState');
+  if (!keyState) return;
   if (sec.hasKey) {
     keyState.textContent = sec.redacted + (ds.keyOk ? ' (valid)' : (ds.up ? ' (rejected)' : ''));
     keyState.style.color = ds.keyOk ? 'var(--good)' : (ds.up ? 'var(--bad)' : 'var(--text)');
@@ -1321,7 +1492,7 @@ async function setDeepseekKey() {
   try {
     await api('/api/secret', { method: 'PUT', body: { deepseekApiKey: key.trim() } });
     toast('DeepSeek key saved.', 'ok');
-    await loadStatus();
+    await Promise.all([loadStatus(), loadProviders()]);
   } catch (e) { toast('Failed to save key: ' + e.message, 'err'); }
 }
 async function clearDeepseekKey() {
@@ -1329,7 +1500,7 @@ async function clearDeepseekKey() {
   try {
     await api('/api/secret', { method: 'PUT', body: { deepseekApiKey: '' } });
     toast('DeepSeek key cleared.', 'ok');
-    await loadStatus();
+    await Promise.all([loadStatus(), loadProviders()]);
   } catch (e) { toast('Failed: ' + e.message, 'err'); }
 }
 async function saveCap() {
@@ -1949,7 +2120,11 @@ function cardCompactSummary(title, profile) {
   if (title === 'News sources and fine-tuning') return 'Sources, filters and article presentation';
   if (title === 'Model and technical settings') return profile.provider === 'deepseek'
     ? String(profile.deepseekModel || 'DeepSeek')
-    : (profile.provider === 'dell' ? 'Hosted compute' : String(profile.model || 'Local model'));
+    : (profile.provider === 'dell'
+      ? 'Hosted compute'
+      : (profile.provider === 'chatgpt-plan'
+        ? String(profile.chatgptModel || 'ChatGPT plan')
+        : (profile.provider === 'claude-plan' ? String(profile.claudeModel || 'sonnet') : String(profile.model || 'Local model'))));
   if (title === 'Manual reply preview (does not post)') return 'Generate from a pasted sample';
   if (title === 'Manual news preview (does not post)') return 'Fetch and generate without posting';
   if (title === 'Technical activity history') return String((profile.activity || []).length) + ' recent records';
@@ -2003,9 +2178,13 @@ function renderEditor(p) {
   state.dirty = false;
   setSavePresentation('clean');
   const abilities = profileCapabilities(p);
-  const providerChoice = state.placement === 'hosted'
+  const systemPopulationBot = p.botOrigin === 'system';
+  const editorVariant = placementUiLogic.editorVariant(state.placement, p);
+  const providerChoice = editorVariant.providerLocked
     ? 'dell'
-    : (p.provider === 'deepseek' ? (p.deepseekModel || 'deepseek-v4-flash') : 'ollama');
+    : (p.provider === 'deepseek'
+      ? (p.deepseekModel || 'deepseek-v4-flash')
+      : (p.provider === 'chatgpt-plan' ? 'chatgpt-plan' : (p.provider === 'claude-plan' ? 'claude-plan' : 'ollama')));
   const installedLocalModels = state.models && Array.isArray(state.models.installed) ? state.models.installed : [];
   const savedLocalModel = String(p.model || state.defaultModel || '').trim();
   const guidedChoices = (state.models && state.models.hardware && state.models.hardware.choices) || [];
@@ -2028,14 +2207,31 @@ function renderEditor(p) {
     '<optgroup label="Curated local models">' + guidedChoices.map((choice) => modelOption(choice.id)).join('') + '</optgroup>' +
     (installedCustomModels.length ? '<optgroup label="Other models already installed">' + installedCustomModels.map(modelOption).join('') + '</optgroup>' : '') +
     (missingSavedModels.length ? '<optgroup label="Saved preference not installed on this computer">' + missingSavedModels.map(modelOption).join('') + '</optgroup>' : '');
-  const providerField = state.placement === 'hosted'
+  const chatgptProvider = (state.providers || []).find((provider) => provider.id === 'chatgpt-plan') || {};
+  const chatgptModels = Array.isArray(chatgptProvider.models) ? chatgptProvider.models : [];
+  const savedChatgptModel = String(p.chatgptModel || '').trim();
+  const chatgptModelList = chatgptModels.some((model) => model.id === savedChatgptModel) || !savedChatgptModel
+    ? chatgptModels
+    : [{ id: savedChatgptModel, label: savedChatgptModel }, ...chatgptModels];
+  const chatgptReady = ['ready', 'busy'].includes(chatgptProvider.state);
+  const claudeProvider = (state.providers || []).find((provider) => provider.id === 'claude-plan') || {};
+  const claudeModels = Array.isArray(claudeProvider.models) && claudeProvider.models.length
+    ? claudeProvider.models
+    : ['sonnet', 'opus', 'haiku'].map((id) => ({ id, label: id[0].toUpperCase() + id.slice(1) }));
+  const savedClaudeModel = ['sonnet', 'opus', 'haiku'].includes(String(p.claudeModel || '')) ? String(p.claudeModel) : 'sonnet';
+  const claudeReady = ['ready', 'busy'].includes(claudeProvider.state);
+  const providerField = editorVariant.providerLocked
     ? `<div class="field full"><label>Generation</label>
         <input type="hidden" id="f_provider" value="dell">
         <div class="model-detail-box"><b>Feddit-hosted compute</b><br>No model download or API key is needed. This public hosted workspace cannot use models installed on your computer. Direct DeepSeek is available in desktop and self-hosted runners where the owner supplies the API key.</div></div>
-       <input type="hidden" id="f_model" value="${esc(savedLocalModel || state.defaultModel)}">`
+       <input type="hidden" id="f_model" value="${esc(savedLocalModel || state.defaultModel)}">
+       <input type="hidden" id="f_chatgptModel" value="${esc(savedChatgptModel)}">
+       <input type="hidden" id="f_claudeModel" value="${esc(savedClaudeModel)}">`
     : `<div class="field full"><label>Provider</label>
         <select id="f_provider">
           <option value="ollama"${providerChoice==='ollama'?' selected':''}>This computer (local Ollama, broadest model choice)</option>
+          <option value="chatgpt-plan"${providerChoice==='chatgpt-plan'?' selected':''}${chatgptReady || providerChoice==='chatgpt-plan' ? '' : ' disabled'}>ChatGPT plan${chatgptReady ? '' : ' (connect in Settings)'}</option>
+          <option value="claude-plan"${providerChoice==='claude-plan'?' selected':''}${claudeReady || providerChoice==='claude-plan' ? '' : ' disabled'}>Claude subscription${claudeReady ? '' : ' (sign in through Settings)'}</option>
           <option value="deepseek-v4-flash"${providerChoice==='deepseek-v4-flash'?' selected':''}>DeepSeek V4-Flash (remote, paid, cheaper)</option>
           <option value="deepseek-v4-pro"${providerChoice==='deepseek-v4-pro'?' selected':''}>DeepSeek V4-Pro (remote, paid, premium)</option>
         </select></div>
@@ -2043,9 +2239,18 @@ function renderEditor(p) {
         <select id="f_model">${localModelOptions}</select>
         <div id="localModelDetails" class="model-detail-box"></div>
         <div class="hint">Curated models use the same safe Ollama download flow as first setup. Other compatible Ollama models already installed on this computer remain available. A missing imported preference stays saved while the bot is paused, so you can download it or choose a replacement.</div>
+       </div>
+       <div class="field full" id="chatgptModelField" hidden><label>ChatGPT model for this bot</label>
+        <select id="f_chatgptModel">${chatgptModelList.length
+          ? chatgptModelList.map((model) => '<option value="' + esc(model.id) + '"' + (model.id === savedChatgptModel ? ' selected' : '') + '>' + esc(model.label || model.id) + '</option>').join('')
+          : '<option value="">No model is currently available</option>'}</select>
+        <div class="hint">This list comes from the connected ChatGPT account. Feddit Bots never falls back to a paid API key.</div>
+       </div>
+       <div class="field full" id="claudeModelField" hidden><label>Claude model for this bot</label>
+        <select id="f_claudeModel">${claudeModels.map((model) => '<option value="' + esc(model.id) + '"' + (model.id === savedClaudeModel ? ' selected' : '') + '>' + esc(model.label || model.id) + '</option>').join('')}</select>
+        <div class="hint">Generation uses this computer's authenticated Claude Code subscription. Feddit Bots removes API-key and cloud-provider overrides and never falls back to paid API usage.</div>
        </div>`;
   const main = $('#main');
-  const systemPopulationBot = p.botOrigin === 'system';
   const simulationSection = state.developerTools ? `
     <details class="section progressive" id="simulationResultsSection">
       <summary>Simulation results <span class="badge" id="simulationCount"></span></summary>
@@ -2142,11 +2347,11 @@ function renderEditor(p) {
       <div class="progressive-body">
       <h2>Behaviour</h2>
       <div class="grid">
-        ${state.placement === 'hosted' ? `<div class="field full">${hostedAllocationHtml(p)}</div>` : ''}
-        <div class="field textRateField"${state.placement === 'hosted' && !systemPopulationBot ? ' hidden' : ''}><label>Regular/text posts per hour</label><input id="f_postsPerHour" type="number" min="0" max="10" step="0.05" value="${esc(p.postsPerHour)}"></div>
-        <div class="field articleRateField"${state.placement === 'hosted' && !systemPopulationBot ? ' hidden' : ''}><label>News/article posts per hour</label><input id="f_articlePostsPerHour" type="number" min="0" max="10" step="0.05" value="${esc(p.articlePostsPerHour)}"></div>
-        <div class="field replyField"${state.placement === 'hosted' && !systemPopulationBot ? ' hidden' : ''}><label>Comments/replies per hour</label><input id="f_commentsPerHour" type="number" min="0" max="60" step="0.05" value="${esc(p.commentsPerHour)}"></div>
-        ${state.placement === 'hosted' && systemPopulationBot ? '<div class="field full"><div class="hint">These are target frequencies for this population bot. It still uses only spare hosted capacity, remains behind user-created bots, and may act less often when no suitable opportunity is available.</div></div>' : ''}
+        ${editorVariant.showHostedAllocation ? `<div class="field full">${hostedAllocationHtml(p)}</div>` : ''}
+        <div class="field textRateField"${editorVariant.showCadenceRates ? '' : ' hidden'}><label>Regular/text posts per hour</label><input id="f_postsPerHour" type="number" min="0" max="10" step="0.05" value="${esc(p.postsPerHour)}"></div>
+        <div class="field articleRateField"${editorVariant.showCadenceRates ? '' : ' hidden'}><label>News/article posts per hour</label><input id="f_articlePostsPerHour" type="number" min="0" max="10" step="0.05" value="${esc(p.articlePostsPerHour)}"></div>
+        <div class="field replyField"${editorVariant.showCadenceRates ? '' : ' hidden'}><label>Comments/replies per hour</label><input id="f_commentsPerHour" type="number" min="0" max="60" step="0.05" value="${esc(p.commentsPerHour)}"></div>
+        ${editorVariant.showPopulationCadenceNote ? '<div class="field full"><div class="hint">These are target frequencies for this population bot. It still uses only spare hosted capacity, remains behind user-created bots, and may act less often when no suitable opportunity is available.</div></div>' : ''}
         <div class="field replyField"><label>${lbl('Link posts with no article summary', 'When this bot goes to comment on a link post whose preview came back empty (no description fetched), this decides what it does: react to the bare headline (with the honesty guard on), or skip it. Example: a paywalled link with no summary is either given a headline-only reply or left alone.')}</label>
           <select id="f_linkNoContext">
             <option value="headline"${p.linkNoContext!=='skip'?' selected':''}>comment on the headline (honesty-guarded)</option>
@@ -2262,8 +2467,8 @@ function renderEditor(p) {
       <h2>Provider &amp; model</h2>
       <div class="grid">
         ${providerField}
-        <div class="field"><label>Temperature</label><input id="f_temperature" type="number" min="0" max="2" step="0.05" value="${esc(p.temperature)}"></div>
-        <div class="field"><label id="numPredictLabel">num_predict (max tokens)</label><input id="f_numPredict" type="number" min="1" step="10" value="${esc(p.numPredict)}"></div>
+        <div class="field" id="temperatureField"><label>Temperature</label><input id="f_temperature" type="number" min="0" max="2" step="0.05" value="${esc(p.temperature)}"></div>
+        <div class="field" id="numPredictField"><label id="numPredictLabel">num_predict (max tokens)</label><input id="f_numPredict" type="number" min="1" step="10" value="${esc(p.numPredict)}"></div>
       </div>
       <div id="modelWarn"></div>
       <div class="willuse" id="willUseLine"></div>
@@ -2359,6 +2564,8 @@ function renderEditor(p) {
   biographyField.addEventListener('input', syncBiographyInput);
   syncBiographyInput();
   $('#f_model').addEventListener('change', renderProviderView);
+  if ($('#f_chatgptModel')) $('#f_chatgptModel').addEventListener('change', renderProviderView);
+  if ($('#f_claudeModel')) $('#f_claudeModel').addEventListener('change', renderProviderView);
   $('#f_provider').addEventListener('change', renderProviderView);
   ['#f_canReply', '#f_canStartDiscussions', '#f_canShareLinks'].forEach((selector) => {
     $(selector).addEventListener('change', renderBotTypeView);
@@ -2405,9 +2612,9 @@ function renderEditor(p) {
     const canDiscuss = visibility.text;
     const canShare = visibility.article;
     document.querySelectorAll('.convField').forEach((el) => { el.style.display = ''; });
-    document.querySelectorAll('.textRateField').forEach((el) => { el.style.display = canDiscuss ? '' : 'none'; });
-    document.querySelectorAll('.articleRateField').forEach((el) => { el.style.display = canShare ? '' : 'none'; });
-    document.querySelectorAll('.replyField').forEach((el) => { el.style.display = canComment ? '' : 'none'; });
+    document.querySelectorAll('.textRateField').forEach((el) => { el.style.display = editorVariant.showCadenceRates && canDiscuss ? '' : 'none'; });
+    document.querySelectorAll('.articleRateField').forEach((el) => { el.style.display = editorVariant.showCadenceRates && canShare ? '' : 'none'; });
+    document.querySelectorAll('.replyField').forEach((el) => { el.style.display = editorVariant.showCadenceRates && canComment ? '' : 'none'; });
     $('#newsSection').style.display = canShare ? '' : 'none';
     $('#convTestSection').style.display = canComment ? '' : 'none';
     if ($('#newsPreviewSection')) $('#newsPreviewSection').style.display = canShare ? '' : 'none';
@@ -2520,8 +2727,18 @@ function renderEditor(p) {
     const choice = $('#f_provider').value;
     const isDeep = choice.startsWith('deepseek-');
     const isHosted = choice === 'dell';
+    const isChatgpt = choice === 'chatgpt-plan';
+    const isClaude = choice === 'claude-plan';
     const ollamaField = $('#ollamaModelField');
-    if (ollamaField) ollamaField.style.display = (isDeep || isHosted) ? 'none' : '';
+    if (ollamaField) ollamaField.style.display = (isDeep || isHosted || isChatgpt || isClaude) ? 'none' : '';
+    const chatgptField = $('#chatgptModelField');
+    if (chatgptField) chatgptField.hidden = !isChatgpt;
+    const claudeField = $('#claudeModelField');
+    if (claudeField) claudeField.hidden = !isClaude;
+    const temperatureField = $('#temperatureField');
+    const numPredictField = $('#numPredictField');
+    if (temperatureField) temperatureField.hidden = isChatgpt || isClaude;
+    if (numPredictField) numPredictField.hidden = isChatgpt || isClaude;
     // The token field means something DIFFERENT per provider. For ollama it is a
     // plain output cap. For a DeepSeek reasoning model it is a TOTAL budget the
     // model spends on hidden reasoning FIRST and the visible answer second, so a
@@ -2537,7 +2754,7 @@ function renderEditor(p) {
         'costs roughly a THIRD of V4-Pro, so choose Flash if you just want cheaper titles.');
       const cur = Number($('#f_numPredict').value) || 0;
       if (cur < DEEPSEEK_SAFE_MAX_TOKENS) $('#f_numPredict').value = DEEPSEEK_SAFE_MAX_TOKENS;
-    } else {
+    } else if (!isChatgpt && !isClaude) {
       numLbl.innerHTML = lbl('num_predict (max tokens)',
         isHosted
           ? 'Maximum tokens generated by the hosted compute pool. Short outputs make more turns available to everyone.'
@@ -2545,7 +2762,7 @@ function renderEditor(p) {
     }
 
     const warn = $('#modelWarn');
-    if (!isDeep && !isHosted) {
+    if (!isDeep && !isHosted && !isChatgpt && !isClaude) {
       const val = $('#f_model').value.trim();
       const models = state.models || {};
       const installed = Array.isArray(models.installed) ? models.installed : [];
@@ -2600,10 +2817,14 @@ function renderEditor(p) {
       warn.innerHTML = '';
     }
 
-    const willModel = isDeep ? choice : (isHosted ? 'managed by the hosted compute pool' : ($('#f_model').value.trim() || state.defaultModel));
-    const provName = isDeep ? 'DeepSeek' : (isHosted ? 'Feddit hosted' : 'this computer');
+    const willModel = isDeep
+      ? choice
+      : (isHosted
+        ? 'managed by the hosted compute pool'
+        : (isChatgpt ? ($('#f_chatgptModel').value || 'no available model') : (isClaude ? ($('#f_claudeModel').value || 'sonnet') : ($('#f_model').value.trim() || state.defaultModel))));
+    const provName = isDeep ? 'DeepSeek' : (isHosted ? 'Feddit hosted' : (isChatgpt ? 'ChatGPT plan' : (isClaude ? 'Claude subscription' : 'this computer')));
     $('#willUseLine').innerHTML = 'Will generate via: <b>' + esc(provName) + '</b> &middot; model <b>' + esc(willModel) + '</b>' +
-      (isDeep ? ' &middot; billed per token using your runner\'s DeepSeek key' : ' &middot; no direct API charge');
+      (isDeep ? ' &middot; billed per token using your runner\'s DeepSeek key' : (isChatgpt ? ' &middot; uses the connected ChatGPT plan; never falls back to API billing' : (isClaude ? ' &middot; uses Claude Code with your subscription; never falls back to API billing' : ' &middot; no direct API charge')));
     const hint = $('#providerHint');
     if (isHosted) {
       const cap = state.capacity || {};
@@ -2613,6 +2834,10 @@ function renderEditor(p) {
       hint.textContent = state.developerTools
         ? 'DeepSeek is a remote paid call supported by desktop and self-hosted runners. It costs money even during scheduled simulation because simulation skips the Feddit write, not the generation. Set your key in Settings.'
         : 'DeepSeek is a remote paid call supported by desktop and self-hosted runners. Manual previews and scheduled generation can cost money. Set your key in Settings.';
+    } else if (isChatgpt) {
+      hint.textContent = 'Uses OpenAI\'s official local-app authorization and Responses API. Temperature and output-token controls are not shown because this plan-backed preview does not support them. Manage the account in Settings.';
+    } else if (isClaude) {
+      hint.textContent = 'Uses the authenticated Claude Code command-line boundary with tools, project settings and session persistence disabled. Temperature and output-token controls are not exposed. Signing out here signs Claude Code out on this computer.';
     } else {
       hint.textContent = 'Runs on this computer with no shared queue. Leave the model on the suggested choice unless you know you want another.';
     }
@@ -3110,6 +3335,8 @@ function renderActivity(p) {
 function collectForm() {
   const choice = $('#f_provider').value;
   const isDeep = choice.startsWith('deepseek-');
+  const isChatgpt = choice === 'chatgpt-plan';
+  const isClaude = choice === 'claude-plan';
   const canReply = $('#f_canReply').checked;
   const canStartDiscussions = $('#f_canStartDiscussions').checked;
   const canShareLinks = $('#f_canShareLinks').checked;
@@ -3142,8 +3369,10 @@ function collectForm() {
     postsPerHour: Number($('#f_postsPerHour').value) || 0,
     articlePostsPerHour: Number($('#f_articlePostsPerHour').value) || 0,
     commentsPerHour: Number($('#f_commentsPerHour').value) || 0,
-    provider: isDeep ? 'deepseek' : (choice === 'dell' ? 'dell' : 'ollama'),
+    provider: isDeep ? 'deepseek' : (choice === 'dell' ? 'dell' : (isChatgpt ? 'chatgpt-plan' : (isClaude ? 'claude-plan' : 'ollama'))),
     deepseekModel: isDeep ? choice : ((state.editing && state.editing.deepseekModel) || 'deepseek-v4-flash'),
+    chatgptModel: isChatgpt ? ($('#f_chatgptModel').value || '') : ((state.editing && state.editing.chatgptModel) || ''),
+    claudeModel: isClaude ? ($('#f_claudeModel').value || 'sonnet') : ((state.editing && state.editing.claudeModel) || 'sonnet'),
     model: $('#f_model').value.trim() || state.defaultModel,
     temperature: Number($('#f_temperature').value),
     numPredict: Number($('#f_numPredict').value) || 200,
@@ -3805,6 +4034,7 @@ async function openDeveloperToolsSettings() {
   if (!(await guardUnsavedChanges())) return false;
   $('#developerToolsToggle').checked = state.developerTools;
   openDialog($('#settingsDialog'));
+  await loadProviders();
   setTimeout(() => $('#developerToolsToggle').focus(), 0);
   return true;
 }
@@ -3812,6 +4042,7 @@ $('#settingsBtn').onclick = async () => {
   if (await guardUnsavedChanges()) {
     $('#developerToolsToggle').checked = state.developerTools;
     openDialog($('#settingsDialog'));
+    await loadProviders();
   }
 };
 $('#developerToolsToggle').checked = state.developerTools;
@@ -3820,11 +4051,6 @@ $('#developerToolsToggle').onchange = () => {
   renderList();
   if (state.editing) renderEditor(state.editing);
   toast(state.developerTools ? 'Developer tools are visible.' : 'Developer tools are hidden. Bot publishing states were not changed.', 'ok');
-};
-$('#modelSetupBtn').onclick = async () => {
-  closeDialog($('#settingsDialog'));
-  await loadModels();
-  renderModelSetup(false);
 };
 $('#manageLinkBtn').onclick = () => {
   const token = ownerAccessToken();
@@ -3835,9 +4061,6 @@ $('#populationBtn').onclick = async (event) => {
   if (await guardUnsavedChanges()) location.href = '/population.html';
 };
 $('#pauseBtn').onclick = togglePause;
-$('#setKeyBtn').onclick = setDeepseekKey;
-$('#clearKeyBtn').onclick = clearDeepseekKey;
-$('#saveCapBtn').onclick = saveCap;
 $('#dirtySaveBtn').onclick = () => saveProfile(state.editing && state.editing.id);
 
 document.addEventListener('keydown', (event) => {
