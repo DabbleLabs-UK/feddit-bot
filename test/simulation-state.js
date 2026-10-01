@@ -22,6 +22,8 @@ try {
   store.recordVoteDecisions(id, [{ targetType: 'comment', targetId: 20 }], options);
   store.recordAttentionScan(id, { cursor: { comments: 12, posts: 3 }, seenEventIds: ['t1_live'] });
   store.recordAttentionScan(id, { cursor: { comments: 22, posts: 5 }, seenEventIds: ['t1_simulation'] }, options);
+  store.recordActiveThreadScan(id, { consideredEventIds: ['active:t1_31'] });
+  store.recordActiveThreadScan(id, { consideredEventIds: ['active:t1_41'] }, options);
   store.recordPostedNews(id, 'https://example.com/live');
   store.recordPostedNews(id, 'https://example.com/simulation', options);
   store.recordNewsDomain(id, '2026-09-13', 'example.com');
@@ -64,6 +66,8 @@ try {
   assert.deepEqual(store.getAttentionState(id, options).cursor, { comments: 22, posts: 5 });
   assert.deepEqual(store.getAttentionState(id).seenEventIds, ['t1_live']);
   assert.deepEqual(store.getAttentionState(id, options).seenEventIds, ['t1_simulation']);
+  assert.deepEqual(store.getActiveThreadState(id).consideredEventIds, ['active:t1_31']);
+  assert.deepEqual(store.getActiveThreadState(id, options).consideredEventIds, ['active:t1_41']);
   assert.equal(store.hasPostedNews(id, 'https://example.com/live'), true);
   assert.equal(store.hasPostedNews(id, 'https://example.com/simulation'), false);
   assert.equal(store.hasPostedNews(id, 'https://example.com/simulation', options), true);
@@ -93,6 +97,8 @@ try {
   assert.deepEqual(reset.repliedTo, ['t3_live'], 'live reply dedupe is preserved');
   assert.deepEqual(reset.attentionState.cursor, { comments: 12, posts: 3 }, 'live attention cursor is preserved');
   assert.deepEqual(reset.attentionState.seenEventIds, ['t1_live'], 'live seen events are preserved');
+  assert.deepEqual(reset.activeThreadState.consideredEventIds, ['active:t1_31'],
+    'live recently-active-thread consideration is preserved');
   assert.deepEqual(reset.postedNews, ['https://example.com/live'], 'live article dedupe is preserved');
   assert.equal(store.getThreadReplyCount(10), 1, 'live thread cap is preserved');
   assert.equal(store.getSocialState(id).relationships.alice.interactionCount, 1, 'live social continuity is preserved');
@@ -102,6 +108,8 @@ try {
   assert.deepEqual(store.getVoteState(id).considered, ['post:10'], 'live vote considered-state is preserved');
   assert.deepEqual(store.getVoteState(id, options), { considered: [] }, 'simulation vote considered-state is reset');
   assert.deepEqual(reset.simulationState.attentionState, store.attentionDefaults(), 'simulation attention is reset');
+  assert.deepEqual(reset.simulationState.activeThreadState, store.activeThreadDefaults(),
+    'simulation recently-active-thread consideration is reset');
   assert.deepEqual(reset.simulationState.postedNews, [], 'simulation article dedupe is reset');
   assert.equal(store.getThreadReplyCount(20, options), 0, 'simulation thread cap is reset');
   assert.deepEqual(store.getSocialState(id, options), store.socialDefaults(), 'simulation social continuity is reset');

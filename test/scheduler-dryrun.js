@@ -124,6 +124,21 @@ function makeStore(profiles) {
       parent.attentionState = current;
       return structuredClone(current);
     },
+    getActiveThreadState: (id, options = {}) => {
+      const p = byId.get(id);
+      const state = options.simulation ? p && p._testSimulationActiveThreadState : p && p.activeThreadState;
+      return structuredClone(state || { consideredEventIds: [] });
+    },
+    recordActiveThreadScan: (id, scan, options = {}) => {
+      const p = byId.get(id); if (!p) return null;
+      const key = options.simulation ? '_testSimulationActiveThreadState' : 'activeThreadState';
+      const state = p[key] || { consideredEventIds: [] };
+      for (const eventId of ((scan && scan.consideredEventIds) || [])) {
+        if (!state.consideredEventIds.includes(eventId)) state.consideredEventIds.push(eventId);
+      }
+      p[key] = state;
+      return structuredClone(state);
+    },
     getSocialState: (id, options = {}) => {
       const p = byId.get(id);
       const parent = options.simulation && p && p.simulationState ? p.simulationState : p;
@@ -249,6 +264,7 @@ function profile(over) {
     sched: over.sched || { nextPostAt: null, nextCommentAt: null, backoffUntil: 0, sentPosts: [], sentComments: [] },
     repliedTo: [],
     attentionState: over.attentionState || { cursor: { comments: 0, posts: 0 }, seenEventIds: [] },
+    activeThreadState: over.activeThreadState || { consideredEventIds: [] },
     socialState: over.socialState || socialRelationships.defaults(),
     memoryState: over.memoryState || autobiographicalMemory.defaults(),
     voteState: over.voteState || { considered: [] },
@@ -918,6 +934,90 @@ async function scenarioRealCandidateCompetition() {
   const waitedCard = waiting.activity.find((entry) => entry.simulation && entry.simulation.action === 'wait');
   ok(waitedCard && /WAIT despite/.test(waitedCard.simulation.decision.socialDecisionContext),
     'rehearsal evidence makes explicit that direct social momentum did not force a reply');
+}
+
+// A fresh comment can renew an older thread as a real optional candidate. The
+// exact event is acknowledged only after the opportunity snapshot is durable;
+// rehearsal continuity remains separate from LIVE continuity.
+async function scenarioRenewedThreadDiscovery() {
+  console.log('\n[1aaab] recently active thread discovery');
+  const clock = makeClock(Date.parse('2026-09-14T15:00:00Z'));
+  const p = profile({
+    id: 'renewed', fedditUsername: 'renewed', mode: 'comment', commentsPerHour: 1,
+    readFeddits: ['botlife'], canReply: true, canStartDiscussions: false, canShareLinks: false,
+  });
+  p.sched.nextCommentAt = clock.now();
+  const store = makeStore([p]);
+  const world = {
+    feddits: {
+      botlife: [{ id: 91, feddit: 'botlife', title: 'A newer ordinary post', body: 'Ordinary context.', author: 'ordinary_bot' }],
+    },
+    comments: { 91: [] },
+    abouts: { botlife: { post_format: 'any', description: 'General bot life.', rules: [] } },
+  };
+  const client = makeFeddit(world);
+  let activeCalls = 0;
+  client.activeThreads = async (_token, options) => {
+    activeCalls++;
+    eq(options.limit, 10, 'the scheduler asks for one bounded recent-activity shortlist');
+    return {
+      ok: true,
+      data: {
+        source: 'recent_comment_activity',
+        window_hours: 72,
+        threads: [{
+          event_id: 'active:t1_501',
+          community: 'botlife',
+          post: {
+            id: 90, kind: 'text', author: 'old_starter', feddit: 'botlife',
+            title: 'An older thread', selftext: 'The old opening context.',
+            created_utc: Math.floor(clock.now() / 1000) - (10 * 86400),
+          },
+          parent_comment: { id: 500, author: 'parent_bot', body: 'Nearby parent context.' },
+          fresh_comment: {
+            id: 501, author: 'fresh_bot', body: 'A genuinely fresh contribution.',
+            created_utc: Math.floor(clock.now() / 1000) - 30,
+          },
+        }],
+      },
+    };
+  };
+  const providers = makeProviders({
+    textFor: (gopts) => {
+      if (gopts.kind === 'scheduled-decision') {
+        const match = gopts.prompt.match(/\[(C\d+)\]\nTYPE: Thread renewed by a fresh comment/);
+        return JSON.stringify({
+          choice: match ? match[1] : 'WAIT',
+          reason: 'The fresh contribution makes the older thread worth rejoining.',
+        });
+      }
+      return 'That fresh point changes how I see the older discussion.';
+    },
+  });
+  const sched = scheduler.createScheduler({
+    store, providers, feddit: client,
+    about: aboutLib.createAbout({ feddit: client, now: clock.now }),
+    feeds: EMPTY_FEEDS(), now: clock.now, random: () => 0, getDeepseekKey: KEY,
+  });
+
+  const result = await sched.runTick();
+  eq(activeCalls, 1, 'one opportunity performs one recent-activity read');
+  eq(result.results[0].target, 't1_501', 'the bot can choose the exact fresh comment on an older thread');
+  eq(providers.stats().calls, 2,
+    'renewed-thread selection and reply need no model call beyond the existing decision plus content generation');
+  ok(providers.prompts[0].includes('Thread renewed by a fresh comment') &&
+    providers.prompts[0].includes('Ordinary Feddit post you could reply to'),
+  'renewed and ordinary content compete in one bounded personality decision');
+  const card = p.activity.find((entry) => entry.simulation && entry.simulation.action === 'comment');
+  eq(card.simulation.decision.selectedActivity.source, 'recent_comment_activity',
+    'rehearsal evidence records the distinct candidate source');
+  eq(card.simulation.decision.selectedActivity.freshCommentId, 501,
+    'rehearsal evidence records the exact fresh comment that renewed the thread');
+  eq(p.activeThreadState.consideredEventIds.length, 0,
+    'rehearsal discovery does not alter LIVE considered-event state');
+  ok(p._testSimulationActiveThreadState.consideredEventIds.includes('active:t1_501'),
+    'the displayed event is acknowledged in isolated rehearsal continuity');
+  eq(client.calls.comment.length, 0, 'rehearsal renewed-thread selection makes no live write');
 }
 
 // ============================================================================
@@ -3444,6 +3544,7 @@ async function scenarioDeepseekReasoning() {
   await scenarioImmediateSimulation();
   await scenarioNewsDiscussion();
   await scenarioRealCandidateCompetition();
+  await scenarioRenewedThreadDiscovery();
   await scenarioIndependentAbilities();
   await scenarioCommunityMovement();
   await scenarioCadenceCeiling();

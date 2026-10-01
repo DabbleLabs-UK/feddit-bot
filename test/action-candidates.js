@@ -108,6 +108,41 @@ eq(bounded.filter((entry) => entry.candidateGroup === 'articles').length, 3,
   'article input has its own hard bound');
 eq(bounded.filter((entry) => entry.candidateGroup === 'discussions').length, 2,
   'discussion input has its own hard bound');
+const renewedBound = candidates.bound({
+  renewed: Array.from({ length: 10 }, (_, index) => ({
+    ...item('r' + index, 'renewed_thread', 'fresh activity ' + index, index),
+    source: 'recent_comment_activity',
+    eventId: 'active:t1_' + (index + 1),
+    commentId: index + 1,
+    threadCreatedUtc: 1,
+    target: {
+      activeThread: {
+        eventId: 'active:t1_' + (index + 1),
+        freshCommentId: index + 1,
+        freshCommentCreatedUtc: 100 + index,
+        threadCreatedUtc: 1,
+        context: 'fresh activity ' + index,
+      },
+    },
+  })),
+});
+eq(renewedBound.length, 3, 'recently active thread input has its own hard bound');
+eq(renewedBound.every((entry) => entry.candidateGroup === 'renewed'), true,
+  'recently active threads remain distinguishable in the decision menu');
+const renewedCompetition = candidates.bound({
+  attention: [item('direct-competition', 'reply_to_own_comment', 'A direct reply.', 200)],
+  renewed: [renewedBound[0]],
+  ordinary: [item('ordinary-competition', 'ordinary_post', 'A different ordinary post.', 202)],
+});
+decision = candidates.parseDecision(
+  '{"choice":"C3","reason":"The different post fits better."}', renewedCompetition
+);
+eq(decision.candidate.candidateType, 'ordinary_post',
+  'a renewed thread competes without forcing selection over another candidate');
+decision = candidates.parseDecision(
+  '{"choice":"WAIT","reason":"None of these warrant a response."}', renewedCompetition
+);
+ok(decision.waited && decision.valid, 'WAIT remains valid while a renewed thread is available');
 const articleOnly = candidates.bound({
   articles: Array.from({ length: 10 }, (_, index) => item('only-n' + index, 'article', 'article only ' + index, index)),
 });
@@ -135,6 +170,18 @@ ok(memorySummary.selectedMemory && memorySummary.selectedMemory.episodeCount ===
   'decision explainability reports the selected memory without exposing the full candidate');
 ok(/raised this candidate's within-bot salience by 1 bounded step/.test(memorySummary.memoryDecisionContext),
   'decision explainability states the bounded memory effect without claiming it forced the choice');
+const renewedSummary = candidates.publicDecision(
+  candidates.parseDecision('{"choice":"C1","reason":"The fresh activity renews this thread."}', renewedBound),
+  renewedBound
+);
+eq(renewedSummary.selectedActivity, {
+  source: 'recent_comment_activity',
+  eventId: 'active:t1_1',
+  freshCommentId: 1,
+  freshCommentCreatedUtc: 100,
+  threadCreatedUtc: 1,
+  context: 'fresh activity 0',
+}, 'decision evidence identifies the exact fresh activity that renewed an older thread');
 
 const voteItems = [
   { id: 'V1', targetType: 'post', targetId: 1, label: 'Post by alice' },
