@@ -50,6 +50,9 @@ try {
         $key.Dispose()
     }
 
+    & (Join-Path $PSScriptRoot "test-packaged-importer-runtime.ps1") -PackageFile $package
+    Assert-True ($LASTEXITCODE -eq 0) "extracted package exposes the desktop importer in a real browser runtime"
+
     Write-Host "signed app update: $checks checks passed"
 } finally {
     if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
