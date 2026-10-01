@@ -72,6 +72,7 @@ async function run() {
   eq(calls[0].body.sort, 'new', 'subreddit sample uses the recent-post feed');
   eq(calls[1].body.pages, 1, 'comment-page request is bounded to the remaining sample');
   eq(first.corpus.posts.length, 2, 'FetchLayer posts normalize into the existing corpus');
+  eq(first.corpus.posts[0].body, 'Tell us the strangest answer you can defend, with enough detail for the full thread reader.', 'thread enrichment replaces a listing preview with the full post body');
   eq(first.corpus.comments.length, 4, 'nested FetchLayer comments flatten into the existing corpus');
   eq(first.corpus.comments[0].threadSourceId, 't3_post1', 'comment retains its thread identity');
   eq(first.corpus.comments[1].parentSourceId, 't1_comment1', 'comment retains its parent identity');
@@ -136,9 +137,8 @@ async function run() {
       async postJson(url, body) {
         if (url.includes('community-posts')) return structuredClone(communityFixture);
         if (body.url.includes('/post1/')) {
-          const error = new Error('temporary provider failure');
-          error.code = 'FETCHLAYER_UNAVAILABLE';
-          error.status = 503;
+          const error = new Error('this public thread could not be read');
+          error.code = 'FETCHLAYER_SOURCE_BLOCKED';
           error.retryable = true;
           throw error;
         }
@@ -148,9 +148,45 @@ async function run() {
   });
   const partialResult = await partial.fetchCorpus({ subreddit: 'ExampleSub', maxPosts: 2, maxComments: 4 });
   eq(partialResult.corpus.comments.length, 1, 'available thread data survives another thread failure');
-  eq(partialResult.corpus.provenance.partialFailures[0].status, 503, 'partial failure keeps bounded diagnostics');
+  eq(partialResult.corpus.provenance.partialFailures[0].code, 'FETCHLAYER_SOURCE_BLOCKED', 'partial failure keeps bounded diagnostics');
   ok(partialResult.corpus.warnings.some((warning) => warning.includes('could not read 1')), 'partial source result has a user-visible warning');
   eq(partialResult.corpus.provenance.complete, false, 'partial source result is marked incomplete');
+
+  const haltedListing = structuredClone(communityFixture);
+  haltedListing.items.push({
+    ...structuredClone(haltedListing.items[1]),
+    id: 'post3',
+    fullname: 't3_post3',
+    title: 'A third discussion that must not be requested after rate limiting',
+    permalink: 'https://www.reddit.com/r/ExampleSub/comments/post3/third_discussion/',
+    url: 'https://www.reddit.com/r/ExampleSub/comments/post3/third_discussion/',
+    createdAt: '2023-11-14T21:30:00.000Z',
+    commentCount: 1,
+  });
+  const haltedThreadCalls = [];
+  const halted = createFetchLayerSource({
+    apiKey: 'fixture-key',
+    cacheDirectory: path.join(temporaryRoot, 'halted-cache'),
+    transport: {
+      async postJson(url, body) {
+        if (url.includes('community-posts')) return structuredClone(haltedListing);
+        haltedThreadCalls.push(body.url);
+        if (body.url.includes('/post2/')) {
+          const error = new Error('provider rate limit');
+          error.code = 'FETCHLAYER_RATE_LIMITED';
+          error.status = 429;
+          error.retryable = true;
+          throw error;
+        }
+        return structuredClone(thread1Fixture);
+      },
+    },
+  });
+  const haltedResult = await halted.fetchCorpus({ subreddit: 'ExampleSub', maxPosts: 3, maxComments: 10 });
+  eq(haltedResult.corpus.comments.length, 3, 'comments fetched before a provider-wide failure remain reviewable');
+  eq(haltedThreadCalls.length, 2, 'provider-wide failure stops further per-thread upstream calls');
+  eq(haltedResult.corpus.provenance.threadSamplingStoppedBy, 'FETCHLAYER_RATE_LIMITED', 'provider-wide sampling stop is explicit in provenance');
+  ok(haltedResult.corpus.warnings.some((warning) => warning.includes('Further thread sampling stopped')), 'provider-wide sampling stop is visible to the operator');
 
   const malformedCommunity = createFetchLayerSource({
     apiKey: 'fixture-key',
