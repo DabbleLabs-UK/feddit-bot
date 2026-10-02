@@ -14,7 +14,7 @@
   const LIST_FIELDS = new Set(['interests', 'dislikes', 'values', 'communities']);
   const CLIENT_FORM_FIELDS = Object.freeze([
     'subreddit', 'maxPosts', 'maxComments', 'windowDays',
-    'candidateCount', 'communities', 'providerChoice',
+    'candidateCount', 'communities', 'providerChoice', 'stagingDestination',
   ]);
   const CLIENT_STATE_VERSION = 1;
   const CLIENT_STATE_KEY = 'feddit.culture-importer.workspace.v1';
@@ -124,7 +124,23 @@
     return output;
   }
 
-  function stagingBody(drafts, managementLink) {
+  function normalizedStagingDestination(placement, requested) {
+    if (placement === 'hosted') return 'hosted';
+    return String(requested || '').toLowerCase() === 'hosted' ? 'hosted' : 'local';
+  }
+
+  function showsHostedManagementLink(placement, requested) {
+    return placement === 'desktop' && normalizedStagingDestination(placement, requested) === 'hosted';
+  }
+
+  function stagingBody(drafts, options = {}) {
+    const legacyManagementLink = typeof options === 'string' ? options : '';
+    const destination = typeof options === 'string'
+      ? (legacyManagementLink ? 'hosted' : 'local')
+      : normalizedStagingDestination('desktop', options.destination);
+    const managementLink = typeof options === 'string'
+      ? legacyManagementLink
+      : (destination === 'hosted' ? String(options.managementLink || '') : '');
     const selected = [];
     const edits = [];
     for (const [key, draft] of Object.entries(drafts || {})) {
@@ -136,6 +152,7 @@
     return {
       selected,
       edits,
+      destination,
       ...(managementLink ? { managementLink: String(managementLink) } : {}),
     };
   }
@@ -187,7 +204,7 @@
     return {
       form: {
         subreddit: '', maxPosts: 100, maxComments: 600, windowDays: 30,
-        candidateCount: 3, communities: 'botlife', providerChoice: '',
+        candidateCount: 3, communities: 'botlife', providerChoice: '', stagingDestination: 'local',
       },
       session: null,
       candidateDrafts: {},
@@ -430,12 +447,14 @@
       const staging = workflow.staging || workflow.session && workflow.session.staging;
       if (!staging) return '';
       const error = staging.error && (staging.error.message || staging.error);
+      const destination = normalizedStagingDestination(getPlacement(), staging.destination || workflow.form.stagingDestination);
+      const destinationLabel = destination === 'local' ? 'this desktop app' : 'the hosted Feddit Bots workspace';
       return '<div class="culture-stage-results ' + (staging.ok === false ? 'failed' : '') + '"><b>' +
         (staging.ok === false ? 'Staging needs attention' : 'Staging result') + '</b>' +
         (error ? '<p>' + esc(error) + '</p>' : '') +
         '<ul>' + stagingResultRows(staging).map((result) => '<li><b>' + esc(result.label) +
           ':</b> ' + esc(result.code) + ' - ' + esc(result.message) + '</li>').join('') + '</ul>' +
-        (staging.ok !== false ? '<p>Staged candidates remain disabled rehearsal bots. Nothing was activated or published.</p>' : '') + '</div>';
+        (staging.ok !== false ? '<p>Created in ' + esc(destinationLabel) + '. Staged candidates remain disabled rehearsal bots. Nothing was activated or published.</p>' : '') + '</div>';
     }
 
     function candidatesHtml() {
@@ -467,6 +486,9 @@
         Math.max(1, generationRemaining),
       );
       const running = sessionTaskRunning();
+      const placement = getPlacement();
+      const stagingDestination = normalizedStagingDestination(placement, workflow.form.stagingDestination);
+      const showHostedLink = showsHostedManagementLink(placement, stagingDestination);
       root.innerHTML = '<div class="culture-importer-page"><div class="culture-page-head"><div><h2>Subreddit culture importer</h2>' +
         '<p class="lead">Mine a bounded public community sample into reviewable fictional composite Feddit characters. Fetching and generation never stage or activate anything.</p>' +
         '<p class="hint">Saved work is restored privately on reopen. Restoration never retrieves source data, calls an AI provider, or repeats staging.</p>' +
@@ -492,7 +514,13 @@
         '<p class="hint">Collection: ' + Number(generationCapacity.used || 0) + ' of ' + Number(generationCapacity.limit || MAX_CANDIDATE_COLLECTION) + '. Requests are split into provider batches of at most 6 and each completed batch is saved. Existing analysis and candidates are reused; this action does not retrieve source data, re-analyse culture or stage anything.</p></div></details>' +
         '<details class="section progressive"' + (candidatesReady ? ' open' : '') + '><summary>4. Review and edit candidates</summary><div class="progressive-body">' + candidatesHtml() + '</div></details>' +
         '<details class="section progressive"' + (candidatesReady ? ' open' : '') + '><summary>5. Stage selected candidates</summary><div class="progressive-body">' +
-        (getPlacement() === 'desktop' ? '<div class="field full"><label for="cultureManagementLink">Hosted private management link</label><input id="cultureManagementLink" type="password" autocomplete="off" value="' + esc(workflow.managementLink) + '" placeholder="https://feddit-bots.dabblelabs.uk/#manage=..."><div class="hint">Used transiently for this explicit staging request. The importer does not save it.</div></div>' : '') +
+        (placement === 'desktop' ? '<div class="field full"><label for="cultureStagingDestination">Create bots in</label><select id="cultureStagingDestination">' +
+          '<option value="local"' + (stagingDestination === 'local' ? ' selected' : '') + '>This desktop app</option>' +
+          '<option value="hosted"' + (stagingDestination === 'hosted' ? ' selected' : '') + '>Hosted Feddit Bots workspace</option></select>' +
+          '<div class="hint">Desktop creates profiles in this installation. They appear under Background population, disabled and in rehearsal, until you explicitly start and switch them to LIVE.</div></div>' :
+          '<p class="hint">Selected candidates will be created in this hosted Feddit Bots workspace.</p>') +
+        (showHostedLink ? '<div class="field full"><label for="cultureManagementLink">Hosted private management link</label><input id="cultureManagementLink" type="password" autocomplete="off" value="' + esc(workflow.managementLink) + '" placeholder="https://feddit-bots.dabblelabs.uk/#manage=...">' +
+          '<div class="hint">This private capability authorizes access to that hosted workspace, which must also be an authorized background-population operator. In the hosted dashboard, open Settings and choose Copy private management link. It is used only for this explicit request and is never saved, logged or sent to an AI model.</div></div>' : '') +
         '<button type="button" class="primary" id="cultureStageBtn"' + (!candidatesReady || workflow.busy ? ' disabled' : '') + '>Stage selected candidates</button>' +
         '<p class="hint">Select 1-' + STAGING_SELECTION_LIMIT + ' candidates per explicit staging action. Larger selections are rejected and never split automatically. Staged bots remain disabled and in rehearsal until separately reviewed and activated through normal population controls.</p>' +
         stagingResultsHtml() + '</div></details></div>';
@@ -508,6 +536,7 @@
       workflow.form.candidateCount = Number(value('#cultureCandidateCount')) || workflow.form.candidateCount;
       workflow.form.communities = value('#cultureCommunities') || workflow.form.communities;
       workflow.form.providerChoice = value('#cultureProvider') || workflow.form.providerChoice;
+      workflow.form.stagingDestination = normalizedStagingDestination(getPlacement(), value('#cultureStagingDestination') || workflow.form.stagingDestination);
       if (root.querySelector('#cultureManagementLink')) workflow.managementLink = value('#cultureManagementLink') || '';
       persistClientState();
     }
@@ -632,6 +661,11 @@
         workflow.form.providerChoice = event.target.value;
         persistClientState();
       });
+      on('#cultureStagingDestination', 'change', (event) => {
+        workflow.form.stagingDestination = normalizedStagingDestination(getPlacement(), event.target.value);
+        persistClientState();
+        render();
+      });
       on('#cultureAnalyseBtn', 'click', () => {
         captureForm();
         const selected = selectedProvider();
@@ -657,19 +691,25 @@
       });
       on('#cultureStageBtn', 'click', async () => {
         captureForm();
-        const body = stagingBody(workflow.candidateDrafts, getPlacement() === 'desktop' ? workflow.managementLink : '');
+        const destination = normalizedStagingDestination(getPlacement(), workflow.form.stagingDestination);
+        const body = stagingBody(workflow.candidateDrafts, {
+          destination,
+          managementLink: workflow.managementLink,
+        });
         if (!body.selected.length) return toast('Select at least one candidate to stage.', 'err');
         if (body.selected.length > STAGING_SELECTION_LIMIT) {
           return toast('Select at most ' + STAGING_SELECTION_LIMIT + ' candidates. Staging is never split automatically.', 'err');
         }
-        if (getPlacement() === 'desktop' && !workflow.managementLink) return toast('Paste the hosted private management link first.', 'err');
+        if (showsHostedManagementLink(getPlacement(), destination) && !workflow.managementLink) {
+          return toast('Paste the private management link for the hosted workspace first.', 'err');
+        }
         workflow.busy = true;
         render();
         try {
           const response = await api('/api/culture-imports/' + encodeURIComponent(workflow.session.id) + '/stage', { method: 'POST', body });
           workflow.staging = response.result;
           applySession(response.session);
-          toast('Selected candidates were staged in rehearsal. Nothing was activated.', 'ok');
+          toast('Selected candidates were created in ' + (destination === 'local' ? 'this desktop app' : 'the hosted workspace') + ' in rehearsal. Nothing was activated.', 'ok');
         } catch (error) {
           workflow.staging = error.data || { ok: false, error: { message: error.message }, results: [] };
           toast('Staging failed: ' + error.message, 'err');
@@ -728,6 +768,8 @@
     safeCandidateDrafts,
     MAX_CANDIDATE_COLLECTION,
     STAGING_SELECTION_LIMIT,
+    normalizedStagingDestination,
+    showsHostedManagementLink,
     stagingBody,
     cultureGroups,
     progressLabel,

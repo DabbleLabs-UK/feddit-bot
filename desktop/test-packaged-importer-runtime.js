@@ -394,6 +394,43 @@ globalThis.fetch = async (input, options = {}) => {
     if (opened.settingsOpen) throw new Error('Settings dialog stayed open after opening the importer');
     trace('packaged importer page opened');
 
+    const localStaging = await evaluate(cdp, `(() => ({
+      destination: document.getElementById('cultureStagingDestination')?.value || '',
+      localOption: Array.from(document.getElementById('cultureStagingDestination')?.options || [])
+        .some((option) => option.value === 'local' && option.textContent.includes('desktop app')),
+      hostedOption: Array.from(document.getElementById('cultureStagingDestination')?.options || [])
+        .some((option) => option.value === 'hosted' && option.textContent.includes('Hosted Feddit Bots')),
+      managementLinkPresent: Boolean(document.getElementById('cultureManagementLink')),
+      disabledExplanation: document.body.innerText.includes('disabled and in rehearsal'),
+    }))()`);
+    if (localStaging.destination !== 'local' || !localStaging.localOption || !localStaging.hostedOption ||
+        localStaging.managementLinkPresent || !localStaging.disabledExplanation) {
+      throw new Error('Packaged local staging destination contract failed: ' + JSON.stringify(localStaging));
+    }
+    const hostedStaging = await evaluate(cdp, `(() => {
+      const select = document.getElementById('cultureStagingDestination');
+      select.value = 'hosted';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return {
+        destination: document.getElementById('cultureStagingDestination')?.value || '',
+        managementLinkPresent: Boolean(document.getElementById('cultureManagementLink')),
+        instructions: document.querySelector('#cultureManagementLink + .hint')?.textContent || '',
+      };
+    })()`);
+    if (hostedStaging.destination !== 'hosted' || !hostedStaging.managementLinkPresent ||
+        !hostedStaging.instructions.includes('Settings') ||
+        !hostedStaging.instructions.includes('Copy private management link') ||
+        !hostedStaging.instructions.includes('never saved')) {
+      throw new Error('Packaged hosted staging destination contract failed: ' + JSON.stringify(hostedStaging));
+    }
+    await evaluate(cdp, `(() => {
+      const select = document.getElementById('cultureStagingDestination');
+      select.value = 'local';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`);
+    trace('packaged importer defaults to local staging and conditionally explains hosted authorization');
+
     await evaluate(cdp, `(() => {
       document.getElementById('cultureSubreddit').value = 'ExampleSub';
       document.getElementById('culturePostCount').value = '2';
@@ -482,7 +519,7 @@ globalThis.fetch = async (input, options = {}) => {
     });
     if (shippedSecret) throw new Error('Packaged application assets contained the FetchLayer key');
 
-    console.log('packaged desktop FetchLayer importer and Burst runtime: 28 checks passed');
+    console.log('packaged desktop FetchLayer importer and Burst runtime: 31 checks passed');
     console.log(JSON.stringify({ burst, visible, opened, missingKey, configuredState, connectionTest, browserExposure, retrieved }));
   } catch (error) {
     if (serverOutput.length) console.error('Packaged server output:\n' + serverOutput.join(''));

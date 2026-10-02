@@ -10,6 +10,7 @@ const {
   desktopStagingDestination,
   createDesktopCultureStageRoute,
 } = require('../lib/culture-importer/desktop-staging');
+const importerUi = require('../public/ui-culture-importer');
 
 let checks = 0;
 
@@ -88,6 +89,47 @@ function seed(username) {
 }
 
 async function run() {
+  eq(importerUi.normalizedStagingDestination('desktop', ''), 'local',
+    'the desktop importer defaults its visible destination to this desktop app');
+  eq(importerUi.normalizedStagingDestination('desktop', 'hosted'), 'hosted',
+    'the desktop importer retains an explicit hosted destination');
+  eq(importerUi.normalizedStagingDestination('hosted', 'local'), 'hosted',
+    'the hosted importer always stages into its own hosted workspace');
+  eq(importerUi.showsHostedManagementLink('desktop', 'local'), false,
+    'the hosted credential field is hidden for local desktop staging');
+  eq(importerUi.showsHostedManagementLink('desktop', 'hosted'), true,
+    'the hosted credential field is shown only for the optional hosted destination');
+  eq(importerUi.showsHostedManagementLink('hosted', 'hosted'), false,
+    'the hosted workspace uses its authenticated session rather than asking for a pasted link');
+
+  const drafts = { 0: { selected: true, seed: seed('request_candidate') } };
+  const localBody = importerUi.stagingBody(drafts, {
+    destination: 'local',
+    managementLink: 'https://feddit-bots.dabblelabs.uk/#manage=must-not-leak',
+  });
+  eq(localBody.destination, 'local', 'the browser marks a local staging request explicitly');
+  ok(!Object.prototype.hasOwnProperty.call(localBody, 'managementLink'),
+    'a hosted management link never enters a local staging request');
+  const hostedBody = importerUi.stagingBody(drafts, {
+    destination: 'hosted',
+    managementLink: 'https://feddit-bots.dabblelabs.uk/#manage=private-capability',
+  });
+  eq(hostedBody.destination, 'hosted', 'the browser marks an optional hosted staging request explicitly');
+  eq(hostedBody.managementLink, 'https://feddit-bots.dabblelabs.uk/#manage=private-capability',
+    'the hosted link is included only in the explicit hosted request');
+
+  const storage = {
+    value: '',
+    setItem(key, value) { this.value = value; },
+    getItem() { return this.value; },
+  };
+  importerUi.writeClientState(storage, {
+    form: { stagingDestination: 'hosted' },
+    managementLink: 'https://feddit-bots.dabblelabs.uk/#manage=must-not-persist',
+  });
+  ok(storage.value.includes('stagingDestination') && !storage.value.includes('must-not-persist'),
+    'browser state remembers the safe destination choice but never the private management link');
+
   eq(desktopStagingDestination({}), 'local',
     'new desktop staging requests default to the local workspace');
   eq(desktopStagingDestination({ destination: 'local' }), 'local',
