@@ -212,6 +212,9 @@ async function run() {
     window: { since: '2026-09-01T00:00:00.000Z' },
     posts: 1,
     comments: 1,
+    provider: '',
+    complete: true,
+    warnings: [],
     cache: { key: 'fixture-cache', hit: true },
   }, 'browser session receives bounded source counts and provenance rather than the raw corpus');
   ok(!Object.hasOwn(session, 'corpus'), 'raw source corpus is never exposed by the UI session');
@@ -375,6 +378,17 @@ async function run() {
     'leaving the page warns about meaningful importer state even after returning to the bot editor');
   ok(html.includes('id="developerToolsToggle"') && html.includes('id="providerCards"'),
     'ordinary Developer-tools and provider settings remain present');
+  ok(html.includes('id="cultureSourceSettings"') && html.includes('id="fetchLayerKeyState"'),
+    'desktop Developer tools includes the separate FetchLayer credential control');
+  ok(html.includes("'/api/culture-imports/source-credential'") && html.includes("'configured' : 'not configured'"),
+    'FetchLayer settings use a presence-only server credential contract');
+  ok(html.includes('id="fetchLayerKeyInput" type="password"') &&
+    !html.includes("const key = prompt('Paste the FetchLayer API key"),
+  'FetchLayer key entry is masked and does not use a visible browser prompt');
+  ok(html.includes("'/api/culture-imports/source-credential/test'") && html.includes('id="testFetchLayerBtn"'),
+    'Developer tools exposes the bounded server-side FetchLayer connection test');
+  ok(html.includes('Hosted FetchLayer credentials are read only from protected server configuration'),
+    'hosted population operators see a presence-only server configuration explanation');
   ok(html.includes('id="populationBtn"') && html.includes('function renderEditor('),
     'ordinary population and bot editor paths remain present');
 

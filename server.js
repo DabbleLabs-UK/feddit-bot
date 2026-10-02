@@ -31,6 +31,7 @@ const modelCatalog = require('./lib/model-catalog');
 const { createModelInstaller } = require('./lib/model-installer');
 const { createPopulationController } = require('./lib/population');
 const { createCultureImporter } = require('./lib/culture-importer');
+const { createFetchLayerSource } = require('./lib/culture-importer/fetchlayer-source');
 const { createCultureImportUiSessions, CultureImportUiError } = require('./lib/culture-importer/ui-sessions');
 const { createDesktopCultureStager } = require('./lib/culture-importer/desktop-staging');
 
@@ -79,8 +80,15 @@ const populationController = createPopulationController({
 const cultureImporter = createCultureImporter({
   sourceOptions: {
     cacheDirectory: path.join(store.DATA_DIR, 'culture-import-cache'),
-    accessToken: process.env.REDDIT_ACCESS_TOKEN,
-    userAgent: process.env.REDDIT_USER_AGENT,
+    apiKeyProvider: fetchLayerApiKey,
+  },
+});
+const fetchLayerConnectionSource = createFetchLayerSource({
+  apiKeyProvider: fetchLayerApiKey,
+  maxRetries: 0,
+  cache: {
+    get() { return { hit: false, value: null }; },
+    set() { return { hit: false, key: null }; },
   },
 });
 const cultureImportSessions = createCultureImportUiSessions({
@@ -232,6 +240,18 @@ function cultureImporterOwner(owner) {
   if (PLACEMENT === 'desktop') return 'desktop';
   if (isPopulationAdmin(owner)) return 'hosted:' + owner.id;
   return '';
+}
+
+function fetchLayerApiKey() {
+  if (PLACEMENT === 'hosted') return String(process.env.FETCHLAYER_API_KEY || '').trim();
+  return secrets.getFetchLayerKey();
+}
+
+function fetchLayerCredentialView() {
+  return {
+    provider: 'FetchLayer',
+    hasKey: Boolean(fetchLayerApiKey()),
+  };
 }
 
 function canManageProfile(profile, owner) {
@@ -786,6 +806,35 @@ async function handleApi(req, res, urlPath, query) {
     const importOwner = cultureImporterOwner(requestOwner);
     if (!importOwner) return sendJson(res, 404, { error: 'Not found' });
     try {
+      if (method === 'POST' && urlPath === '/api/culture-imports/source-credential/test') {
+        const result = await fetchLayerConnectionSource.fetchCorpus({
+          subreddit: 'shittyaskreddit',
+          maxPosts: 1,
+          maxComments: 0,
+        }, { refresh: true });
+        return sendJson(res, 200, {
+          ok: true,
+          source: fetchLayerCredentialView(),
+          test: {
+            connected: true,
+            subreddit: result.corpus.subreddit,
+            posts: result.corpus.posts.length,
+          },
+        });
+      }
+      if (urlPath === '/api/culture-imports/source-credential') {
+        if (method === 'GET') return sendJson(res, 200, { source: fetchLayerCredentialView() });
+        if (method !== 'PUT') return sendJson(res, 404, { error: 'Unknown culture importer route' });
+        if (PLACEMENT === 'hosted') {
+          return sendJson(res, 403, { error: 'Hosted FetchLayer credentials are configured only through the server environment.' });
+        }
+        const body = await readBody(req);
+        if (typeof body.fetchLayerApiKey !== 'string') {
+          return sendJson(res, 400, { error: 'Provide fetchLayerApiKey (string; empty string clears it).' });
+        }
+        secrets.setFetchLayerKey(body.fetchLayerApiKey.trim());
+        return sendJson(res, 200, { source: fetchLayerCredentialView() });
+      }
       if (method === 'POST' && urlPath === '/api/culture-imports') {
         const body = await readBody(req);
         return sendJson(res, 202, { session: cultureImportSessions.create(importOwner, body) });

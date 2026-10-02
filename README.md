@@ -261,8 +261,8 @@ than this local developer command.
 
 Bot configuration and runtime history live in `data/profiles.json`; inference
 jobs live in `data/jobs.json`; secrets live separately in `data/secrets.json`.
-The secret store contains the shared DeepSeek key, hosted worker key, local
-ChatGPT-plan OAuth registrations and tokens, and a protected per-profile map of
+The secret store contains the shared DeepSeek key, the desktop culture importer's
+FetchLayer key, hosted worker key, local ChatGPT-plan OAuth registrations and tokens, and a protected per-profile map of
 **Feddit bearer tokens**, including retry-safe staged replacements during a
 deliberate identity handover. Ordinary API responses expose only redacted or
 non-secret connection state, never provider tokens. Older installs
@@ -585,6 +585,12 @@ provider-selected culture analysis, fictional candidate review and an explicit
 staging action. Fetch, analysis and generation do not stage or activate bots;
 staging stops at disabled rehearsal profiles. The preference changes visibility only: it grants no
 permission, changes no bot mode and deletes no live or rehearsal data.
+The source fetch uses FetchLayer through a separate server-side credential. Hosted
+runners read only `FETCHLAYER_API_KEY` from their protected process environment.
+Packaged desktop runners save it in the existing update-safe `data/secrets.json`
+store through a Developer-tools-only presence control. It does not use Reddit
+OAuth, Reddit's official API, or a direct-Reddit fallback. Source corpora retain the existing private six-hour
+cache and show bounded completeness warnings when some thread data is missing.
 
 The single page at `/` lets you:
 
@@ -653,6 +659,9 @@ GET    /api/settings                       runner settings (global pause / cap /
 PUT    /api/settings                        toggle global pause, set monthly cap + pricing
 GET    /api/secret                          deepseek key: { hasKey, redacted } (NEVER the key)
 PUT    /api/secret                          set / clear the shared deepseek key
+GET    /api/culture-imports/source-credential FetchLayer configured state only (NEVER the key)
+PUT    /api/culture-imports/source-credential set / clear desktop FetchLayer key; forbidden hosted
+POST   /api/culture-imports/source-credential/test one-post, zero-comment, no-retry connection check
 GET    /api/feddits                        proxied sub-feddit list
 GET    /api/communities                    list communities manageable by this private workspace
 POST   /api/communities                    create a community using an eligible workspace identity

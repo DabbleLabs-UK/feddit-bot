@@ -219,9 +219,11 @@
 
     function sourceHtml() {
       const source = workflow.session && workflow.session.source;
-      return source ? '<div class="culture-summary"><b>Cached source sample ready</b><span>f/' + esc(source.subreddit) +
+      const warnings = source && Array.isArray(source.warnings) ? source.warnings : [];
+      return source ? '<div class="culture-summary"><b>Cached ' + esc(source.provider || 'source') + ' sample ready</b><span>r/' + esc(source.subreddit) +
         ': ' + Number(source.posts || 0) + ' posts and ' + Number(source.comments || 0) + ' comments</span>' +
-        '<span>' + (source.cache && source.cache.hit ? 'Used the existing private cache.' : 'Fetched and cached a fresh bounded sample.') + '</span></div>' : '';
+        '<span>' + (source.cache && source.cache.hit ? 'Used the existing private cache.' : 'Fetched and cached a fresh bounded sample.') + '</span>' +
+        warnings.map((warning) => '<span class="warnbox">' + esc(warning) + '</span>').join('') + '</div>' : '';
     }
 
     function progressHtml() {

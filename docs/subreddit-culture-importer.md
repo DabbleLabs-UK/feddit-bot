@@ -18,6 +18,8 @@ The ordinary backend remains independent of its optional human-facing UI and doe
 
 The existing Settings dialog exposes **Import subreddit culture** only while Developer tools is enabled. It is available on a desktop runner and to the existing hosted population operator. It does not appear to ordinary hosted workspace owners.
 
+On desktop, the same Developer-tools area exposes a separate masked FetchLayer key control. It writes to the runner's existing gitignored, atomic `data/secrets.json` store, immediately clears the entry field and returns only configured/not-configured state. The packaged launcher already points every replaceable application version at the update-safe `%LOCALAPPDATA%\DabbleLabs\FedditBots\data` directory, so application updates do not copy or replace this credential. The Test connection action makes one no-retry listing request for one recent post and no comments, then returns only connection status and a count. Hosted runners do not accept browser writes for this key and read it only from the server process environment; authorised population operators see only configured/not-configured state and can run the same bounded connection check.
+
 The UI keeps the workflow explicit:
 
 1. choose a subreddit, bounded post/comment sample and recent window, then fetch or refresh the private cache;
@@ -34,16 +36,18 @@ Hosted staging reuses the current population operator capability. Desktop genera
 
 ## Source adapter
 
-`createRedditJsonSource()` uses Reddit listing endpoints behind a small `getJson` transport boundary. It reads the recent-post and recent-comment listings with cursor pagination and can use either public JSON or an optional caller-supplied OAuth bearer token.
+`createFetchLayerSource()` uses the same third-party provider proven by RedditWatch, but does not couple Feddit Bots to RedditWatch as a running service or share its credentials. It calls FetchLayer's current `POST /reddit/community-posts` endpoint for the recent subreddit listing, then calls `POST /reddit/post` for a bounded set of comment-bearing threads. It never calls Reddit's official API and has no Reddit OAuth or direct-Reddit fallback.
+
+The listing request asks FetchLayer for enough 25-item pages to cover the bounded post sample. Comment retrieval prioritises the sampled posts with the most discussion, is capped at 24 thread requests and five comment pages per thread, and stops as soon as the requested comment count is reached. A fetched thread can replace the listing preview with FetchLayer's full post body. FetchLayer's provider-side pagination may still return less than the requested sample. The corpus then remains usable but is explicitly marked incomplete with bounded warnings and per-thread failure classes.
 
 The normalized corpus includes:
 
 - posts: source ID, author, title, body, timestamp, score, URL, outbound URL and comment count;
 - comments: source ID, thread ID, parent ID, author, body, timestamp, score, URL and thread hints;
 - sampled parent relationships and derived depth where both comments are present;
-- adapter, host, authentication mode, page count and time-window provenance.
+- adapter, provider host, page/thread request counts, completeness, bounded failures and time-window provenance.
 
-The adapter is replaceable. A future official export, Pushshift-like archive, operator-owned dataset or RedditWatch adapter needs only to implement:
+The adapter is replaceable. A future operator-owned dataset or other third-party source needs only to implement:
 
 ```js
 {
@@ -54,13 +58,13 @@ The adapter is replaceable. A future official export, Pushshift-like archive, op
 }
 ```
 
-RedditWatch currently has useful transport-injection, bounded-normalization and failure-handling patterns, but its existing FetchLayer integration fetches a known thread rather than a subreddit-scale corpus. This tangent therefore does not reuse its credentials or couple Node code to its PHP storage.
+RedditWatch currently uses FetchLayer's known-thread endpoint for full thread enrichment; broad monitoring discovery in that project comes from F5Bot email and Reddit RSS rather than FetchLayer subreddit listings. Feddit Bots reuses the proven FetchLayer transport pattern and same upstream provider while adding the provider's current subreddit-feed endpoint. The two applications remain independent and their credentials are configured separately.
 
 ## Cache and privacy
 
 Source corpora are cached by normalized request hash for six hours by default. Cache files live under the runner's gitignored `data/culture-import-cache` directory unless the caller chooses another private directory. Writes are atomic and request owner-only permissions where supported.
 
-The cache contains public Reddit text, public usernames, scores, timestamps and source relationships. It must remain private runtime data and must not be committed. Delete the cache directory to remove it. Expired data is not used for a normal import, although a later maintenance pass may add bounded automatic deletion.
+The cache contains public Reddit text, public usernames, scores, timestamps and source relationships received from FetchLayer. It must remain private runtime data and must not be committed. Delete the cache directory to remove it. Expired data is not used for a normal import, although a later maintenance pass may add bounded automatic deletion. Hosted `FETCHLAYER_API_KEY` and the desktop secret-store value stay server-side and are never placed in the cache, browser response, provider prompt or importer result.
 
 Provider prompts use anonymous labels such as `contributor-1`; candidate-generation prompts never include Reddit usernames. The analysis prompt explicitly prohibits diagnosis, protected-characteristic inference and claims about hidden motives. Generated bots are fictional composites, not replicas of source contributors.
 
@@ -68,12 +72,12 @@ Provider prompts use anonymous labels such as `contributor-1`; candidate-generat
 
 ```js
 const providers = require('./lib/providers');
-const { createRedditJsonSource } = require('./lib/culture-importer/reddit-json-source');
+const { createFetchLayerSource } = require('./lib/culture-importer/fetchlayer-source');
 const { createCultureImporter } = require('./lib/culture-importer');
 
-const source = createRedditJsonSource({
+const source = createFetchLayerSource({
   cacheDirectory: 'private-cache-path',
-  accessToken: process.env.REDDIT_ACCESS_TOKEN,
+  apiKey: process.env.FETCHLAYER_API_KEY,
 });
 const importer = createCultureImporter({ source, providerClient: providers });
 const controller = new AbortController();
@@ -155,7 +159,7 @@ node bin/import-subreddit-culture.js stage \
 
 `--select` accepts zero-based candidate indexes or the stable IDs returned by `bridge.review()`. The action rejects an empty selection, duplicate selection or more than six candidates before making a request. It sends the whole selection once, so a larger selection is never silently split and a failed registration is never blindly retried by the importer.
 
-Use `--refresh` to bypass a valid cache and Ctrl+C to cancel. `REDDIT_ACCESS_TOKEN` and `REDDIT_USER_AGENT` configure the source connection. DeepSeek and subscription providers use the existing local provider configuration. The hosted `dell` provider requires the server's durable queue to have been configured and therefore is available to programmatic hosted integration, not a standalone CLI invocation.
+Use `--refresh` to bypass a valid cache and Ctrl+C to cancel. The standalone CLI reads `FETCHLAYER_API_KEY`; hosted reads the same protected environment variable; desktop reads the existing local secret store. A missing, rejected, forbidden, rate-limited, unavailable, malformed, blocked or empty source receives a stable FetchLayer-specific error. Retryable network, timeout, HTTP 429 and HTTP 5xx failures receive at most two bounded retries. A thread-specific blocked or malformed response retains any usable posts/comments and allows the bounded sample to continue. Authentication and permission failures stop immediately. After a provider-wide rate-limit, availability, network or timeout failure exhausts its bounded retries, remaining thread sampling stops instead of repeating the failure across every candidate thread; the retained corpus, warning and stop code remain reviewable.
 
 ## Provider and batching policy
 
@@ -170,10 +174,9 @@ Deterministic contributor aggregation, duplicate detection, username checks and 
 
 ## Evidence and limitations
 
-The result is a characterization of a bounded recent sample, not a definitive account of a community or person. Listing endpoints may omit old, removed, private or inaccessible content. Parent relationships are complete only when the relevant comments occur in the sample. Scores are mutable snapshots. Anonymous contributor observations are retained as evidence-linked behavioural descriptions and must not be treated as psychological diagnoses.
+The result is a characterization of a bounded recent sample, not a definitive account of a community or person. FetchLayer's scraped listing and thread endpoints may omit old, removed, private, inaccessible or unexpanded content. Parent relationships are complete only when the relevant comments occur in the sample. Scores are mutable snapshots. Anonymous contributor observations are retained as evidence-linked behavioural descriptions and must not be treated as psychological diagnoses.
 
 The following future work remains outside this integration:
 
 - explicit retention controls and cache cleanup policy;
-- a production OAuth/source-credential flow if anonymous public JSON is insufficient;
 - a deliberate decision about any future runtime use of richer provenance and psychology metadata.

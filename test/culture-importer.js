@@ -6,13 +6,14 @@ const os = require('node:os');
 const path = require('node:path');
 const population = require('../lib/population');
 const { createFileCorpusCache } = require('../lib/culture-importer/cache');
-const { createRedditJsonSource } = require('../lib/culture-importer/reddit-json-source');
+const { createFetchLayerSource } = require('../lib/culture-importer/fetchlayer-source');
 const { aggregateContributors, buildAnalysisDigest, normalizeCultureAnalysis } = require('../lib/culture-importer/analysis');
 const { createCultureImporter, selectInfluences } = require('../lib/culture-importer');
 
 const fixtures = path.join(__dirname, 'fixtures', 'culture-importer');
-const posts = JSON.parse(fs.readFileSync(path.join(fixtures, 'reddit-posts.json'), 'utf8'));
-const comments = JSON.parse(fs.readFileSync(path.join(fixtures, 'reddit-comments.json'), 'utf8'));
+const posts = JSON.parse(fs.readFileSync(path.join(fixtures, 'fetchlayer-community-posts.json'), 'utf8'));
+const thread1 = JSON.parse(fs.readFileSync(path.join(fixtures, 'fetchlayer-thread-post1.json'), 'utf8'));
+const thread2 = JSON.parse(fs.readFileSync(path.join(fixtures, 'fetchlayer-thread-post2.json'), 'utf8'));
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'feddit-culture-importer-'));
 let checks = 0;
 
@@ -123,13 +124,14 @@ function candidateResponse() {
 async function run() {
   let requests = 0;
   const transport = {
-    async getJson(url) {
+    async postJson(url, body) {
       requests++;
-      return structuredClone(url.includes('/new.json') ? posts : comments);
+      if (url.includes('community-posts')) return structuredClone(posts);
+      return structuredClone(body.url.includes('/post1/') ? thread1 : thread2);
     },
   };
   const cache = createFileCorpusCache({ directory: path.join(temporaryRoot, 'cache'), now: () => 1700001000000 });
-  const source = createRedditJsonSource({ transport, cache, requestDelayMs: 0, now: () => 1700001000000 });
+  const source = createFetchLayerSource({ transport, cache, apiKey: 'fixture-key', now: () => 1700001000000 });
   const progressEvents = [];
   const first = await source.fetchCorpus({ subreddit: 'ExampleSub', maxPosts: 2, maxComments: 4 }, {
     onProgress: (event) => progressEvents.push(event),
@@ -139,13 +141,13 @@ async function run() {
   eq(first.corpus.comments[0].parentAuthor, 'PostStarter', 'top-level comment relation resolves to the sampled post author');
   eq(first.corpus.comments[1].parentAuthor, 'DryWit', 'sampled parent relation is reconstructed');
   eq(first.corpus.comments[2].depth, 2, 'nested parent depth is reconstructed');
-  eq(first.corpus.provenance.adapter, 'reddit-json', 'source provenance names the adapter');
+  eq(first.corpus.provenance.adapter, 'fetchlayer-reddit', 'source provenance names the adapter');
   ok(progressEvents.some((event) => event.phase === 'fetch' && event.state === 'completed'), 'source emits progress');
-  eq(requests, 2, 'one request is made for each bounded listing');
+  eq(requests, 3, 'one listing and two bounded thread requests build the corpus');
 
   const second = await source.fetchCorpus({ subreddit: 'ExampleSub', maxPosts: 2, maxComments: 4 });
   eq(second.cache.hit, true, 'a fresh matching corpus is loaded from cache');
-  eq(requests, 2, 'cache hit avoids duplicate source requests');
+  eq(requests, 3, 'cache hit avoids duplicate source requests');
 
   const contributors = aggregateContributors(first.corpus, { limit: 5 });
   const dryWit = contributors.contributors.find((item) => item.author === 'DryWit');
@@ -194,7 +196,7 @@ async function run() {
   eq(result.populationSeeds.length, 2, 'requested population-compatible seeds are returned');
   eq(result.complete, true, 'a full distinct batch is identified as complete');
   eq(result.populationSeeds[0], population.normalizeSeed(result.populationSeeds[0], ['shittyaskfeddit']), 'emitted seed is already in the existing normalized population contract');
-  eq(result.provenance.sourceAdapter, 'reddit-json', 'result keeps source provenance');
+  eq(result.provenance.sourceAdapter, 'fetchlayer-reddit', 'result keeps source provenance');
   eq(result.provenance.providers.analysis.provider, 'deepseek', 'result keeps provider provenance');
   ok(!result.analysis.contributors[0].evidenceSourceIds.includes('invented_source_id'), 'unsupported evidence identifiers are removed during schema validation');
   ok(result.candidates[0].importerMetadata.psychologyObservations.socialStyle, 'future psychology observations survive outside the core seed schema');

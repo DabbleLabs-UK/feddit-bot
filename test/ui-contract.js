@@ -251,6 +251,12 @@ assert.match(html, /setInterval\(renderSpeedControl, 1000\)/,
 assert.match(html, /<dialog id="statusDialog" aria-labelledby="statusDialogTitle">/);
 assert.match(html, /<dialog id="settingsDialog" aria-labelledby="settingsDialogTitle">/);
 assert.match(html, /id="developerToolsToggle"/);
+assert.match(html, /id="cultureSourceSettings"/);
+assert.match(html, /FetchLayer key: <b id="fetchLayerKeyState">not configured<\/b>/);
+assert.match(html, /cultureImporterUi\.entryVisible\(\s*state\.developerTools, state\.placement, state\.populationAdmin/,
+  'FetchLayer status follows the Developer-tools and hosted population-operator boundary');
+assert.match(html, /fetchLayerDesktopEditor[\s\S]*desktop \? '' : 'none'/,
+  'FetchLayer key writes remain desktop-only even when hosted status is visible');
 assert.match(html, /Shows rehearsal, simulation and advanced diagnostic controls intended for testing and experimentation/);
 assert.match(html, /<script src="\/ui-preferences\.js"><\/script>/);
 assert.match(html, /developerTools: uiPreferences\.developerToolsEnabled\(\)/,

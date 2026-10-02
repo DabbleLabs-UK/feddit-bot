@@ -14,7 +14,14 @@ try {
   const oldToken = 'feddit_' + '01'.repeat(32);
   const replacement = 'feddit_' + 'ab'.repeat(32);
 
-  assert.equal(secrets.empty().schemaVersion, 4);
+  assert.equal(secrets.empty().schemaVersion, 5);
+  const fetchLayerKey = 'fetchlayer-fixture-private-key';
+  assert.deepEqual(secrets.publicFetchLayerView(), { hasKey: false });
+  secrets.setFetchLayerKey(fetchLayerKey);
+  assert.equal(secrets.getFetchLayerKey(), fetchLayerKey, 'FetchLayer key is available only through the protected store');
+  assert.deepEqual(secrets.publicFetchLayerView(), { hasKey: true });
+  assert.equal(JSON.stringify(secrets.publicFetchLayerView()).includes(fetchLayerKey), false,
+    'FetchLayer public state never returns the stored key');
   secrets.setFedditToken(profileId, oldToken);
   const staged = secrets.stageFedditHandover(profileId, replacement);
   assert.equal(staged.status, 'staged');
@@ -60,6 +67,8 @@ try {
   assert.equal(JSON.stringify(safeView).includes('identity-secret'), false, 'public account state excludes ID tokens');
   assert.equal(secrets.deleteChatgptRegistration('account-one'), true);
   assert.equal(secrets.getActiveChatgptRegistration(), null);
+  secrets.clearFetchLayerKey();
+  assert.deepEqual(secrets.publicFetchLayerView(), { hasKey: false });
 } finally {
   fs.rmSync(tempDir, { recursive: true, force: true });
 }

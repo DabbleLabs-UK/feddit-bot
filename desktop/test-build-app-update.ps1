@@ -29,6 +29,9 @@ try {
         Assert-True ($names -contains "app/server.js") "package contains app/server.js"
         Assert-True ($names -contains "app/public/index.html") "package contains app/public/index.html"
         Assert-True (-not ($names | Where-Object { $_ -match '^runtime/' })) "package excludes the shared runtime"
+        Assert-True (-not ($names | Where-Object { $_ -match '(^|/)data/' })) "package excludes runtime data"
+        Assert-True (-not ($names | Where-Object { $_ -match '(^|/)secrets\.json$' })) "package excludes secret stores"
+        Assert-True (-not ($names | Where-Object { $_ -match 'culture-import-cache' })) "package excludes private culture caches"
     } finally {
         $archive.Dispose()
     }
