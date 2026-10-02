@@ -11,10 +11,13 @@ const { digest } = require('../lib/owners');
 
 const ROOT = path.resolve(__dirname, '..');
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'feddit-fetchlayer-credential-'));
+const fetchLayerPreload = path.join(__dirname, 'fixtures', 'fetchlayer-credential-preload.cjs');
 const localKey = 'fetchlayer-local-fixture-secret';
 const hostedKey = 'fetchlayer-hosted-fixture-secret';
 const ownerId = 'o_fetchlayer_operator';
 const ownerToken = 'fetchlayer-owner-capability';
+const ordinaryOwnerId = 'o_fetchlayer_ordinary';
+const ordinaryOwnerToken = 'fetchlayer-ordinary-capability';
 let checks = 0;
 
 function eq(actual, expected, message) {
@@ -73,6 +76,10 @@ async function startRunner(placement, extraEnv = {}) {
       FEDDIT_BOT_PORT: String(port),
       FEDDIT_BOT_PLACEMENT: placement,
       FEDDIT_APP_VERSION: 'credential-contract-test',
+      NODE_OPTIONS: '--require=' + fetchLayerPreload,
+      FEDDIT_TEST_FETCHLAYER_KEY: placement === 'hosted'
+        ? String(extraEnv.FETCHLAYER_API_KEY || hostedKey)
+        : localKey,
       FETCHLAYER_API_KEY: '',
       ...extraEnv,
     },
@@ -115,15 +122,26 @@ async function startRunner(placement, extraEnv = {}) {
 function writeHostedOwner() {
   fs.writeFileSync(path.join(dataDir, 'owners.json'), JSON.stringify({
     version: 2,
-    owners: [{
-      id: ownerId,
-      accessHash: digest(ownerToken),
-      recoveryHash: digest('unused-recovery'),
-      createdAt: new Date().toISOString(),
-      recoveredAt: null,
-      activityHash: null,
-      lastActiveAt: null,
-    }],
+    owners: [
+      {
+        id: ownerId,
+        accessHash: digest(ownerToken),
+        recoveryHash: digest('unused-recovery'),
+        createdAt: new Date().toISOString(),
+        recoveredAt: null,
+        activityHash: null,
+        lastActiveAt: null,
+      },
+      {
+        id: ordinaryOwnerId,
+        accessHash: digest(ordinaryOwnerToken),
+        recoveryHash: digest('unused-ordinary-recovery'),
+        createdAt: new Date().toISOString(),
+        recoveredAt: null,
+        activityHash: null,
+        lastActiveAt: null,
+      },
+    ],
   }, null, 2), { encoding: 'utf8', mode: 0o600 });
 }
 
@@ -135,6 +153,13 @@ async function run() {
     eq(response.json.source, { provider: 'FetchLayer', hasKey: false },
       'desktop ignores the hosted environment path and starts from its local secret store');
 
+    response = await requestJson(runner.port, 'POST', '/api/culture-imports/source-credential/test');
+    eq(response.status, 422, 'desktop connection test fails clearly when no key is configured');
+    eq(response.json.error.code, 'FETCHLAYER_NOT_CONFIGURED',
+      'missing desktop key uses the stable FetchLayer configuration error');
+    ok(response.json.error.message.includes('Configure the key in Developer tools'),
+      'missing desktop key explains where to configure it');
+
     response = await requestJson(runner.port, 'PUT', '/api/culture-imports/source-credential', {
       fetchLayerApiKey: localKey,
     });
@@ -143,6 +168,14 @@ async function run() {
       'desktop returns presence-only FetchLayer state after saving');
     ok(!response.text.includes(localKey), 'desktop credential response never echoes the stored key');
     ok(!runner.output().includes(localKey), 'desktop runner logs never contain the stored key');
+
+    response = await requestJson(runner.port, 'POST', '/api/culture-imports/source-credential/test');
+    eq(response.status, 200, 'desktop connection test uses a key saved without restarting the runner');
+    eq(response.json.test, { connected: true, subreddit: 'shittyaskreddit', posts: 1 },
+      'connection test returns only bounded source status and counts');
+    ok(!response.text.includes(localKey), 'desktop connection test never echoes the active key');
+    ok(!response.text.includes('FixtureAuthor') && !response.text.includes('fixture body'),
+      'desktop connection test does not return fetched Reddit content');
   } finally {
     await runner.stop();
   }
@@ -161,11 +194,22 @@ async function run() {
 
   writeHostedOwner();
   const hostedHeaders = { 'X-Feddit-Bot-Owner': ownerToken };
+  const ordinaryHeaders = { 'X-Feddit-Bot-Owner': ordinaryOwnerToken };
   runner = await startRunner('hosted', { FEDDIT_POPULATION_ADMIN_OWNER_IDS: ownerId });
   try {
-    let response = await requestJson(runner.port, 'GET', '/api/culture-imports/source-credential', undefined, hostedHeaders);
+    let response = await requestJson(runner.port, 'GET', '/api/culture-imports/source-credential');
+    eq(response.status, 401, 'hosted credential status rejects an unauthenticated request');
+    response = await requestJson(runner.port, 'GET', '/api/culture-imports/source-credential', undefined, ordinaryHeaders);
+    eq(response.status, 404, 'hosted credential status is hidden from an ordinary owner');
+    response = await requestJson(runner.port, 'POST', '/api/culture-imports/source-credential/test', undefined, ordinaryHeaders);
+    eq(response.status, 404, 'hosted connection test is hidden from an ordinary owner');
+
+    response = await requestJson(runner.port, 'GET', '/api/culture-imports/source-credential', undefined, hostedHeaders);
     eq(response.json.source.hasKey, false,
       'hosted ignores a desktop-store key when its server environment secret is absent');
+    response = await requestJson(runner.port, 'POST', '/api/culture-imports/source-credential/test', undefined, hostedHeaders);
+    eq(response.json.error.code, 'FETCHLAYER_NOT_CONFIGURED',
+      'hosted connection test clearly reports a missing server secret');
     response = await requestJson(runner.port, 'PUT', '/api/culture-imports/source-credential', {
       fetchLayerApiKey: 'must-not-save-on-hosted',
     }, hostedHeaders);
@@ -179,11 +223,15 @@ async function run() {
     FETCHLAYER_API_KEY: hostedKey,
   });
   try {
-    const response = await requestJson(runner.port, 'GET', '/api/culture-imports/source-credential', undefined, hostedHeaders);
+    let response = await requestJson(runner.port, 'GET', '/api/culture-imports/source-credential', undefined, hostedHeaders);
     eq(response.json.source, { provider: 'FetchLayer', hasKey: true },
       'hosted importer sees the server environment credential for an authorised operator');
     ok(!response.text.includes(hostedKey), 'hosted browser response never exposes the environment secret');
     ok(!runner.output().includes(hostedKey), 'hosted runner logs never contain the environment secret');
+    response = await requestJson(runner.port, 'POST', '/api/culture-imports/source-credential/test', undefined, hostedHeaders);
+    eq(response.status, 200, 'hosted population operator can run the bounded connection test');
+    eq(response.json.test.posts, 1, 'hosted connection test makes the tiny mocked listing request');
+    ok(!response.text.includes(hostedKey), 'hosted connection result never exposes the environment secret');
   } finally {
     await runner.stop();
   }

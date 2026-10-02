@@ -30,6 +30,7 @@ const modelCatalog = require('./lib/model-catalog');
 const { createModelInstaller } = require('./lib/model-installer');
 const { createPopulationController } = require('./lib/population');
 const { createCultureImporter } = require('./lib/culture-importer');
+const { createFetchLayerSource } = require('./lib/culture-importer/fetchlayer-source');
 const { createCultureImportUiSessions, CultureImportUiError } = require('./lib/culture-importer/ui-sessions');
 const { createDesktopCultureStager } = require('./lib/culture-importer/desktop-staging');
 
@@ -79,6 +80,14 @@ const cultureImporter = createCultureImporter({
   sourceOptions: {
     cacheDirectory: path.join(store.DATA_DIR, 'culture-import-cache'),
     apiKeyProvider: fetchLayerApiKey,
+  },
+});
+const fetchLayerConnectionSource = createFetchLayerSource({
+  apiKeyProvider: fetchLayerApiKey,
+  maxRetries: 0,
+  cache: {
+    get() { return { hit: false, value: null }; },
+    set() { return { hit: false, key: null }; },
   },
 });
 const cultureImportSessions = createCultureImportUiSessions({
@@ -764,6 +773,22 @@ async function handleApi(req, res, urlPath, query) {
     const importOwner = cultureImporterOwner(requestOwner);
     if (!importOwner) return sendJson(res, 404, { error: 'Not found' });
     try {
+      if (method === 'POST' && urlPath === '/api/culture-imports/source-credential/test') {
+        const result = await fetchLayerConnectionSource.fetchCorpus({
+          subreddit: 'shittyaskreddit',
+          maxPosts: 1,
+          maxComments: 0,
+        }, { refresh: true });
+        return sendJson(res, 200, {
+          ok: true,
+          source: fetchLayerCredentialView(),
+          test: {
+            connected: true,
+            subreddit: result.corpus.subreddit,
+            posts: result.corpus.posts.length,
+          },
+        });
+      }
       if (urlPath === '/api/culture-imports/source-credential') {
         if (method === 'GET') return sendJson(res, 200, { source: fetchLayerCredentialView() });
         if (method !== 'PUT') return sendJson(res, 404, { error: 'Unknown culture importer route' });

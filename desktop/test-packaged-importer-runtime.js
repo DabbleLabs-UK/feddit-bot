@@ -349,7 +349,7 @@ globalThis.fetch = async (input, options = {}) => {
     })()`);
     await waitForValue(cdp, "document.getElementById('settingsDialog')?.open === true", Boolean, 'reopened packaged settings');
     await evaluate(cdp, `(() => {
-      window.prompt = () => '${fetchLayerKey}';
+      document.getElementById('fetchLayerKeyInput').value = '${fetchLayerKey}';
       document.getElementById('setFetchLayerKeyBtn').click();
       return true;
     })()`);
@@ -358,10 +358,20 @@ globalThis.fetch = async (input, options = {}) => {
       (value) => value === 'configured',
       'saved packaged FetchLayer key state');
     if (configuredState !== 'configured') throw new Error('Packaged FetchLayer key did not become configured');
+    const clearedKeyInput = await evaluate(cdp, "document.getElementById('fetchLayerKeyInput')?.value || ''");
+    if (clearedKeyInput) throw new Error('Packaged credential input retained the saved FetchLayer key');
     console.log('[packaged-runtime] local credential configured');
+
+    await evaluate(cdp, "document.getElementById('testFetchLayerBtn').click(); true");
+    const connectionTest = await waitForValue(cdp,
+      "document.getElementById('notificationLive')?.textContent || ''",
+      (value) => value.includes('FetchLayer connected; read 1 recent post from r/shittyaskreddit.'),
+      'packaged FetchLayer connection test');
+    console.log('[packaged-runtime] connection test completed');
 
     const browserExposure = await evaluate(cdp, `(() => ({
       dom: document.documentElement.innerHTML.includes('${fetchLayerKey}'),
+      input: document.getElementById('fetchLayerKeyInput')?.value.includes('${fetchLayerKey}') || false,
       local: Object.values(localStorage).some((value) => String(value).includes('${fetchLayerKey}')),
       session: Object.values(sessionStorage).some((value) => String(value).includes('${fetchLayerKey}')),
       cookie: document.cookie.includes('${fetchLayerKey}'),
@@ -403,8 +413,8 @@ globalThis.fetch = async (input, options = {}) => {
     });
     if (shippedSecret) throw new Error('Packaged application assets contained the FetchLayer key');
 
-    console.log('packaged desktop importer runtime: 19 checks passed');
-    console.log(JSON.stringify({ visible, opened, missingKey, configuredState, browserExposure, retrieved }));
+    console.log('packaged desktop importer runtime: 22 checks passed');
+    console.log(JSON.stringify({ visible, opened, missingKey, configuredState, connectionTest, browserExposure, retrieved }));
   } catch (error) {
     if (serverOutput.length) console.error('Packaged server output:\n' + serverOutput.join(''));
     if (browserOutput.length) console.error('Headless browser output:\n' + browserOutput.join(''));

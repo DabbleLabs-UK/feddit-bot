@@ -247,6 +247,7 @@
   .provider-state.unavailable, .provider-state.failed, .provider-state.limit-reached { color: #ff9b9b; }
   .provider-body { padding: 12px; }
   .provider-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 9px; }
+  .credential-entry { min-width: min(320px, 100%); flex: 1 1 260px; }
   .provider-spend { display: flex; gap: 8px 14px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
   .provider-spend input { width: 90px; display: inline-block; padding: 4px 7px; }
   .capbanner {
@@ -488,9 +489,14 @@
     <section class="provider-settings" id="cultureSourceSettings" aria-labelledby="cultureSourceSettingsTitle" style="display:none">
       <h3 id="cultureSourceSettingsTitle">Culture importer source</h3>
       <div class="provider-actions"><span>FetchLayer key: <b id="fetchLayerKeyState">not configured</b></span>
-        <button type="button" id="setFetchLayerKeyBtn">Set / change key</button>
-        <button type="button" id="clearFetchLayerKeyBtn" disabled>Clear</button></div>
-      <div class="hint">Developer tool for this desktop only. The key is saved in the local backend secret store and is never shown again in full.</div>
+        <button type="button" id="testFetchLayerBtn" disabled>Test connection</button></div>
+      <div class="provider-actions" id="fetchLayerDesktopEditor">
+        <label for="fetchLayerKeyInput">New key</label>
+        <input class="credential-entry" id="fetchLayerKeyInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste a new FetchLayer API key">
+        <button type="button" id="setFetchLayerKeyBtn">Save key</button>
+        <button type="button" id="clearFetchLayerKeyBtn" disabled>Clear stored key</button>
+      </div>
+      <div class="hint" id="fetchLayerCredentialHint">Developer tool for this desktop only. The key is saved in the local backend secret store and is never shown again in full.</div>
     </section>
     <section class="provider-settings" id="providerSettings" aria-labelledby="providerSettingsTitle">
       <h3 id="providerSettingsTitle">AI providers</h3>
@@ -1363,16 +1369,24 @@ async function loadProviders() {
 
 function renderCultureSourceCredential() {
   const section = $('#cultureSourceSettings');
-  const visible = state.developerTools && state.placement === 'desktop';
+  const visible = cultureImporterUi.entryVisible(
+    state.developerTools, state.placement, state.populationAdmin,
+  );
   if (!section) return;
   section.style.display = visible ? '' : 'none';
   const hasKey = Boolean(state.cultureSourceCredential && state.cultureSourceCredential.hasKey);
+  const desktop = state.placement === 'desktop';
   $('#fetchLayerKeyState').textContent = hasKey ? 'configured' : 'not configured';
+  $('#fetchLayerDesktopEditor').style.display = desktop ? '' : 'none';
+  $('#fetchLayerCredentialHint').textContent = desktop
+    ? 'Developer tool for this desktop only. The key is saved in the local backend secret store and is never shown again in full.'
+    : 'Hosted FetchLayer credentials are read only from protected server configuration and are never returned to this browser.';
   $('#clearFetchLayerKeyBtn').disabled = !hasKey;
+  $('#testFetchLayerBtn').disabled = !hasKey;
 }
 
 async function loadCultureSourceCredential() {
-  if (!state.developerTools || state.placement !== 'desktop') {
+  if (!cultureImporterUi.entryVisible(state.developerTools, state.placement, state.populationAdmin)) {
     state.cultureSourceCredential = null;
     renderCultureSourceCredential();
     return;
@@ -1387,17 +1401,39 @@ async function loadCultureSourceCredential() {
 }
 
 async function setFetchLayerKey() {
-  const key = prompt('Paste the FetchLayer API key for the subreddit culture importer.\nIt is stored by the local backend and never shown again in full.');
-  if (key == null) return;
+  const input = $('#fetchLayerKeyInput');
+  const key = String(input.value || '').trim();
+  input.value = '';
+  if (!key) {
+    toast('Paste a FetchLayer API key before saving.', 'err');
+    input.focus();
+    return;
+  }
   try {
     const result = await api('/api/culture-imports/source-credential', {
-      method: 'PUT', body: { fetchLayerApiKey: key.trim() },
+      method: 'PUT', body: { fetchLayerApiKey: key },
     });
     state.cultureSourceCredential = result.source || { hasKey: false };
     renderCultureSourceCredential();
     toast(state.cultureSourceCredential.hasKey ? 'FetchLayer key saved.' : 'FetchLayer key cleared.', 'ok');
   } catch (error) {
     toast('Failed to save FetchLayer key: ' + error.message, 'err');
+  }
+}
+
+async function testFetchLayerConnection() {
+  const button = $('#testFetchLayerBtn');
+  button.disabled = true;
+  try {
+    const result = await api('/api/culture-imports/source-credential/test', { method: 'POST' });
+    state.cultureSourceCredential = result.source || state.cultureSourceCredential;
+    renderCultureSourceCredential();
+    toast('FetchLayer connected; read ' + Number(result.test && result.test.posts || 0) +
+      ' recent post from r/' + String(result.test && result.test.subreddit || 'shittyaskreddit') + '.', 'ok');
+  } catch (error) {
+    toast('FetchLayer connection failed: ' + error.message, 'err');
+  } finally {
+    renderCultureSourceCredential();
   }
 }
 
@@ -4191,6 +4227,7 @@ $('#developerToolsToggle').onchange = () => {
 };
 $('#setFetchLayerKeyBtn').onclick = setFetchLayerKey;
 $('#clearFetchLayerKeyBtn').onclick = clearFetchLayerKey;
+$('#testFetchLayerBtn').onclick = testFetchLayerConnection;
 $('#manageLinkBtn').onclick = () => {
   const token = ownerAccessToken();
   if (token) copyText(managementLink(token));

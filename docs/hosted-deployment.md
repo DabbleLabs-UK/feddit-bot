@@ -41,7 +41,9 @@ The private culture importer reads FetchLayer only from `FETCHLAYER_API_KEY` in
 the public runner's access-restricted server environment. Do not put that value
 in the release directory, browser configuration, reverse-proxy configuration or
 desktop update payload. Hosted operators can read only configured/not-configured
-state and cannot set or clear the server credential through the browser API.
+state and cannot set or clear the server credential through the browser API. The
+operator-only Test connection action makes one no-retry request for one recent
+post and zero comments, and returns no source content or credential.
 
 Feddit's write endpoints do not currently provide an idempotency key. The runner
 therefore records `attempting` before a live submit or comment call and stores

@@ -382,6 +382,13 @@ async function run() {
     'desktop Developer tools includes the separate FetchLayer credential control');
   ok(html.includes("'/api/culture-imports/source-credential'") && html.includes("'configured' : 'not configured'"),
     'FetchLayer settings use a presence-only server credential contract');
+  ok(html.includes('id="fetchLayerKeyInput" type="password"') &&
+    !html.includes("const key = prompt('Paste the FetchLayer API key"),
+  'FetchLayer key entry is masked and does not use a visible browser prompt');
+  ok(html.includes("'/api/culture-imports/source-credential/test'") && html.includes('id="testFetchLayerBtn"'),
+    'Developer tools exposes the bounded server-side FetchLayer connection test');
+  ok(html.includes('Hosted FetchLayer credentials are read only from protected server configuration'),
+    'hosted population operators see a presence-only server configuration explanation');
   ok(html.includes('id="populationBtn"') && html.includes('function renderEditor('),
     'ordinary population and bot editor paths remain present');
 

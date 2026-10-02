@@ -18,7 +18,7 @@ The ordinary backend remains independent of its optional human-facing UI and doe
 
 The existing Settings dialog exposes **Import subreddit culture** only while Developer tools is enabled. It is available on a desktop runner and to the existing hosted population operator. It does not appear to ordinary hosted workspace owners.
 
-On desktop, the same Developer-tools area exposes a separate FetchLayer key control. It writes to the runner's existing gitignored, atomic `data/secrets.json` store and returns only configured/not-configured state. The packaged launcher already points every replaceable application version at the update-safe `%LOCALAPPDATA%\DabbleLabs\FedditBots\data` directory, so application updates do not copy or replace this credential. Hosted runners do not accept browser writes for this key and read it only from the server process environment.
+On desktop, the same Developer-tools area exposes a separate masked FetchLayer key control. It writes to the runner's existing gitignored, atomic `data/secrets.json` store, immediately clears the entry field and returns only configured/not-configured state. The packaged launcher already points every replaceable application version at the update-safe `%LOCALAPPDATA%\DabbleLabs\FedditBots\data` directory, so application updates do not copy or replace this credential. The Test connection action makes one no-retry listing request for one recent post and no comments, then returns only connection status and a count. Hosted runners do not accept browser writes for this key and read it only from the server process environment; authorised population operators see only configured/not-configured state and can run the same bounded connection check.
 
 The UI keeps the workflow explicit:
 

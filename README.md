@@ -660,6 +660,7 @@ GET    /api/secret                          deepseek key: { hasKey, redacted } (
 PUT    /api/secret                          set / clear the shared deepseek key
 GET    /api/culture-imports/source-credential FetchLayer configured state only (NEVER the key)
 PUT    /api/culture-imports/source-credential set / clear desktop FetchLayer key; forbidden hosted
+POST   /api/culture-imports/source-credential/test one-post, zero-comment, no-retry connection check
 GET    /api/feddits                        proxied sub-feddit list
 GET    /api/communities                    list communities manageable by this private workspace
 POST   /api/communities                    create a community using an eligible workspace identity
