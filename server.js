@@ -17,6 +17,7 @@ const providers = require('./lib/providers');
 const secrets = require('./lib/secrets');
 const cost = require('./lib/cost');
 const speed = require('./lib/speed');
+const burst = require('./lib/burst');
 const feddit = require('./lib/feddit');
 const gdelt = require('./lib/gdelt');
 const feeds = require('./lib/feeds');
@@ -56,6 +57,7 @@ providers.configureRuntime({ secrets, placement: PLACEMENT });
 const hostedPreviewTasks = new Map();
 const hostedSimulationTasks = new Map();
 const ownerStore = createOwnerStore({ file: path.join(store.DATA_DIR, 'owners.json') });
+let burstController = null;
 const OWNER_ACTIVITY_COOKIE = 'feddit_owner_activity';
 const populationAdminOwnerIds = new Set(String(process.env.FEDDIT_POPULATION_ADMIN_OWNER_IDS || '')
   .split(',').map((value) => value.trim()).filter(Boolean));
@@ -221,7 +223,11 @@ function publicSettings(requestOwner, at = Date.now()) {
   if (PLACEMENT === 'hosted') {
     return { paused: settings.paused, speed: speed.publicState(requestSpeedState(requestOwner), at) };
   }
-  return { ...settings, speed: speed.publicState(settings.speed, at) };
+  return {
+    ...settings,
+    speed: speed.publicState(settings.speed, at),
+    burst: burst.publicState(settings.burst, at),
+  };
 }
 
 function isPopulationAdmin(owner) {
@@ -1078,6 +1084,31 @@ async function handleApi(req, res, urlPath, query) {
       schedulerHandle.applySpeedChange(previous, next);
     }
     return sendJson(res, 200, { speed: speed.publicState(next) });
+  }
+
+  // Burst is an explicitly subscription-backed accelerated session mode. It
+  // is available only where the owner's existing ChatGPT/Claude connection is
+  // local to this runner. Hosted workspaces never borrow server credentials or
+  // fall back to PAYG/managed compute.
+  if (urlPath === '/api/burst' && method === 'GET') {
+    if (PLACEMENT === 'hosted') {
+      return sendJson(res, 403, { error: 'Burst requires a connected subscription on a desktop or self-hosted runner.' });
+    }
+    return sendJson(res, 200, { burst: burstController.publicState() });
+  }
+  if (urlPath === '/api/burst' && method === 'PUT') {
+    if (PLACEMENT === 'hosted') {
+      return sendJson(res, 403, { error: 'Burst requires a connected subscription on a desktop or self-hosted runner.' });
+    }
+    const body = await readBody(req);
+    try {
+      const next = body.active === false || body.action === 'stop'
+        ? burstController.stop()
+        : await burstController.start(String(body.provider || ''), String(body.duration || ''));
+      return sendJson(res, 200, { burst: next });
+    } catch (error) {
+      return sendJson(res, error.status || 409, { error: error.message, code: error.code || 'BURST_FAILED' });
+    }
   }
 
   // PUT /api/settings - toggle global pause, set the monthly spend cap and
@@ -1989,6 +2020,13 @@ const schedulerHandle = scheduler.start({
   getDeepseekKey: () => secrets.getDeepseekKey(),
   log: (message) => console.log('[scheduler] ' + message),
 });
+burstController = burst.createController({
+  store,
+  scheduler: schedulerHandle,
+  providers,
+  log: (message) => console.log('[burst] ' + message),
+});
+burstController.begin();
 populationController.setScheduler(schedulerHandle);
 if (PLACEMENT === 'hosted') {
   const hostedPolicyTimer = setInterval(reconcileHostedProfiles, hostedPolicy.RECONCILE_INTERVAL_MS);

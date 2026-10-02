@@ -24,5 +24,11 @@ assert.match(html, /<script src="\/ui-speed\.js"><\/script>/,
   'desktop and hosted load the same Speed UI module');
 assert.match(html, /id="speedBtn"[\s\S]*id="speedPopover"/,
   'the shared top bar owns one workspace Speed control');
+assert.match(html, /<script src="\/ui-burst\.js"><\/script>/,
+  'signed desktop and self-hosted runners load the shared Burst UI module');
+assert.match(html, /id="burstControl"[\s\S]*id="burstBtn"[\s\S]*id="burstPopover"/,
+  'the shared top bar owns one compact workspace Burst control');
+assert.match(html, /\$\('#burstControl'\)\.style\.display = hosted \? 'none' : ''/,
+  'the common UI keeps Burst desktop/self-hosted only without a drifting desktop copy');
 
 console.log('desktop-ui-parity: all checks passed');
