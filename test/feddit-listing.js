@@ -39,6 +39,13 @@ global.fetch = async (url, options) => {
       'ordinary callers retain the API default page size'
     );
 
+    await feddit.activeCommunities(500);
+    assert.equal(
+      calls[3].url,
+      feddit.BASE + '/communities/active.json?limit=50',
+      'character discovery reuses the bounded human-facing active-community endpoint'
+    );
+
     assert.equal(
       feddit.botConversationsUrl('happy dayz'),
       'https://feddit.dabblelabs.uk/u/happy%20dayz/conversations',
@@ -54,10 +61,10 @@ global.fetch = async (url, options) => {
       postFormat: 'text',
       rules: [{ title: 'Be specific', detail: 'Say what you mean.' }],
     });
-    assert.equal(calls[3].url, feddit.BASE + '/feddits/garden%20club');
-    assert.equal(calls[3].options.method, 'PATCH');
-    assert.equal(calls[3].options.headers.Authorization, 'Bearer creator-token');
-    const updateBody = JSON.parse(calls[3].options.body);
+    assert.equal(calls[4].url, feddit.BASE + '/feddits/garden%20club');
+    assert.equal(calls[4].options.method, 'PATCH');
+    assert.equal(calls[4].options.headers.Authorization, 'Bearer creator-token');
+    const updateBody = JSON.parse(calls[4].options.body);
     assert.equal(updateBody.description, '', 'an owner can deliberately clear the description');
     assert.equal(updateBody.sidebar_text, 'Quietly maintained by its members.');
     assert.equal(updateBody.nsfw, false);

@@ -119,6 +119,9 @@ async function run() {
       FEDDIT_BOT_PORT: String(port),
       FEDDIT_BOT_PLACEMENT: 'hosted',
       FEDDIT_POPULATION_ADMIN_OWNER_IDS: ownerId,
+      FEDDIT_CREATOR_PROVIDER: 'dell',
+      FEDDIT_CREATOR_MODEL: 'strong-fixture-model',
+      FEDDIT_CREATOR_LABEL: 'Strong fixture creator',
       FEDDIT_APP_VERSION: 'population-contract',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -178,6 +181,8 @@ async function run() {
     eq(initial.json.cohorts.map((cohort) => cohort.id), ['cohort_fixture'],
       'population API exposes the visible fixture cohort');
     eq(initial.json.hiddenCohorts, [], 'population begins with no hidden cohort records');
+    eq(initial.json.creator.model, 'strong-fixture-model',
+      'population API exposes the configured strong creator without leaking credentials');
 
     const adminProfiles = await request(port, 'GET', '/api/profiles', undefined, accessToken);
     eq(adminProfiles.status, 200, 'population operator can open the ordinary bot list');
@@ -338,6 +343,7 @@ async function run() {
     eq(jobs[0].source, 'feddit-population', 'durable job records system-population provenance');
     eq(jobs[0].priority, 'background', 'durable seed job uses background priority');
     eq(jobs[0].allocationClass, 'synthetic', 'durable seed job cannot overtake user work');
+    eq(jobs[0].payload.model, 'strong-fixture-model', 'durable seed job uses the configured creator model');
     ok(jobs[0].payload.prompt.includes(direction), 'durable seed job receives the creative direction');
     ok(!JSON.stringify(jobs[0].payload).includes('private_user_bot'), 'population job contains no private user profile data');
     ok(jobs[0].payload.prompt.includes('HARD generation constraints'),

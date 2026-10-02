@@ -73,6 +73,9 @@ const populationController = createPopulationController({
   turnStore,
   feddit,
   model: modelCatalog.DELL_SHARED_MODEL,
+  creatorProvider: process.env.FEDDIT_CREATOR_PROVIDER || '',
+  creatorModel: process.env.FEDDIT_CREATOR_MODEL || '',
+  creatorLabel: process.env.FEDDIT_CREATOR_LABEL || '',
   activateProfile(profile, mode) {
     const patch = { enabled: true, dryRun: mode !== 'live' };
     applyHostedProfilePolicy(patch, profile);
@@ -326,7 +329,8 @@ function safeProfile(p) {
   // count of the news dedupe set so the UI can show it on the clear button.
   const {
     token, ownerId, repliedTo, postedNews, newsDomainDaily, newsDomainDays,
-    attentionState, socialState, memoryState, voteState, simulationState, ...rest
+    attentionState, socialState, memoryState, voteState, simulationState,
+    creatorProfile, creatorProvenance, ...rest
   } = p;
   const now = Date.now();
   const spend = store.profileSpend(p, cost.dayKey(now), cost.monthKey(now));
@@ -888,12 +892,15 @@ async function handleApi(req, res, urlPath, query) {
         archivedProfiles: populationController.listArchivedProfiles(),
         detachedProfiles: populationController.listDetachedProfiles(),
         capacity: jobQueue.capacity(),
+        creator: populationController.creatorStatus(false),
       });
     }
     if (method === 'POST' && urlPath === '/api/population/cohorts') {
       const body = await readBody(req);
       try {
-        const cohort = populationController.createCohort(body.count, body.direction, body.configuration);
+        const cohort = populationController.createCohort(body.count, body.direction, body.configuration, {
+          allowRuntimeFallback: body.allowRuntimeFallback === true,
+        });
         await populationController.tick();
         return sendJson(res, 201, { cohort: populationController.getCohort(cohort.id) });
       } catch (error) {
@@ -1316,6 +1323,11 @@ async function handleApi(req, res, urlPath, query) {
     delete body.populationProvenance;
     delete body.populationActivity;
     delete body.populationArchivedAt;
+    delete body.creatorProfile;
+    delete body.creatorProvenance;
+    delete body.runtimeCharacterKernel;
+    delete body.communityAffinities;
+    delete body.communityDiscoveryState;
     delete body.hostedOnboardingTurnsCompleted;
     delete body.hostedActivatedAt;
     if (requestOwner) {
@@ -1515,6 +1527,11 @@ async function handleApi(req, res, urlPath, query) {
       delete body.populationActivity;
       delete body.populationCadenceMode;
       delete body.populationArchivedAt;
+      delete body.creatorProfile;
+      delete body.creatorProvenance;
+      delete body.runtimeCharacterKernel;
+      delete body.communityAffinities;
+      delete body.communityDiscoveryState;
       delete body.hostedOnboardingTurnsCompleted;
       delete body.hostedActivatedAt;
       delete body.newsMinGapMinutes;

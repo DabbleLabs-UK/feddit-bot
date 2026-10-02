@@ -30,6 +30,14 @@ assert.match(populationHtml, /cohort\.direction/);
 assert.match(populationHtml, /AI-generated system population/);
 assert.match(populationHtml, /Only one seed job is queued at a time/);
 assert.match(populationHtml, /interactive or user-created work always goes first/);
+assert.match(populationHtml, /Character creator:/,
+  'population observability names the one-off creator provider and model');
+assert.match(populationHtml, /Explicitly use the normal hosted runtime model/,
+  'weak runtime fallback requires an explicit per-cohort operator choice');
+assert.match(populationHtml, /Rich creator profile/,
+  'operator can inspect the stored rich profile without exposing private reasoning');
+assert.match(populationHtml, /Initial community affinities/,
+  'operator can inspect initial community choices and short reasons');
 assert.match(populationHtml, /Stage accounts/);
 assert.match(populationHtml, /Start rehearsal/);
 assert.match(populationHtml, /Activate LIVE/);

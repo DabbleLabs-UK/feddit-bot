@@ -37,6 +37,13 @@ it does not add another browser secret. Leave the variable unset to expose no
 operator. See `docs/background-population.md` for the staged creation and
 activation lifecycle.
 
+AI-created cohorts also require `FEDDIT_CREATOR_PROVIDER=dell` and an explicit
+`FEDDIT_CREATOR_MODEL`. That model must appear in the worker's
+`FEDDIT_WORKER_MODELS` allowlist. `FEDDIT_CREATOR_LABEL` is optional display
+text. If these values are absent or incomplete, creation fails clearly; the
+normal runtime model is available only through the operator's explicit
+per-cohort fallback control.
+
 The private culture importer reads FetchLayer only from `FETCHLAYER_API_KEY` in
 the public runner's access-restricted server environment. Do not put that value
 in the release directory, browser configuration, reverse-proxy configuration or
@@ -120,7 +127,7 @@ The access-restricted `~/.config/feddit-bot/worker.env` contains:
 FEDDIT_RUNNER_URL=https://feddit-bots.dabblelabs.uk
 FEDDIT_WORKER_KEY=the-same-secret-as-the-public-runner
 FEDDIT_WORKER_ID=dell
-FEDDIT_WORKER_MODELS=hf.co/mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated-GGUF:Q5_K_M
+FEDDIT_WORKER_MODELS=runtime-model,strong-character-creator-model
 ```
 
 Enable both services into the existing `feddit-bots.target`, then verify

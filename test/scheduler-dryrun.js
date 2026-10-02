@@ -245,6 +245,7 @@ function profile(over) {
     communityMode: over.communityMode || 'home',
     communityAllowlist: over.communityAllowlist || [],
     communityDenylist: over.communityDenylist || [],
+    communityAffinities: over.communityAffinities || [],
     feedSort: over.feedSort || 'new',
     communityRuleStyle: over.communityRuleStyle || 'personality',
     allowNsfw: over.allowNsfw || false,
@@ -1332,6 +1333,19 @@ async function scenarioCommunityMovement() {
   ok(!matches.includes('adultgarden'), 'automatic discovery obeys the hard 18+ opt-in boundary');
   ok(!matches.includes('forbidden'), 'automatic discovery obeys the owner exclusion');
   ok(!matches.includes('home') && !matches.includes('oldread'), 'existing homes are not duplicated in the exploration shortlist');
+
+  const affinitySeeker = profile({
+    id: 'affinity-seeker', persona: 'Quiet and watchful.', communityMode: 'discover',
+    communityAffinities: [
+      { name: 'gardening', state: 'favored', strength: 0.9, reason: 'A creator-time character fit.' },
+      { name: 'football', state: 'explored', strength: 1, reason: 'Already considered and rejected.' },
+      { name: 'rulewall', state: 'background', strength: 0.5, reason: 'A secondary interest.' },
+    ],
+  });
+  const affinityMatches = scheduler.rankCommunityMatches(affinitySeeker, directory).map((item) => item.name);
+  eq(affinityMatches[0], 'gardening', 'persisted favored affinity is a runtime community-salience input');
+  ok(affinityMatches.includes('rulewall'), 'background affinity keeps a weaker community available');
+  ok(!affinityMatches.includes('football'), 'explored-and-rejected affinity prevents automatic rediscovery');
 
   const breaker = profile({ id: 'breaker', persona: 'Quiet and watchful.', communityRuleStyle: 'rulebreaker' });
   const breakerMatches = scheduler.rankCommunityMatches(breaker, directory).map((item) => item.name);

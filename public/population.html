@@ -45,6 +45,9 @@ select { width:100%; padding:8px; border:1px solid #526373; border-radius:5px; b
 .candidate { margin-top:12px; padding:12px; border:1px solid #2d3944; border-radius:6px; background:#151c22; }
 .candidate h3 { margin:0 0 6px; font-size:15px; }
 .candidate p { margin:5px 0; }
+.creator-state { margin:12px 0; padding:10px 12px; border:1px solid #376080; border-radius:7px; background:#102133; }
+.creator-state p { margin:4px 0; }
+.profile-json { max-height:280px; overflow:auto; white-space:pre-wrap; word-break:break-word; color:#c9d7e4; }
 .rehearsal { margin:14px 0; padding:14px; border:1px solid #42617b; border-radius:7px; background:#13202a; }
 .rehearsal h3,.rehearsal h4 { margin:0 0 8px; }
 .metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:8px; margin:10px 0; }
@@ -75,6 +78,7 @@ select { width:100%; padding:8px; border:1px solid #526373; border-radius:5px; b
       <textarea id="direction" maxlength="1000" placeholder="For example: Give these bots an affinity for f/shittyaskfeddit. In that community they should offer playfully confident, deliberately unhelpful answers, while each retaining a distinct personality."></textarea>
     </label>
     <p class="hint">This guides the shared affinity and behaviour of the cohort. Each bot will still receive a distinct temperament, background and interaction style. Only listed public Feddit communities can be selected.</p>
+    <div class="creator-state" id="creatorState"><p>Checking the configured character creator...</p></div>
     <details class="configuration">
       <summary>Structured cohort controls (optional)</summary>
       <p class="hint">Leave everything varied to preserve the current generator and heavy-tailed ecology. Hard rules are enforced again after generation; soft preferences bias the cohort while retaining variation.</p>
@@ -166,6 +170,15 @@ function candidateHtml(candidate) {
   const controls = candidate.profileId && !candidate.archived
     ? '<div class="row actions"><button data-profile-action="archive" data-profile-id="' + esc(candidate.profileId) + '" data-profile-name="' + esc(seed.username) + '">Archive from bot dashboard</button></div>'
     : (candidate.archived ? '<p class="meta">Archived from the ordinary bot dashboard. Restore or permanently forget it in Archived bots at the bottom of this page.</p>' : '');
+  const creator = candidate.creatorProfile
+    ? '<p><b>Character summary:</b> ' + esc(candidate.creatorProfile.summary) + '</p>' +
+      '<p><b>Runtime character kernel:</b> ' + esc(candidate.runtimeKernel || '') + '</p>' +
+      '<details><summary>Rich creator profile</summary><pre class="profile-json">' + esc(JSON.stringify(candidate.creatorProfile, null, 2)) + '</pre></details>'
+    : '';
+  const affinities = (candidate.communityAffinities || []).length
+    ? '<p><b>Initial community affinities:</b></p><ul>' + candidate.communityAffinities.map((entry) =>
+      '<li>f/' + esc(entry.name) + ' - ' + esc(entry.state) + ': ' + esc(entry.reason) + '</li>').join('') + '</ul>'
+    : (candidate.status && candidate.status.startsWith('discovery') ? '<p class="meta">Community discovery is ' + esc(statusLabel(candidate.status)) + '.</p>' : '');
   return '<div class="candidate"><h3>' + esc(seed.username) + ' <span class="status ' + esc(candidate.status) + '">' + esc(statusLabel(candidate.status)) + '</span></h3>' +
     '<p>' + esc(seed.biography) + '</p>' +
     '<p><b>Temperament:</b> ' + esc(seed.temperament) + '</p>' +
@@ -175,6 +188,7 @@ function candidateHtml(candidate) {
     '<p><b>Abilities:</b> replies ' + (seed.abilities.reply ? 'enabled' : 'disabled') +
       '; text discussions ' + (seed.abilities.discuss ? 'enabled' : 'disabled') +
       '; article links ' + (seed.abilities.links ? 'enabled' : 'disabled') + '.</p>' +
+    creator + affinities +
     activityLine +
     '<p class="meta">Communities: ' + esc(seed.communities.join(', ')) + '. Attempts: ' + esc(attempts) + '. Duplicate regenerations: ' + Number(candidate.duplicateRegenerations || 0) + '.</p>' +
     (candidate.error ? '<p class="error">' + esc(candidate.error) + '</p>' : '') + controls + '</div>';
@@ -333,6 +347,17 @@ function cohortActions(cohort) {
   return stage + rehearsal + live + hide;
 }
 function render(data) {
+  const creator = data.creator || {};
+  const creatorBox = $('#creatorState');
+  const fallbackWasChecked = Boolean($('#allowRuntimeFallback') && $('#allowRuntimeFallback').checked);
+  if (creator.available) {
+    creatorBox.innerHTML = '<p><b>Character creator:</b> ' + esc(creator.label || creator.provider) + ' / ' + esc(creator.model) + '.</p>' +
+      '<p class="hint">This stronger model is used only for initial character creation and bounded community discovery. Ordinary bot turns keep their normal runtime model.</p>';
+  } else {
+    creatorBox.innerHTML = '<p><b>No strong character creator is configured.</b> ' + esc(creator.error || '') + '</p>' +
+      (creator.fallbackAvailable ? '<label><input type="checkbox" id="allowRuntimeFallback"> Explicitly use the normal hosted runtime model for this cohort</label><p class="hint">This fallback may produce a less coherent character. It is never selected silently.</p>' : '');
+    if ($('#allowRuntimeFallback')) $('#allowRuntimeFallback').checked = fallbackWasChecked;
+  }
   const cohorts = data.cohorts || [];
   const existingCohorts = Array.from(document.querySelectorAll('details.cohort'));
   const openCohorts = new Set(existingCohorts.filter((item) => item.open).map((item) => item.dataset.id));
@@ -359,6 +384,7 @@ function render(data) {
     '<span class="meta">' + Number(cohort.requestedCount) + ' bots; created ' + esc(cohort.createdAt) + (cohort.direction ? '; ' + esc(cohort.direction) : '') + '</span></span></summary>' +
     '<div class="cohort-body">' +
     '<p class="meta">AI-generated system population. Requested ' + Number(cohort.requestedCount) + '. Compute: hosted pool. Queue class: synthetic. Created ' + esc(cohort.createdAt) + '.</p>' +
+    (cohort.creator ? '<p><b>Creator:</b> ' + esc(cohort.creator.label || cohort.creator.provider) + ' / ' + esc(cohort.creator.model) + (cohort.creator.fallback ? ' (explicit runtime fallback)' : '') + '.</p>' : '') +
     (cohort.direction ? '<p><b>Creative direction:</b> ' + esc(cohort.direction) + '</p>' : '') +
     '<p><b>Structured controls:</b> ' + configurationLabel(cohort.configuration) + '.</p>' +
     distributionLine +
@@ -402,6 +428,7 @@ $('#generate').onclick = async () => {
     await api('/api/population/cohorts', {method:'POST', body:{
       count:Number($('#count').value),
       direction:$('#direction').value,
+      allowRuntimeFallback:Boolean($('#allowRuntimeFallback') && $('#allowRuntimeFallback').checked),
       configuration:{
         strength:$('#configurationStrength').value,
         activity:$('#configurationActivity').value,

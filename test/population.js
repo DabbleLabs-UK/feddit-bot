@@ -52,6 +52,26 @@ function candidate(overrides = {}) {
     toneNotes: 'measured, concrete, lightly amused',
     communities: ['botlife', 'askfeddit'],
     abilities: { reply: true, discuss: true, links: false },
+    creatorProfile: {
+      summary: 'A patient observer who notices the social meaning of small rituals.',
+      corePersonality: 'Patient, dry, attentive, and more interested in specifics than grand claims.',
+      voiceStyle: 'Measured, concrete, and lightly amused.',
+      interests: ['tea rituals', 'public benches', 'quiet museums'],
+      motivations: ['making ordinary exchanges more thoughtful'],
+      curiosities: ['why shared rituals matter'],
+      dislikes: ['needless urgency'],
+      values: ['patience', 'specificity'],
+      socialDisposition: {
+        sociability: 'selective', agreeableness: 'moderate', conflictStyle: 'separates facts from taste',
+        statusSensitivity: 'low', reciprocity: 'high', communityLoyalty: 'moderate',
+      },
+      evidenceThreshold: 'moderate', noveltySeeking: 'moderate', humourTolerance: 'high',
+      trollingTolerance: 'low', annoyanceSensitivity: 'moderate',
+      votingDisposition: 'Votes when a contribution is unusually helpful or misleading.',
+      conversationalHabits: ['asks narrow follow-up questions'],
+      autobiographicalSeed: 'Once catalogued lost umbrellas at a railway station.',
+      likelyCommunityInterests: ['botlife', 'askfeddit'],
+    },
     ...overrides,
   };
 }
@@ -120,11 +140,11 @@ function fakeStore() {
 }
 
 async function run() {
-  eq(storeModule.DATA_SCHEMA_VERSION, 23,
-    'profile storage schema includes persistent subscription Burst state');
+  eq(storeModule.DATA_SCHEMA_VERSION, 24,
+    'profile storage schema includes separate creator and community-affinity state');
   const migratedProfiles = storeModule.migrateProfiles([
     { id: 'user', botOrigin: 'user', populationArchivedAt: '2026-09-30T00:00:00.000Z', populationSeed: { username: 'forged' }, populationProvenance: { source: 'forged' } },
-    { id: 'system', botOrigin: 'system', populationArchivedAt: '2026-09-30T00:00:00.000Z', populationSeed: { username: 'real_system' }, populationProvenance: { source: 'generated' } },
+    { id: 'system', botOrigin: 'system', populationArchivedAt: '2026-09-30T00:00:00.000Z', populationSeed: { username: 'real_system' }, populationProvenance: { source: 'generated' }, creatorProfile: candidate().creatorProfile, communityAffinities: [{ name: 'botlife', state: 'favored', reason: 'Character fit.' }] },
   ], 13);
   eq(migratedProfiles[0].populationSeed, null, 'user-created profiles cannot retain system population seed metadata');
   eq(migratedProfiles[0].populationProvenance, null, 'user-created profiles cannot retain system population provenance');
@@ -139,6 +159,12 @@ async function run() {
     'system migration creates a separate rehearsal ecology state');
   ok(migratedProfiles[1].populationActivity !== migratedProfiles[1].simulationState.populationActivity,
     'live and rehearsal ecology use separate persisted objects');
+  eq(migratedProfiles[0].creatorProfile, null,
+    'migration does not invent or overwrite a creator profile for a manual bot');
+  ok(migratedProfiles[1].creatorProfile && migratedProfiles[1].runtimeCharacterKernel,
+    'migration preserves a generated rich profile and compiles its bounded runtime kernel');
+  eq(migratedProfiles[1].communityAffinities[0].name, 'botlife',
+    'migration preserves generated community affinity state');
 
   eq(normalizeUsername('  A Real Name!?  '), 'a_real_name', 'username is normalised to the Feddit identity alphabet');
   ok(/^[a-z0-9_-]{3,20}$/.test(normalizeUsername('x')), 'short model names become valid Feddit usernames');
@@ -186,6 +212,27 @@ async function run() {
     const registered = [];
     let conflictOnce = true;
     const feddit = {
+      async feddits() {
+        return { ok: true, data: { feddits: [
+          { name: 'botlife', title: 'Bot life', description: 'Daily life as a bot.', rules: [] },
+          { name: 'askfeddit', title: 'Ask Feddit', description: 'Questions and answers.', rules: [] },
+          { name: 'shittyaskfeddit', title: 'Shitty Ask Feddit', description: 'Playfully unhelpful answers.', rules: [] },
+          { name: 'DJing', title: 'DJing', description: 'Mixing music.', rules: [] },
+          { name: 'casualUK', title: 'Casual UK', description: 'Ordinary UK life.', rules: [] },
+        ] } };
+      },
+      async activeCommunities() {
+        return { ok: true, data: { window_hours: 48, entries: [
+          { rank: 1, name: 'shittyaskfeddit', title: 'Shitty Ask Feddit', recent: 30 },
+          { rank: 2, name: 'botlife', title: 'Bot life', recent: 8 },
+          { rank: 3, name: 'askfeddit', title: 'Ask Feddit', recent: 5 },
+        ] } };
+      },
+      async feddit(name) {
+        return { ok: true, data: { data: { children: [
+          { data: { title: 'A current post in ' + name, author: 'fixture_bot', score: 3, num_comments: 2 } },
+        ] } } };
+      },
       async register({ username, description }) {
         registered.push({ username, description });
         if (conflictOnce) {
@@ -225,13 +272,27 @@ async function run() {
     };
     const options = {
       file, queue, enqueueDell, profileStore: store, turnStore, scheduler: rehearsalScheduler,
-      feddit, model: 'shared-test-model',
+      feddit, model: 'shared-test-model', creatorProvider: 'dell', creatorModel: 'strong-test-model',
+      creatorLabel: 'Strong fixture creator',
       activateProfile(profile, mode) {
         activations.push({ id: profile.id, mode });
         return store.updateProfile(profile.id, { enabled: true, dryRun: mode !== 'live' });
       },
     };
     rehearsalStore = store;
+    const unconfigured = createPopulationController({
+      ...options,
+      file: path.join(dir, 'unconfigured.json'),
+      creatorProvider: '',
+      creatorModel: '',
+    });
+    assert.throws(() => unconfigured.createCohort(1), /No strong character creator is configured/,
+      'population generation never silently falls back to the normal runtime model');
+    checks++;
+    const explicitFallback = unconfigured.createCohort(1, '', {}, { allowRuntimeFallback: true });
+    eq(explicitFallback.creator.model, 'shared-test-model',
+      'operator may explicitly choose the normal runtime model when no strong creator is configured');
+    eq(explicitFallback.creator.fallback, true, 'explicit runtime fallback is visible in cohort provenance');
     const controller = createPopulationController(options);
     const created = controller.createCohort(99);
     eq(created.requestedCount, MAX_COHORT_SIZE, 'cohort size is bounded even for an excessive request');
@@ -250,7 +311,7 @@ async function run() {
     eq(requests[0].priority, 'background', 'population generation uses background queue priority');
     eq(requests[0].allocationClass, 'synthetic', 'population generation uses the protected synthetic class');
     eq(requests[0].provider, 'dell', 'population generation uses the existing hosted provider path');
-    eq(requests[0].model, 'shared-test-model', 'population generation uses the configured shared hosted model');
+    eq(requests[0].model, 'strong-test-model', 'population generation uses the explicitly configured strong creator model');
     ok(requests[0].prompt.includes(cohortDirection), 'the bounded operator direction reaches the seed-generation prompt');
     ok(requests[0].prompt.includes('shittyaskfeddit'), 'the requested real community is available to population generation');
     ok(requests[0].prompt.includes('distinctly for this candidate'), 'shared direction still requires differentiated candidates');
@@ -268,20 +329,50 @@ async function run() {
       result: { text: JSON.stringify({ ...candidate(), hiddenReasoning: 'RAW-CHAIN-OF-THOUGHT-SENTINEL' }) },
     });
     await lifecycle.tick();
-    eq(requests.length, 2, 'the next seed is queued only after the first reaches a terminal state');
+    eq(requests.length, 2, 'community discovery follows the accepted character before another seed is queued');
+    eq(requests[1].kind, 'population-community-discovery', 'community choice uses a distinct bounded durable job');
+    ok(requests[1].prompt.includes('feddit-active-communities'),
+      'community discovery reuses the exact human-visible active-community exposure source');
 
-    jobs.set('job-2', { id: 'job-2', status: 'completed', result: { text: JSON.stringify(duplicate) } });
+    jobs.set('job-2', { id: 'job-2', status: 'completed', result: { text: JSON.stringify({ choices: [
+      { id: 'C1', state: 'favored', strength: 0.92, reason: 'Its ordinary bot-life observations suit this patient character.' },
+      { id: 'C2', state: 'background', strength: 0.4, reason: 'Specific questions can occasionally draw it in.' },
+    ] }) } });
     await lifecycle.tick();
-    eq(requests.length, 3, 'a near duplicate is regenerated within the same bounded slot');
-    ok(/too similar/i.test(requests[2].prompt), 'duplicate retry explicitly requests differentiation');
+    eq(requests.length, 3, 'the next seed waits for the first character discovery to finish');
 
-    jobs.set('job-3', { id: 'job-3', status: 'completed', result: { text: JSON.stringify(different) } });
+    jobs.set('job-3', { id: 'job-3', status: 'completed', result: { text: JSON.stringify(duplicate) } });
+    await lifecycle.tick();
+    eq(requests.length, 4, 'a near duplicate is regenerated within the same bounded slot');
+    ok(/too similar/i.test(requests[3].prompt), 'duplicate retry explicitly requests differentiation');
+
+    jobs.set('job-4', { id: 'job-4', status: 'completed', result: { text: JSON.stringify({
+      ...different,
+      creatorProfile: {
+        ...candidate().creatorProfile,
+        summary: 'An energetic storm and music enthusiast who enjoys surprising communal projects.',
+        corePersonality: 'Energetic, experimental, cheerfully blunt, and novelty seeking.',
+        voiceStyle: 'Quick, vivid, and surprising.',
+        interests: different.interests,
+        likelyCommunityInterests: ['DJing', 'casualUK'],
+      },
+    }) } });
+    await lifecycle.tick();
+    eq(requests.length, 5, 'the differentiated second character receives its own discovery turn');
+    jobs.set('job-5', { id: 'job-5', status: 'completed', result: { text: JSON.stringify({ choices: [
+      { id: 'C1', state: 'favored', strength: 0.9, reason: 'Music mixing is a direct character interest.' },
+      { id: 'C2', state: 'background', strength: 0.35, reason: 'Ordinary UK observations sometimes fit its tangents.' },
+    ] }) } });
     await lifecycle.tick();
     const ready = lifecycle.getCohort(cohort.id);
     eq(ready.status, 'ready', 'a complete differentiated cohort becomes ready for inspection');
     eq(ready.direction, cohortDirection, 'cohort direction remains visible after generation');
     eq(ready.configuration, cohortConfiguration, 'validated structured controls survive generation');
     eq(ready.candidates[1].duplicateRegenerations, 1, 'duplicate regeneration is visible in provenance');
+    ok(ready.candidates.every((item) => item.creatorProfile && item.runtimeKernel),
+      'rich creator profiles remain separate from compact runtime kernels');
+    ok(ready.candidates.every((item) => item.communityAffinities.some((entry) => entry.state === 'favored')),
+      'each generated character finishes with a bounded persisted favored community');
     ok(ready.activityDistribution && ready.activityDistribution.bots === 2,
       'operator cohort output includes bounded ecology observability');
     ok(!fs.readFileSync(path.join(dir, 'lifecycle.json'), 'utf8').includes('RAW-CHAIN-OF-THOUGHT-SENTINEL'),
@@ -299,6 +390,12 @@ async function run() {
       'staged bots remain disabled and in rehearsal');
     ok(systemProfiles.every((profile) => profile.populationProvenance.lifecycle === 'staged'),
       'staged profiles retain inspectable AI-population provenance');
+    ok(systemProfiles.every((profile) => profile.creatorProvenance.model === 'strong-test-model'),
+      'staged profiles retain creator provider and model provenance');
+    ok(systemProfiles.every((profile) => profile.creatorProfile && profile.runtimeCharacterKernel),
+      'staged profiles retain rich creator data separately from the runtime kernel');
+    ok(systemProfiles.every((profile) => profile.communityAffinities.length >= 1),
+      'staged profiles retain character-driven community affinities');
     ok(systemProfiles.every((profile) => profile.canReply === false && profile.canShareLinks === true),
       'post-inference normalisation carries hard ability constraints into staged ordinary profiles');
     ok(systemProfiles.every((profile) => profile.persona.includes(cohortDirection)),
