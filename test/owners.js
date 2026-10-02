@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createOwnerStore, digest } = require('../lib/owners');
+const speed = require('../lib/speed');
 
 let checks = 0;
 function eq(actual, expected, message) {
@@ -42,6 +43,12 @@ try {
   eq(store.lastActiveAt(created.id), '2026-09-14T12:00:00.000Z', 'activity timestamp is retained without page history');
   eq(store.touchActivity(created.id, activeAt + 30 * 1000), false, 'frequent activity writes are throttled');
   eq(store.touchActivity(created.id, activeAt + 61 * 1000), true, 'later activity refreshes the workspace timestamp');
+  eq(store.getSpeed(created.id), speed.inactiveState(), 'new hosted workspace starts at normal Speed');
+  const untilOff = speed.startState(10, 'untilOff', activeAt);
+  eq(store.setSpeed(created.id, untilOff), untilOff, 'hosted workspace persists its own until-off Speed');
+  eq(store.getSpeed(created.id), untilOff, 'hosted Speed survives a store read');
+  store.resetForTests();
+  eq(store.getSpeed(created.id), untilOff, 'hosted until-off Speed survives a process-style store reload');
   const activityDisk = fs.readFileSync(path.join(dir, 'owners.json'), 'utf8');
   ok(!activityDisk.includes(activity.activityToken), 'activity capability is never stored in plaintext');
   ok(activityDisk.includes(digest(activity.activityToken)), 'only a one-way activity hash is stored');

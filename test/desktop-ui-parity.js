@@ -20,5 +20,9 @@ assert.match(html, /placementUiLogic\.editorVariant\(state\.placement, p\)/,
 assert.match(html, /initializeSectionDisclosures\(main, p\)/);
 assert.match(html, /id="dirtySave"/);
 assert.match(html, /const manualNewsPreviewSection = state\.developerTools \?/);
+assert.match(html, /<script src="\/ui-speed\.js"><\/script>/,
+  'desktop and hosted load the same Speed UI module');
+assert.match(html, /id="speedBtn"[\s\S]*id="speedPopover"/,
+  'the shared top bar owns one workspace Speed control');
 
 console.log('desktop-ui-parity: all checks passed');

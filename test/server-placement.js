@@ -140,6 +140,16 @@ async function localPlacementContract(placement) {
     eq(runtime.json.ownerSessionRequired, false, placement + ' does not impose hosted owner sessions');
     eq(runtime.json.hostedPolicy, null, placement + ' does not apply hosted cadence policy');
 
+    const startedSpeed = await requestJson(runner.port, 'PUT', '/api/speed', {
+      multiplier: 5,
+      duration: 'untilOff',
+    });
+    eq(startedSpeed.status, 200, placement + ' can start workspace Speed');
+    eq(startedSpeed.json.speed.multiplier, 5, placement + ' reports the active multiplier');
+    eq(startedSpeed.json.speed.untilTurnedOff, true, placement + ' persists until-off semantics');
+    const speedStatus = await requestJson(runner.port, 'GET', '/api/status');
+    eq(speedStatus.json.settings.speed.multiplier, 5, placement + ' status exposes the shared Speed state');
+
     const populationPage = await requestJson(runner.port, 'GET', '/population.html');
     eq(populationPage.status, 404, placement + ' does not expose the hosted population operator page');
 
@@ -170,6 +180,13 @@ async function localPlacementContract(placement) {
     eq(created.json.profile.provider, 'deepseek', placement + ' preserves the selected provider');
     eq(created.json.profile.postsPerHour, 7, placement + ' preserves the selected post cadence');
     eq(created.json.profile.commentsPerHour, 11, placement + ' preserves the selected reply cadence');
+    eq(created.json.profile.postsPerHour, 7, placement + ' Speed does not rewrite post cadence');
+
+    const stoppedSpeed = await requestJson(runner.port, 'PUT', '/api/speed', {
+      multiplier: 1,
+      duration: 'untilOff',
+    });
+    eq(stoppedSpeed.json.speed.active, false, placement + ' can return cleanly to 1x');
 
     const localA = await requestJson(runner.port, 'POST', '/api/profiles', {
       fedditUsername: placement + '_local_a',
@@ -250,6 +267,20 @@ async function hostedPlacementContract() {
     const session = await requestJson(runner.port, 'POST', '/api/session');
     eq(session.status, 201, 'hosted runner issues an anonymous private workspace');
     const ownerHeaders = { 'X-Feddit-Bot-Owner': session.json.accessToken };
+    const hostedSpeed = await requestJson(runner.port, 'PUT', '/api/speed', {
+      multiplier: 10,
+      duration: '3h',
+    }, ownerHeaders);
+    eq(hostedSpeed.status, 200, 'hosted owner can start Speed for the private workspace');
+    eq(hostedSpeed.json.speed.multiplier, 10, 'hosted Speed reports its active multiplier');
+    const hostedSpeedStatus = await requestJson(runner.port, 'GET', '/api/status', undefined, ownerHeaders);
+    eq(hostedSpeedStatus.json.settings.speed.multiplier, 10, 'hosted status exposes that workspace Speed');
+    const secondSession = await requestJson(runner.port, 'POST', '/api/session');
+    const secondOwnerStatus = await requestJson(runner.port, 'GET', '/api/status', undefined, {
+      'X-Feddit-Bot-Owner': secondSession.json.accessToken,
+    });
+    eq(secondOwnerStatus.json.settings.speed.multiplier, 1,
+      'one hosted workspace cannot accelerate another workspace');
     const ordinaryPopulation = await requestJson(runner.port, 'GET', '/api/population', undefined, ownerHeaders);
     eq(ordinaryPopulation.status, 404, 'ordinary hosted owners cannot discover the population operator API');
     const ordinaryCultureImporter = await requestJson(
@@ -318,6 +349,8 @@ async function hostedPlacementContract() {
     eq(created.json.profile.botOrigin, 'user', 'public hosted creation cannot forge system origin');
     eq(created.json.profile.hostedOnboardingTurnsCompleted, 0,
       'public hosted creation cannot forge consumed onboarding history');
+    eq(created.json.profile.postsPerHour * 24, 2,
+      'hosted Speed leaves the server-managed cadence source of truth unchanged');
 
     const updated = await requestJson(runner.port, 'PUT', '/api/profiles/' + created.json.profile.id, {
       provider: 'deepseek',

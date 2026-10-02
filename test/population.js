@@ -120,7 +120,7 @@ function fakeStore() {
 }
 
 async function run() {
-  eq(storeModule.DATA_SCHEMA_VERSION, 21,
+  eq(storeModule.DATA_SCHEMA_VERSION, 22,
     'profile storage schema includes separate cadence and provider-connection fields');
   const migratedProfiles = storeModule.migrateProfiles([
     { id: 'user', botOrigin: 'user', populationArchivedAt: '2026-09-30T00:00:00.000Z', populationSeed: { username: 'forged' }, populationProvenance: { source: 'forged' } },

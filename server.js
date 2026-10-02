@@ -16,6 +16,7 @@ const store = require('./lib/store');
 const providers = require('./lib/providers');
 const secrets = require('./lib/secrets');
 const cost = require('./lib/cost');
+const speed = require('./lib/speed');
 const feddit = require('./lib/feddit');
 const gdelt = require('./lib/gdelt');
 const feeds = require('./lib/feeds');
@@ -189,6 +190,38 @@ function ownerPolicyContext(profile) {
       ? ownerStore.lastActiveAt(profile.ownerId)
       : null,
   };
+}
+
+function speedStateForProfile(profile) {
+  if (PLACEMENT === 'hosted' && profile && profile.ownerId) {
+    return ownerStore.getSpeed(profile.ownerId);
+  }
+  return store.getSettings().speed;
+}
+
+function speedScopeForProfile(profile) {
+  if (PLACEMENT === 'hosted' && profile && profile.ownerId) return 'owner:' + profile.ownerId;
+  return PLACEMENT === 'hosted' ? 'hosted-system-population' : 'workspace';
+}
+
+function expireSpeedForProfile(profile) {
+  if (PLACEMENT === 'hosted' && profile && profile.ownerId) {
+    return ownerStore.setSpeed(profile.ownerId, speed.inactiveState());
+  }
+  return store.updateSettings({ speed: speed.inactiveState() }).speed;
+}
+
+function requestSpeedState(requestOwner) {
+  if (PLACEMENT === 'hosted' && requestOwner) return ownerStore.getSpeed(requestOwner.id);
+  return store.getSettings().speed;
+}
+
+function publicSettings(requestOwner, at = Date.now()) {
+  const settings = store.getSettings();
+  if (PLACEMENT === 'hosted') {
+    return { paused: settings.paused, speed: speed.publicState(requestSpeedState(requestOwner), at) };
+  }
+  return { ...settings, speed: speed.publicState(settings.speed, at) };
 }
 
 function isPopulationAdmin(owner) {
@@ -920,12 +953,11 @@ async function handleApi(req, res, urlPath, query) {
   if (method === 'GET' && urlPath === '/api/status') {
     if (PLACEMENT === 'hosted') {
       const fed = await feddit.reachable();
-      const settings = store.getSettings();
       return sendJson(res, 200, {
         placement: PLACEMENT,
         feddit: fed,
         defaultModel: modelCatalog.DELL_SHARED_MODEL,
-        settings: { paused: settings.paused },
+        settings: publicSettings(requestOwner),
       });
     }
     const apiKey = secrets.getDeepseekKey();
@@ -952,7 +984,7 @@ async function handleApi(req, res, urlPath, query) {
         capUsd: capActive ? cap : null,
         overCap: capActive && runner.monthUsd >= cap,
       },
-      settings,
+      settings: publicSettings(requestOwner, now),
       placement: PLACEMENT,
     });
   }
@@ -1002,7 +1034,50 @@ async function handleApi(req, res, urlPath, query) {
 
   // GET /api/settings - global runner settings (pause / spend controls).
   if (method === 'GET' && urlPath === '/api/settings') {
-    return sendJson(res, 200, { settings: store.getSettings() });
+    return sendJson(res, 200, { settings: publicSettings(requestOwner) });
+  }
+
+  // Speed is workspace-wide scheduler time dilation. Hosted owners control
+  // only their own workspace; population operators also control the unowned
+  // system population shown in that workspace. Queue priority and capacity are
+  // deliberately outside this route.
+  if (urlPath === '/api/speed' && method === 'GET') {
+    return sendJson(res, 200, { speed: speed.publicState(requestSpeedState(requestOwner)) });
+  }
+  if (urlPath === '/api/speed' && method === 'PUT') {
+    const body = await readBody(req);
+    let next;
+    try {
+      next = Number(body.multiplier) === 1
+        ? speed.inactiveState()
+        : speed.startState(body.multiplier, String(body.duration || ''), Date.now());
+    } catch (error) {
+      return sendJson(res, 400, { error: error.message, code: error.code || 'INVALID_SPEED' });
+    }
+
+    if (PLACEMENT === 'hosted') {
+      const previousOwner = ownerStore.getSpeed(requestOwner.id);
+      ownerStore.setSpeed(requestOwner.id, next);
+      schedulerHandle.applySpeedChange(
+        previousOwner,
+        next,
+        (profile) => profile.ownerId === requestOwner.id,
+      );
+      if (isPopulationAdmin(requestOwner)) {
+        const previousSystem = store.getSettings().speed;
+        store.updateSettings({ speed: next });
+        schedulerHandle.applySpeedChange(
+          previousSystem,
+          next,
+          (profile) => profile.botOrigin === 'system' && !profile.ownerId,
+        );
+      }
+    } else {
+      const previous = store.getSettings().speed;
+      store.updateSettings({ speed: next });
+      schedulerHandle.applySpeedChange(previous, next);
+    }
+    return sendJson(res, 200, { speed: speed.publicState(next) });
   }
 
   // PUT /api/settings - toggle global pause, set the monthly spend cap and
@@ -1903,6 +1978,9 @@ const schedulerHandle = scheduler.start({
   queueAllocationFor: PLACEMENT === 'hosted'
     ? (profile, at) => hostedPolicy.processingFor(profile, at)
     : undefined,
+  speedStateFor: speedStateForProfile,
+  speedScopeFor: speedScopeForProfile,
+  expireSpeedState: expireSpeedForProfile,
   admitHostedTurn: PLACEMENT === 'hosted'
     ? (profile) => hostedPolicy.admissionFor(profile, jobQueue.capacity(), {
       activeSyntheticTurns: activeSyntheticTurnCount(),

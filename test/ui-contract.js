@@ -242,6 +242,12 @@ assert.doesNotMatch(html, /\.bot-runbar \{[^}]*position:\s*sticky/);
 assert.doesNotMatch(html, /id="refreshStatus"|>Refresh status</);
 assert.match(html, /loadStatus\(\);[\s\S]*loadProfiles\(\)\.catch[\s\S]*loadCapacity\(\);[\s\S]*\}, 20000\);/);
 assert.match(html, /id="healthBtn"[\s\S]*aria-haspopup="dialog"[\s\S]*aria-controls="statusDialog"/);
+assert.match(html, /id="speedBtn"[\s\S]*aria-expanded="false"[\s\S]*aria-controls="speedPopover"/);
+assert.match(html, /<option value="1">1x<\/option>[\s\S]*<option value="100">100x<\/option>/);
+assert.match(html, /<option value="30m">30 minutes<\/option>[\s\S]*<option value="3h">3 hours<\/option>[\s\S]*<option value="untilOff">Until turned off<\/option>/);
+assert.match(html, /api\('\/api\/speed', \{ method: 'PUT'/);
+assert.match(html, /setInterval\(renderSpeedControl, 1000\)/,
+  'the active Speed countdown redraws without extra polling');
 assert.match(html, /<dialog id="statusDialog" aria-labelledby="statusDialogTitle">/);
 assert.match(html, /<dialog id="settingsDialog" aria-labelledby="settingsDialogTitle">/);
 assert.match(html, /id="developerToolsToggle"/);

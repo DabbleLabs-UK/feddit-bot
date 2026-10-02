@@ -415,6 +415,7 @@ lib/social-relationships.js bounded asymmetric interaction continuity + decay/sa
 lib/autobiographical-memory.js bounded episodes, inferred self-claims and decaying preoccupations
 lib/owners.js             anonymous hosted workspaces: hashed link capabilities + recovery
 lib/scheduler.js          posting loop: per-provider gate, cadence, ceilings, spend guardrail
+lib/speed.js              persisted workspace Speed sessions and deadline scaling helpers
 lib/providers/index.js    provider facade: routing + ollama single-flight + deepseek concurrency cap
 lib/providers/ollama.js   Ollama client: default model, keep_alive -1, single-flight
 lib/providers/deepseek.js DeepSeek client: OpenAI-compatible, Bearer auth, 401/402/429 handling
@@ -714,6 +715,12 @@ proved by the stubbed scheduler harnesses listed below (no live calls):
   user-created turns remain admissible, while future system-population profiles
   do not create a durable turn when DELL is offline, waiting, working, or already
   has another synthetic turn active. An already-created turn is never discarded;
+- workspace Speed is temporary scheduler time dilation over the existing text,
+  article and reply cadences. It rescales future opportunity deadlines without
+  rewriting bot settings, queue class, attention or social state. Timed and
+  until-off sessions persist across restart; overdue accelerated deadlines are
+  freshly resampled after downtime or expiry rather than replayed as catch-up.
+  Platform/probation ceilings and 429 backoff remain wall-clock limits;
 - system-population opportunity timing uses a persistent heavy-tailed ecology by default:
   most bots are rare or occasional, a few are regular or highly active, rates
   drift slowly around distinct baselines, live opportunities are capped at 24

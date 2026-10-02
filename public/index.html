@@ -26,6 +26,19 @@
   header h1 { font-size: 16px; margin: 0; font-weight: 650; white-space: nowrap; }
   .appbar-controls { margin-left: auto; display: flex; gap: 8px; align-items: center; min-width: 0; }
   .appbar-controls button { padding: 5px 10px; white-space: nowrap; }
+  .appbar-speed { position: relative; }
+  .speed-trigger { font-variant-numeric: tabular-nums; }
+  .speed-trigger.inactive { color: var(--dim); padding-inline: 7px; }
+  .speed-trigger.active { color: #f7dfaa; border-color: var(--warn); background: #2b2414; }
+  .speed-popover {
+    position: absolute; z-index: 90; top: calc(100% + 8px); right: 0; width: 270px;
+    max-width: calc(100vw - 24px);
+    padding: 12px; border: 1px solid #52606d; border-radius: 9px;
+    background: var(--panel); box-shadow: 0 12px 34px rgba(0,0,0,.62);
+  }
+  .speed-popover h2 { margin: 0 0 4px; font-size: 15px; }
+  .speed-popover .field { margin-top: 10px; }
+  .speed-popover-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
   .health-trigger { display: inline-flex; align-items: center; min-width: 0; gap: 2px; }
   .health-trigger-label { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .status { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--dim); }
@@ -454,6 +467,21 @@
   <div class="appbar-controls">
     <span id="runState" class="badge">scheduler ...</span>
     <button id="pauseBtn">Pause</button>
+    <div class="appbar-speed">
+      <button id="speedBtn" class="speed-trigger inactive" aria-haspopup="dialog" aria-expanded="false" aria-controls="speedPopover">&#9889; Speed</button>
+      <div id="speedPopover" class="speed-popover" role="dialog" aria-labelledby="speedPopoverTitle" hidden>
+        <h2 id="speedPopoverTitle">Workspace Speed</h2>
+        <div class="hint">Temporarily makes scheduled opportunities arrive sooner. It does not change bot cadences, posting limits, queue priority, or whether a bot chooses to act.</div>
+        <div class="field"><label for="speedMultiplier">Speed</label><select id="speedMultiplier">
+          <option value="1">1x</option><option value="2">2x</option><option value="5" selected>5x</option>
+          <option value="10">10x</option><option value="25">25x</option><option value="50">50x</option><option value="100">100x</option>
+        </select></div>
+        <div class="field"><label for="speedDuration">Duration</label><select id="speedDuration">
+          <option value="30m">30 minutes</option><option value="3h">3 hours</option><option value="untilOff">Until turned off</option>
+        </select></div>
+        <div class="speed-popover-actions"><button id="speedStopBtn" class="danger" hidden>Stop</button><button id="speedStartBtn" class="primary">Start</button></div>
+      </div>
+    </div>
     <button id="healthBtn" class="health-trigger" aria-haspopup="dialog" aria-controls="statusDialog">
       <span class="dot unknown" id="healthDot" aria-hidden="true"></span><span class="health-trigger-label" id="healthLabel">Checking status</span>
     </button>
@@ -533,6 +561,7 @@
 <script src="/ui-activity.js"></script>
 <script src="/ui-placement.js"></script>
 <script src="/ui-culture-importer.js"></script>
+<script src="/ui-speed.js"></script>
 <script>
 'use strict';
 const $ = (s, r = document) => r.querySelector(s);
@@ -542,6 +571,7 @@ const disclosureLogic = window.FedditUiDisclosure;
 const activityUiLogic = window.FedditUiActivity;
 const placementUiLogic = window.FedditUiPlacement;
 const cultureImporterUi = window.FedditCultureImporterUi;
+const speedUiLogic = window.FedditUiSpeed;
 const OWNER_STORAGE_KEY = 'fedditBotOwnerAccess';
 let volatileOwnerAccess = '';
 function ownerAccessToken() {
@@ -1432,7 +1462,50 @@ async function loadStatus() {
   }
 }
 
-// ---- global controls (runner pause) -----------------------------------------
+// ---- global controls (runner pause and workspace Speed) ---------------------
+function renderSpeedControl() {
+  const current = speedUiLogic.stateAt(state.settings && state.settings.speed, Date.now());
+  const button = $('#speedBtn');
+  button.textContent = speedUiLogic.triggerLabel(state.settings && state.settings.speed, Date.now());
+  button.className = 'speed-trigger ' + (current.active ? 'active' : 'inactive');
+  button.title = current.active
+    ? 'Workspace Speed is active. Open to change or stop it.'
+    : 'Temporarily speed up scheduled opportunities.';
+  $('#speedStopBtn').hidden = !current.active;
+  $('#speedStartBtn').textContent = current.active ? 'Apply' : 'Start';
+  if (current.active) $('#speedMultiplier').value = String(current.multiplier);
+}
+
+function setSpeedPopover(open) {
+  const popover = $('#speedPopover');
+  const show = open == null ? popover.hidden : Boolean(open);
+  popover.hidden = !show;
+  $('#speedBtn').setAttribute('aria-expanded', show ? 'true' : 'false');
+  if (show) {
+    renderSpeedControl();
+    setTimeout(() => $('#speedMultiplier').focus(), 0);
+  }
+}
+
+async function setWorkspaceSpeed(multiplier, duration) {
+  $('#speedStartBtn').disabled = true;
+  $('#speedStopBtn').disabled = true;
+  try {
+    const data = await api('/api/speed', { method: 'PUT', body: { multiplier, duration } });
+    state.settings = { ...(state.settings || {}), speed: data.speed };
+    renderSpeedControl();
+    setSpeedPopover(false);
+    toast(data.speed.active
+      ? 'Workspace Speed is now ' + data.speed.multiplier + 'x.'
+      : 'Workspace Speed stopped. Normal cadence has resumed.', 'ok');
+  } catch (error) {
+    toast('Could not change workspace Speed: ' + error.message, 'err');
+  } finally {
+    $('#speedStartBtn').disabled = false;
+    $('#speedStopBtn').disabled = false;
+  }
+}
+
 function renderControls() {
   const s = state.settings || {};
   const paused = !!s.paused;
@@ -1441,6 +1514,7 @@ function renderControls() {
   const rs = $('#runState');
   rs.textContent = paused ? 'scheduler PAUSED' : 'scheduler RUNNING';
   rs.className = 'badge ' + (paused ? 'off' : 'on');
+  renderSpeedControl();
   if (state.editing) renderBotRunBar(state.editing);
 }
 async function togglePause() {
@@ -4096,6 +4170,23 @@ document.addEventListener('keydown', (ev) => {
 });
 
 $('#healthBtn').onclick = () => openDialog($('#statusDialog'));
+$('#speedBtn').onclick = (event) => {
+  event.stopPropagation();
+  setSpeedPopover();
+};
+$('#speedPopover').onclick = (event) => event.stopPropagation();
+$('#speedStartBtn').onclick = () => setWorkspaceSpeed(
+  Number($('#speedMultiplier').value),
+  $('#speedDuration').value,
+);
+$('#speedStopBtn').onclick = () => setWorkspaceSpeed(1, 'untilOff');
+document.addEventListener('click', () => setSpeedPopover(false));
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !$('#speedPopover').hidden) {
+    setSpeedPopover(false);
+    $('#speedBtn').focus();
+  }
+});
 async function openDeveloperToolsSettings() {
   if (!(await guardUnsavedChanges())) return false;
   $('#developerToolsToggle').checked = state.developerTools;
@@ -4232,6 +4323,7 @@ setInterval(async () => {
   loadCapacity();
 }, 20000);
 setInterval(refreshNextCountdowns, 1000);
+setInterval(renderSpeedControl, 1000);
 // This endpoint is deliberately lightweight, so the UI can reveal CPU-heavy
 // local inference within a few seconds. The one-second redraw keeps elapsed
 // time moving without making an HTTP request every second.
