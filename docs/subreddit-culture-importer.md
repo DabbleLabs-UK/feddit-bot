@@ -12,7 +12,7 @@ The importer owns five steps:
 4. Ask a caller-selected provider and model for one batched culture analysis and one batched set of composite characters.
 5. Return exact `lib/population.normalizeSeed` objects plus separate importer metadata.
 
-The ordinary backend remains independent of its optional human-facing UI and does not change the population controller. The Developer-tools UI calls the same public staged methods through short-lived private runner sessions. The staging bridge is additive: callers can continue to use the importer API and `POST /api/population/external-seeds/stage` directly. The bridge sends only selected compact seeds, the bounded importer/analysis association and the existing cohort configuration. Rich `importerMetadata` remains review-only and is never added to a seed, profile, persona or runtime prompt.
+The ordinary backend remains independent of its optional human-facing UI and does not change the population controller. The Developer-tools UI calls the same public staged methods through private runner workspaces. The staging bridge is additive: callers can continue to use the importer API and `POST /api/population/external-seeds/stage` directly. The bridge sends only selected compact seeds, the bounded importer/analysis association and the existing cohort configuration. Rich `importerMetadata` remains review-only and is never added to a seed, profile, persona or runtime prompt.
 
 ## Developer-tools UI
 
@@ -22,7 +22,7 @@ On desktop, the same Developer-tools area exposes a separate masked FetchLayer k
 
 The UI keeps the workflow explicit:
 
-1. choose a subreddit, bounded post/comment sample and recent window, then fetch or refresh the private cache;
+1. choose a subreddit, bounded post/comment sample and recent window, then reuse a compatible private cache entry or explicitly retrieve fresh source data;
 2. choose one of the runner's already-connected providers and models, then inspect the normalized culture summary and anonymous contributor evidence;
 3. select contributor influences and archetypes, choose one to six candidates and target Feddit communities, then generate fictional composites;
 4. review, select and edit every compact population-seed field;
@@ -30,7 +30,9 @@ The UI keeps the workflow explicit:
 
 Fetch, analysis and generation do not stage anything. Staging stops at disabled rehearsal profiles; activation and LIVE publishing remain separate population actions. Long-running operations expose progress and cancellation. Provider or validation failures remain visible in the session, and partial staging results are shown per seed.
 
-The raw Reddit corpus remains server-side. A runner keeps at most eight in-memory review sessions per authorised operator for up to six hours; browser responses contain bounded source counts and provenance, normalized analysis, generated candidates, progress, errors and staging outcomes. Navigating back to the bot list or collapsing a section does not clear the current in-page review state.
+The raw Reddit corpus remains server-side. A runner keeps at most eight review workspaces per authorised operator for up to six hours and writes their secret-free snapshots atomically to the gitignored `data/culture-import-workspaces.json` file. The workspace stores the exact source settings, a cache key rather than a second raw-corpus copy, normalized analysis, generated candidates, progress, errors and staging outcomes. A backend restart rehydrates the corpus from that private reference. A running or cancelling action interrupted by restart becomes a visible terminal error and is never resumed automatically.
+
+The browser stores only the opaque workspace ID and secret-free review state needed to preserve edits across a page refresh. It never stores the FetchLayer key or hosted management link. On reopen it first reads the saved workspace. When upgrading the single-owner desktop from the older in-memory-only implementation, the backend can reconstruct a workspace from the newest private corpus cache entry without calling FetchLayer. Hosted restoration remains owner-bound and does not adopt an unowned cache entry. Restoration never calls an AI provider and never repeats staging.
 
 Hosted staging reuses the current population operator capability. Desktop generation can use local Ollama or another already-connected provider, but the population boundary is hosted. The desktop UI therefore asks for the existing hosted private management link only when the operator explicitly stages. The loopback runner extracts that capability in memory and forwards the compact request to the link's HTTPS origin; it does not save the link in the import session, cache, bot profile, cohort or browser storage.
 
@@ -62,9 +64,9 @@ RedditWatch currently uses FetchLayer's known-thread endpoint for full thread en
 
 ## Cache and privacy
 
-Source corpora are cached by normalized request hash for six hours by default. Cache files live under the runner's gitignored `data/culture-import-cache` directory unless the caller chooses another private directory. Writes are atomic and request owner-only permissions where supported.
+Source corpora are cached by normalized request hash for six hours by default. Cache files live under the runner's gitignored `data/culture-import-cache` directory unless the caller chooses another private directory. Writes are atomic and request owner-only permissions where supported. The cache records the normalized source request for new entries so a later compatible, narrower request can be answered locally from the same corpus.
 
-The cache contains public Reddit text, public usernames, scores, timestamps and source relationships received from FetchLayer. It must remain private runtime data and must not be committed. Delete the cache directory to remove it. Expired data is not used for a normal import, although a later maintenance pass may add bounded automatic deletion. Hosted `FETCHLAYER_API_KEY` and the desktop secret-store value stay server-side and are never placed in the cache, browser response, provider prompt or importer result.
+The cache contains public Reddit text, public usernames, scores, timestamps and source relationships received from FetchLayer. It must remain private runtime data and must not be committed. Delete the cache directory to remove it. Expiry marks a sample stale rather than silently triggering a paid retrieval: stale samples remain reviewable with their age and completeness shown. `Use matching saved sample` is cache-only and reports a miss without network activity. `Retrieve fresh source sample` is the separate explicit action that bypasses saved data. Hosted `FETCHLAYER_API_KEY` and the desktop secret-store value stay server-side and are never placed in the cache, browser response, provider prompt or importer result.
 
 Provider prompts use anonymous labels such as `contributor-1`; candidate-generation prompts never include Reddit usernames. The analysis prompt explicitly prohibits diagnosis, protected-characteristic inference and claims about hidden motives. Generated bots are fictional composites, not replicas of source contributors.
 
@@ -107,6 +109,8 @@ The returned object contains:
 - `integration`: an explicit reminder that staging is available only as a separate action.
 
 The component methods `fetchCorpus`, `analyseCulture`, `selectContributors`, `selectInfluences` and `generateCandidates` are also public for a staged UI or service integration. `selectInfluences` accepts contributor labels and archetype names and returns a filtered analysis view without mutating the full evidence. `generateCandidates` accepts the same selections directly. Errors use stable `code` and `phase` fields. Every long-running method accepts an `AbortSignal` and progress callback.
+
+`POST /api/culture-imports` retains its ordinary explicit-fetch behavior. Passing `{ "restore": true }` selects the owner's newest saved workspace or reconstructs one from the newest private cache entry. This restore form does not invoke the source adapter transport. Passing `cacheOnly: true` on an ordinary source request permits exact or compatible cache reuse but returns `FETCHLAYER_CACHE_MISS` instead of retrieving when no saved sample is available.
 
 ## Explicit staging bridge
 

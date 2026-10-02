@@ -192,10 +192,60 @@ async function run() {
     'browser staging body contains edits to compact seed fields, never rich review metadata');
   eq(stageBody.selected, [0], 'only selected candidate indexes enter the staging request');
 
+  const browserStorage = {
+    value: '',
+    getItem() { return this.value; },
+    setItem(_key, value) { this.value = value; },
+  };
+  ui.writeClientState(browserStorage, {
+    sessionId: 'safe-session-id',
+    form: { subreddit: 'ExampleSub', maxPosts: 25, fetchLayerApiKey: 'must-not-persist' },
+    candidateDrafts: {
+      ...drafts,
+      1: { selected: true, seed: { ...seed('safe_bot'), privateEvidence: 'must-not-persist' } },
+    },
+    contributorLabels: ['contributor-1'],
+    archetypes: ['confident absurdist'],
+    managementLink: 'https://example.test/#manage=must-not-persist',
+    fetchLayerApiKey: 'must-not-persist',
+  });
+  ok(!browserStorage.value.includes('must-not-persist'),
+    'browser workspace persistence allowlists source settings and compact seed fields, excluding credentials and rich evidence');
+  eq(ui.readClientState(browserStorage).sessionId, 'safe-session-id',
+    'browser refresh retains only the opaque backend workspace reference and review state');
+
+  const restoreRequests = [];
+  const restoreController = ui.createController({
+    storage: { getItem() { return null; }, setItem() {} },
+    getDeveloperTools: () => true,
+    getPlacement: () => 'desktop',
+    getProviders: () => [],
+    toast() {},
+    async api(route, options) {
+      restoreRequests.push({ route, options });
+      return {
+        session: {
+          id: 'restored-session', createdAt: '2026-10-02T12:00:00.000Z', updatedAt: '2026-10-02T12:00:00.000Z',
+          input: { subreddit: 'ExampleSub', maxPosts: 25, maxComments: 100 }, task: null,
+          source: { available: true, subreddit: 'ExampleSub', posts: 25, comments: 100, warnings: [], cache: {} },
+          sourceStatus: { state: 'available', message: 'Restored.' }, analysis: null, candidates: [], staging: null,
+        },
+      };
+    },
+  });
+  restoreController.open({ innerHTML: '', querySelector() { return null; }, querySelectorAll() { return []; } });
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  eq(restoreRequests, [{ route: '/api/culture-imports', options: { method: 'POST', body: { restore: true } } }],
+    'opening the importer asks only for saved-work restoration and does not start retrieval');
+  eq(restoreController.workflow.session.id, 'restored-session',
+    'the restored backend workspace replaces the empty browser workflow after refresh');
+
   const importer = mockImporter();
   let now = Date.parse('2026-10-02T12:00:00.000Z');
   const sessions = createCultureImportUiSessions({
     importer,
+    persistence: false,
     now: () => now,
     makeId: () => 'culture-session-1',
     existingSeeds: () => [seed('existing_bot')],
@@ -207,6 +257,7 @@ async function run() {
   session = await sessions.wait('operator-1', session.id);
   eq(session.task.state, 'completed', 'source fetch reaches a durable reviewable session state');
   eq(session.source, {
+    available: true,
     subreddit: 'ExampleSub',
     fetchedAt: '2026-10-02T12:00:00.000Z',
     window: { since: '2026-09-01T00:00:00.000Z' },
@@ -215,7 +266,10 @@ async function run() {
     provider: '',
     complete: true,
     warnings: [],
-    cache: { key: 'fixture-cache', hit: true },
+    cache: {
+      key: 'fixture-cache', hit: true, state: '', reused: '',
+      storedAt: '', expiresAt: null, ageMs: 0,
+    },
   }, 'browser session receives bounded source counts and provenance rather than the raw corpus');
   ok(!Object.hasOwn(session, 'corpus'), 'raw source corpus is never exposed by the UI session');
 
@@ -284,6 +338,7 @@ async function run() {
 
   const failingSessions = createCultureImportUiSessions({
     importer: mockImporter({ fetchFailure: true }),
+    persistence: false,
     makeId: () => 'failing-session',
   });
   failingSessions.create('operator-1', { subreddit: 'ExampleSub' });
@@ -303,6 +358,7 @@ async function run() {
   });
   const cancellingSessions = createCultureImportUiSessions({
     importer: cancellingImporter,
+    persistence: false,
     makeId: () => 'cancelling-session',
   });
   cancellingSessions.create('operator-1', { subreddit: 'ExampleSub' });
@@ -324,6 +380,7 @@ async function run() {
   });
   const lateSessions = createCultureImportUiSessions({
     importer: lateImporter,
+    persistence: false,
     makeId: () => 'late-session',
   });
   lateSessions.create('operator-1', { subreddit: 'LateSub' });

@@ -422,6 +422,7 @@ lib/providers/deepseek.js DeepSeek client: OpenAI-compatible, Bearer auth, 401/4
 lib/feddit.js             Feddit /api/v1 client: browser UA, 429 handling, register/read/write
 lib/gdelt.js              shared GDELT DOC 2.0 client: single 20s-spaced request queue, 15min cache, in-queue retry on a throttle (~5 tries/~90s) with stale-cache fallback (article sharing)
 lib/population.js         hosted-only staged AI system-population controller using the existing durable compute queue
+lib/culture-importer/workspace-store.js atomic private importer review-workspace persistence
 public/index.html         self-contained vanilla-JS control panel (no CDN, no build)
 public/ui-culture-importer.js Developer-tools review workflow for the private subreddit-culture importer
 public/population.html    operator-only cohort inspection, staging, activation and optional Developer tools rehearsal page
@@ -636,7 +637,7 @@ GET    /api/session                       validate the current private managemen
 POST   /api/session/recover               rotate a workspace link using its recovery code
 POST   /api/activity                      refresh authenticated owner activity and activity cookie
 GET    /api/activity.gif                  capability-limited Feddit visit marker (no page/referrer data)
-POST   /api/culture-imports               start a private bounded source fetch session
+POST   /api/culture-imports               start a private cache-only/fresh source action, or restore saved work with {restore:true}
 GET    /api/culture-imports/:id           read private importer progress and review state
 POST   /api/culture-imports/:id/analyse   analyse the cached source with a selected connected provider/model
 POST   /api/culture-imports/:id/generate  generate bounded fictional candidates from selected influences
