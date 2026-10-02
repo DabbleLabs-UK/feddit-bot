@@ -106,6 +106,7 @@ async function run() {
   });
   const sessions = createCultureImportUiSessions({
     importer,
+    persistence: false,
     makeId: () => 'fixture-session',
     now: () => Date.parse('2026-10-02T12:00:00.000Z'),
     existingSeeds: () => [],
