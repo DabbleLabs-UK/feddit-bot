@@ -179,6 +179,24 @@
     return String(progress.message || task.state || '');
   }
 
+  function sessionRenderFingerprint(session) {
+    const value = session && typeof session === 'object' ? session : {};
+    return JSON.stringify({
+      input: value.input,
+      source: value.source,
+      sourceStatus: value.sourceStatus,
+      analysis: value.analysis,
+      analysisProvider: value.analysisProvider,
+      review: value.review,
+      candidates: value.candidates,
+      rejected: value.rejected,
+      warnings: value.warnings,
+      staging: value.staging,
+      generationCapacity: value.generationCapacity,
+      generationBatches: value.generationBatches,
+    });
+  }
+
   function requireSession(session) {
     if (!session || typeof session !== 'object' || !session.id) {
       throw new Error('The importer returned an invalid session.');
@@ -217,6 +235,7 @@
       restoring: false,
       restored: false,
       savedSessionId: '',
+      disclosureState: {},
     };
   }
 
@@ -290,6 +309,7 @@
       ? (typeof localStorage !== 'undefined' ? localStorage : null)
       : options.storage;
     const storageKey = String(options.storageKey || CLIENT_STATE_KEY);
+    const pollWait = options.pollWait || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
     const workflow = defaultWorkflow();
     const savedClientState = readClientState(storage, storageKey);
     if (savedClientState) {
@@ -300,6 +320,8 @@
       workflow.archetypes = new Set(savedClientState.archetypes);
     }
     let root = null;
+    let hasRenderedImporter = false;
+    let lastRenderedSessionId = '';
 
     function persistClientState() {
       return writeClientState(storage, {
@@ -331,6 +353,16 @@
     function sessionTaskRunning() {
       const state = workflow.session && workflow.session.task && workflow.session.task.state;
       return state === 'running' || state === 'cancelling';
+    }
+
+    function disclosureOpen(key, defaultOpen) {
+      return Object.prototype.hasOwnProperty.call(workflow.disclosureState, key)
+        ? workflow.disclosureState[key] === true
+        : defaultOpen === true;
+    }
+
+    function disclosureAttribute(key, defaultOpen) {
+      return disclosureOpen(key, defaultOpen) ? ' open' : '';
     }
 
     function sourceHtml() {
@@ -397,7 +429,7 @@
         }).join('') + '</div>' +
         (archetypes.length ? '<h3>Archetypes and social roles</h3><div class="culture-chip-list">' + archetypes.map((item) =>
           '<label><input type="checkbox" data-culture-archetype="' + esc(item) + '"' + (workflow.archetypes.has(item) ? ' checked' : '') + '> ' + esc(item) + '</label>').join('') + '</div>' : '') +
-        '<details class="culture-raw"><summary>Developer diagnostic: normalized analysis</summary><pre>' + esc(JSON.stringify(analysis, null, 2)) + '</pre></details>';
+        '<details class="culture-raw" data-culture-disclosure="analysis-raw"' + disclosureAttribute('analysis-raw', false) + '><summary>Developer diagnostic: normalized analysis</summary><pre>' + esc(JSON.stringify(analysis, null, 2)) + '</pre></details>';
     }
 
     function fieldInput(index, seed, field, label, type) {
@@ -413,7 +445,8 @@
       const seed = draft.seed;
       const metadata = candidate.importerMetadata || {};
       const abilities = seed.abilities || {};
-      return '<details class="culture-candidate" open><summary><label><input type="checkbox" data-candidate-selected="' + index + '"' +
+      const disclosureKey = 'candidate:' + String(candidate.id || index);
+      return '<details class="culture-candidate" data-culture-disclosure="' + esc(disclosureKey) + '"' + disclosureAttribute(disclosureKey, true) + '><summary><label><input type="checkbox" data-candidate-selected="' + index + '"' +
         (draft.selected ? ' checked' : '') + '> Stage ' + esc(seed.username || 'candidate ' + (index + 1)) + '</label><span>' + esc(seed.biography || '') + '</span></summary>' +
         '<div class="culture-candidate-body"><div class="grid">' +
         fieldInput(index, seed, 'username', 'Feddit username') +
@@ -464,8 +497,77 @@
         '<div class="culture-candidates">' + candidates.map(candidateHtml).join('') + '</div>';
     }
 
+    function progressRegionHtml() {
+      return progressHtml() +
+        (workflow.restoring ? '<div class="culture-progress" role="status"><span class="dot warn"></span><span>Restoring saved importer work...</span></div>' : '');
+    }
+
+    function captureFocus() {
+      if (!root || !root.ownerDocument) return null;
+      const active = root.ownerDocument.activeElement;
+      if (!active || (typeof root.contains === 'function' && !root.contains(active))) return null;
+      let selector = '';
+      if (active.id) selector = '#' + active.id;
+      else if (active.dataset && active.dataset.candidateIndex != null && active.dataset.seedField) {
+        selector = '[data-candidate-index="' + active.dataset.candidateIndex + '"][data-seed-field="' + active.dataset.seedField + '"]';
+      } else if (active.dataset && active.dataset.candidateSelected != null) {
+        selector = '[data-candidate-selected="' + active.dataset.candidateSelected + '"]';
+      } else if (active.dataset && active.dataset.cultureContributor != null) {
+        return { collection: '[data-culture-contributor]', key: 'cultureContributor', value: active.dataset.cultureContributor };
+      } else if (active.dataset && active.dataset.cultureArchetype != null) {
+        return { collection: '[data-culture-archetype]', key: 'cultureArchetype', value: active.dataset.cultureArchetype };
+      }
+      if (!selector) return null;
+      return {
+        selector,
+        start: Number.isInteger(active.selectionStart) ? active.selectionStart : null,
+        end: Number.isInteger(active.selectionEnd) ? active.selectionEnd : null,
+        direction: active.selectionDirection || 'none',
+      };
+    }
+
+    function restoreFocus(snapshot) {
+      if (!snapshot || !root) return;
+      const element = snapshot.collection
+        ? [...root.querySelectorAll(snapshot.collection)].find((candidate) =>
+          candidate.dataset && candidate.dataset[snapshot.key] === snapshot.value)
+        : root.querySelector(snapshot.selector);
+      if (!element || typeof element.focus !== 'function') return;
+      try { element.focus({ preventScroll: true }); } catch { element.focus(); }
+      if (snapshot.start != null && typeof element.setSelectionRange === 'function') {
+        try { element.setSelectionRange(snapshot.start, snapshot.end, snapshot.direction); } catch { /* unsupported input type */ }
+      }
+    }
+
+    function captureInteractiveState() {
+      if (!root) return null;
+      const focus = captureFocus();
+      captureForm(false);
+      root.querySelectorAll('[data-culture-contributor]').forEach((element) => {
+        if (element.checked) workflow.contributorLabels.add(element.dataset.cultureContributor);
+        else workflow.contributorLabels.delete(element.dataset.cultureContributor);
+      });
+      root.querySelectorAll('[data-culture-archetype]').forEach((element) => {
+        if (element.checked) workflow.archetypes.add(element.dataset.cultureArchetype);
+        else workflow.archetypes.delete(element.dataset.cultureArchetype);
+      });
+      root.querySelectorAll('[data-candidate-selected]').forEach((element) => {
+        updateCandidateDraft(workflow.candidateDrafts, Number(element.dataset.candidateSelected), 'selected', element.checked);
+      });
+      root.querySelectorAll('[data-candidate-index][data-seed-field]').forEach((element) => {
+        const value = element.type === 'checkbox' ? element.checked : element.value;
+        updateCandidateDraft(workflow.candidateDrafts, Number(element.dataset.candidateIndex), element.dataset.seedField, value);
+      });
+      persistClientState();
+      return focus;
+    }
+
     function render() {
       if (!root) return;
+      const sessionId = workflow.session && workflow.session.id || '';
+      const focus = hasRenderedImporter && sessionId === lastRenderedSessionId
+        ? captureInteractiveState()
+        : null;
       if (!allowed()) {
         root.innerHTML = '<div class="empty">The culture importer is available only in Developer tools' +
           (getPlacement() === 'hosted' ? ' for the population operator.' : '.') + '</div>';
@@ -493,9 +595,8 @@
         '<p class="lead">Mine a bounded public community sample into reviewable fictional composite Feddit characters. Fetching and generation never stage or activate anything.</p>' +
         '<p class="hint">Saved work is restored privately on reopen. Restoration never retrieves source data, calls an AI provider, or repeats staging.</p>' +
         '<p class="hint">Cancel stops the review step and discards late output. Provider work already accepted by hosted compute may still finish safely in its durable queue.</p></div>' +
-        '<button type="button" id="cultureBackBtn">Back to bots</button></div>' + progressHtml() +
-        (workflow.restoring ? '<div class="culture-progress" role="status"><span class="dot warn"></span><span>Restoring saved importer work...</span></div>' : '') +
-        '<details class="section progressive" open><summary>1. Source sample</summary><div class="progressive-body"><div class="grid">' +
+        '<button type="button" id="cultureBackBtn">Back to bots</button></div><div id="cultureProgressRegion">' + progressRegionHtml() + '</div>' +
+        '<details class="section progressive" data-culture-disclosure="source"' + disclosureAttribute('source', true) + '><summary>1. Source sample</summary><div class="progressive-body"><div class="grid">' +
         '<div class="field"><label for="cultureSubreddit">Subreddit</label><input id="cultureSubreddit" value="' + esc(workflow.form.subreddit) + '" placeholder="for example, CasualUK"></div>' +
         '<div class="field"><label for="cultureWindow">Recent window</label><select id="cultureWindow">' +
         [[7, 'Last 7 days'], [30, 'Last 30 days'], [90, 'Last 90 days'], [0, 'As much as the bounded listing returns']].map((item) =>
@@ -505,15 +606,15 @@
         '<div class="row"><button type="button" class="primary" id="cultureFetchBtn"' + (running || workflow.restoring ? ' disabled' : '') + '>Use matching saved sample</button>' +
         '<button type="button" id="cultureRefreshBtn"' + (running || workflow.restoring ? ' disabled' : '') + '>Retrieve fresh source sample</button></div>' +
         '<p class="hint">The saved-cache action reuses a compatible private corpus where possible. Only Retrieve fresh source sample deliberately bypasses it and makes a new upstream request.</p>' + sourceHtml() + '</div></details>' +
-        '<details class="section progressive"' + (sourceReady ? ' open' : '') + '><summary>2. Culture and influences</summary><div class="progressive-body">' +
+        '<details class="section progressive" data-culture-disclosure="analysis"' + disclosureAttribute('analysis', sourceReady) + '><summary>2. Culture and influences</summary><div class="progressive-body">' +
         providerHtml() + '<div class="row"><button type="button" class="primary" id="cultureAnalyseBtn"' + (!sourceReady || running || !provider.provider ? ' disabled' : '') + '>Analyse community culture</button></div>' + analysisHtml() + '</div></details>' +
-        '<details class="section progressive"' + (analysisReady ? ' open' : '') + '><summary>3. Generate fictional candidates</summary><div class="progressive-body"><div class="grid">' +
+        '<details class="section progressive" data-culture-disclosure="generation"' + disclosureAttribute('generation', analysisReady) + '><summary>3. Generate fictional candidates</summary><div class="progressive-body"><div class="grid">' +
         '<div class="field"><label for="cultureCandidateCount">Characters to add</label><input id="cultureCandidateCount" type="number" min="1" max="' + Math.max(1, generationRemaining) + '" value="' + esc(generationValue) + '"' + (generationRemaining ? '' : ' disabled') + '></div>' +
         '<div class="field"><label for="cultureCommunities">Target Feddit communities</label><input id="cultureCommunities" value="' + esc(workflow.form.communities) + '" placeholder="botlife, casualUK"></div></div>' +
         '<button type="button" class="primary" id="cultureGenerateBtn"' + (!analysisReady || running || !provider.provider || !generationRemaining ? ' disabled' : '') + '>' + (candidatesReady ? 'Generate and append characters' : 'Generate candidate characters') + '</button>' +
         '<p class="hint">Collection: ' + Number(generationCapacity.used || 0) + ' of ' + Number(generationCapacity.limit || MAX_CANDIDATE_COLLECTION) + '. Requests are split into provider batches of at most 6 and each completed batch is saved. Existing analysis and candidates are reused; this action does not retrieve source data, re-analyse culture or stage anything.</p></div></details>' +
-        '<details class="section progressive"' + (candidatesReady ? ' open' : '') + '><summary>4. Review and edit candidates</summary><div class="progressive-body">' + candidatesHtml() + '</div></details>' +
-        '<details class="section progressive"' + (candidatesReady ? ' open' : '') + '><summary>5. Stage selected candidates</summary><div class="progressive-body">' +
+        '<details class="section progressive" data-culture-disclosure="review"' + disclosureAttribute('review', candidatesReady) + '><summary>4. Review and edit candidates</summary><div class="progressive-body">' + candidatesHtml() + '</div></details>' +
+        '<details class="section progressive" data-culture-disclosure="staging"' + disclosureAttribute('staging', candidatesReady) + '><summary>5. Stage selected candidates</summary><div class="progressive-body">' +
         (placement === 'desktop' ? '<div class="field full"><label for="cultureStagingDestination">Create bots in</label><select id="cultureStagingDestination">' +
           '<option value="local"' + (stagingDestination === 'local' ? ' selected' : '') + '>This desktop app</option>' +
           '<option value="hosted"' + (stagingDestination === 'hosted' ? ' selected' : '') + '>Hosted Feddit Bots workspace</option></select>' +
@@ -525,20 +626,32 @@
         '<p class="hint">Select 1-' + STAGING_SELECTION_LIMIT + ' candidates per explicit staging action. Larger selections are rejected and never split automatically. Staged bots remain disabled and in rehearsal until separately reviewed and activated through normal population controls.</p>' +
         stagingResultsHtml() + '</div></details></div>';
       bind();
+      restoreFocus(focus);
+      hasRenderedImporter = true;
+      lastRenderedSessionId = sessionId;
     }
 
-    function captureForm() {
-      const value = (id) => root.querySelector(id) && root.querySelector(id).value;
-      workflow.form.subreddit = value('#cultureSubreddit') || workflow.form.subreddit;
-      workflow.form.maxPosts = Number(value('#culturePostCount')) || workflow.form.maxPosts;
-      workflow.form.maxComments = Number(value('#cultureCommentCount')) || workflow.form.maxComments;
-      workflow.form.windowDays = Number(value('#cultureWindow'));
-      workflow.form.candidateCount = Number(value('#cultureCandidateCount')) || workflow.form.candidateCount;
-      workflow.form.communities = value('#cultureCommunities') || workflow.form.communities;
-      workflow.form.providerChoice = value('#cultureProvider') || workflow.form.providerChoice;
-      workflow.form.stagingDestination = normalizedStagingDestination(getPlacement(), value('#cultureStagingDestination') || workflow.form.stagingDestination);
-      if (root.querySelector('#cultureManagementLink')) workflow.managementLink = value('#cultureManagementLink') || '';
-      persistClientState();
+    function captureForm(persist = true) {
+      const assignText = (selector, field) => {
+        const element = root && root.querySelector(selector);
+        if (element) workflow.form[field] = element.value;
+      };
+      const assignNumber = (selector, field) => {
+        const element = root && root.querySelector(selector);
+        if (element) workflow.form[field] = element.value === '' ? '' : Number(element.value);
+      };
+      assignText('#cultureSubreddit', 'subreddit');
+      assignNumber('#culturePostCount', 'maxPosts');
+      assignNumber('#cultureCommentCount', 'maxComments');
+      assignNumber('#cultureWindow', 'windowDays');
+      assignNumber('#cultureCandidateCount', 'candidateCount');
+      assignText('#cultureCommunities', 'communities');
+      assignText('#cultureProvider', 'providerChoice');
+      const destination = root && root.querySelector('#cultureStagingDestination');
+      if (destination) workflow.form.stagingDestination = normalizedStagingDestination(getPlacement(), destination.value);
+      const managementLink = root && root.querySelector('#cultureManagementLink');
+      if (managementLink) workflow.managementLink = managementLink.value;
+      if (persist) persistClientState();
     }
 
     function fetchBody(refresh) {
@@ -561,7 +674,7 @@
       const hadCandidates = Boolean(sameSession && workflow.session && workflow.session.candidates && workflow.session.candidates.length);
       workflow.session = session;
       workflow.savedSessionId = session.id;
-      if (session.input) {
+      if (!sameSession && session.input) {
         workflow.form.subreddit = session.input.subreddit || workflow.form.subreddit;
         workflow.form.maxPosts = Number(session.input.maxPosts) || workflow.form.maxPosts;
         workflow.form.maxComments = Number(session.input.maxComments) || workflow.form.maxComments;
@@ -571,13 +684,13 @@
           workflow.form.windowDays = [7, 30, 90].sort((left, right) => Math.abs(left - days) - Math.abs(right - days))[0];
         }
       }
-      if (session.review) {
+      if (!sameSession && session.review) {
         workflow.form.candidateCount = Number(session.review.count) || workflow.form.candidateCount;
         workflow.form.communities = (session.review.targetCommunities || []).join(', ') || workflow.form.communities;
         workflow.form.providerChoice = providerValue(session.review);
         workflow.contributorLabels = new Set(session.review.contributorLabels || []);
         workflow.archetypes = new Set(session.review.archetypes || []);
-      } else if (session.analysisProvider && session.analysisProvider.provider) {
+      } else if (!sameSession && session.analysisProvider && session.analysisProvider.provider) {
         workflow.form.providerChoice = providerValue(session.analysisProvider);
       }
       if (session.candidates && session.candidates.length) {
@@ -617,10 +730,15 @@
       workflow.polling = true;
       try {
         while (sessionTaskRunning()) {
-          await new Promise((resolve) => setTimeout(resolve, 650));
+          const previousFingerprint = sessionRenderFingerprint(workflow.session);
+          const previouslyRunning = sessionTaskRunning();
+          await pollWait(650);
           const response = await api('/api/culture-imports/' + encodeURIComponent(workflow.session.id));
           applySession(response.session);
-          render();
+          const needsFullRender = previousFingerprint !== sessionRenderFingerprint(workflow.session) ||
+            previouslyRunning !== sessionTaskRunning();
+          if (needsFullRender) render();
+          else updateProgress();
         }
         if (workflow.session.task && workflow.session.task.state === 'failed') {
           toast(progressLabel(workflow.session.task), 'err');
@@ -629,8 +747,29 @@
         toast('Could not refresh importer progress: ' + error.message, 'err');
       } finally {
         workflow.polling = false;
-        render();
+        updateProgress();
       }
+    }
+
+    async function cancelTask() {
+      try {
+        const response = await api('/api/culture-imports/' + encodeURIComponent(workflow.session.id) + '/cancel', { method: 'POST', body: {} });
+        applySession(response.session);
+        render();
+      } catch (error) { toast(error.message, 'err'); }
+    }
+
+    function bindProgress() {
+      const cancel = root && root.querySelector('#cultureCancelBtn');
+      if (cancel) cancel.addEventListener('click', cancelTask);
+    }
+
+    function updateProgress() {
+      if (!root) return;
+      const region = root.querySelector('#cultureProgressRegion');
+      if (!region) return render();
+      region.innerHTML = progressRegionHtml();
+      bindProgress();
     }
 
     async function start(path, body) {
@@ -682,13 +821,7 @@
           archetypes: [...workflow.archetypes],
         });
       });
-      on('#cultureCancelBtn', 'click', async () => {
-        try {
-          const response = await api('/api/culture-imports/' + encodeURIComponent(workflow.session.id) + '/cancel', { method: 'POST', body: {} });
-          applySession(response.session);
-          render();
-        } catch (error) { toast(error.message, 'err'); }
-      });
+      bindProgress();
       on('#cultureStageBtn', 'click', async () => {
         captureForm();
         const destination = normalizedStagingDestination(getPlacement(), workflow.form.stagingDestination);
@@ -739,6 +872,11 @@
       });
       ['#cultureSubreddit', '#culturePostCount', '#cultureCommentCount', '#cultureWindow', '#cultureCandidateCount', '#cultureCommunities', '#cultureManagementLink']
         .forEach((selector) => on(selector, 'input', captureForm));
+      root.querySelectorAll('details[data-culture-disclosure]').forEach((element) => {
+        element.addEventListener('toggle', () => {
+          workflow.disclosureState[element.dataset.cultureDisclosure] = element.open === true;
+        });
+      });
     }
 
     return {
@@ -773,6 +911,7 @@
     stagingBody,
     cultureGroups,
     progressLabel,
+    sessionRenderFingerprint,
     requireSession,
     stagingResultRows,
     providerValue,
