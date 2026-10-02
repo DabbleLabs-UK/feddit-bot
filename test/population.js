@@ -8,6 +8,7 @@ const path = require('node:path');
 const {
   MAX_COHORT_SIZE,
   MAX_COHORT_DIRECTION_LENGTH,
+  CREATOR_TIMEOUT_MS,
   SIMILARITY_THRESHOLD,
   closestSeed,
   createPopulationController,
@@ -315,6 +316,10 @@ async function run() {
     ok(requests[0].prompt.includes(cohortDirection), 'the bounded operator direction reaches the seed-generation prompt');
     ok(requests[0].prompt.includes('shittyaskfeddit'), 'the requested real community is available to population generation');
     ok(requests[0].prompt.includes('distinctly for this candidate'), 'shared direction still requires differentiated candidates');
+    ok(requests[0].prompt.includes('compact single-line JSON under 2200 characters'),
+      'creator output is explicitly bounded below the live truncation threshold');
+    eq(requests[0].timeoutMs, CREATOR_TIMEOUT_MS,
+      'one-off strong creator work receives the bounded long-running timeout');
     ok(requests[0].prompt.includes('Reply to discussions: must be disabled'),
       'hard reply constraint reaches the seed-generation prompt');
     ok(requests[0].prompt.includes('Share article links: must be enabled'),
@@ -326,11 +331,18 @@ async function run() {
 
     jobs.set('job-1', {
       id: 'job-1', status: 'completed',
-      result: { text: JSON.stringify({ ...candidate(), hiddenReasoning: 'RAW-CHAIN-OF-THOUGHT-SENTINEL' }) },
+      result: { text: JSON.stringify({
+        username: candidate().username,
+        abilities: candidate().abilities,
+        creatorProfile: candidate().creatorProfile,
+        hiddenReasoning: 'RAW-CHAIN-OF-THOUGHT-SENTINEL',
+      }) },
     });
     await lifecycle.tick();
     eq(requests.length, 2, 'community discovery follows the accepted character before another seed is queued');
     eq(requests[1].kind, 'population-community-discovery', 'community choice uses a distinct bounded durable job');
+    eq(requests[1].timeoutMs, CREATOR_TIMEOUT_MS,
+      'community discovery through the strong creator receives the same bounded timeout');
     ok(requests[1].prompt.includes('feddit-active-communities'),
       'community discovery reuses the exact human-visible active-community exposure source');
 
@@ -371,6 +383,8 @@ async function run() {
     eq(ready.candidates[1].duplicateRegenerations, 1, 'duplicate regeneration is visible in provenance');
     ok(ready.candidates.every((item) => item.creatorProfile && item.runtimeKernel),
       'rich creator profiles remain separate from compact runtime kernels');
+    eq(ready.candidates[0].seed.biography, candidate().creatorProfile.summary,
+      'compact creator output derives compatibility seed fields from the rich profile');
     ok(ready.candidates.every((item) => item.communityAffinities.some((entry) => entry.state === 'favored')),
       'each generated character finishes with a bounded persisted favored community');
     ok(ready.activityDistribution && ready.activityDistribution.bots === 2,
