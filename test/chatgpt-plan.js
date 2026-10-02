@@ -9,6 +9,7 @@ const {
   DYNAMIC_CLIENT_ID,
   DIRECT_SCOPE,
   parseResponsesStream,
+  safeErrorDetail,
   validateIdToken,
   createChatgptPlanProvider,
 } = require('../lib/providers/chatgpt-plan');
@@ -106,6 +107,12 @@ function signedToken(privateKey, kid, claims) {
   ].join('\n'));
   assert.equal(completed.text, 'Hello there');
   assert.equal(completed.responseId, 'resp_1');
+  const completedStructured = parseResponsesStream([
+    'data: {"type":"response.completed","response":{"id":"resp_structured","output":[{"content":[{"type":"output_text","text":"{\\"ok\\":true}"}]}]}}',
+    '',
+  ].join('\n'));
+  assert.equal(completedStructured.text, '{"ok":true}',
+    'a completed structured response is recovered from the final response envelope');
   assert.throws(
     () => parseResponsesStream('data: {"type":"response.failed","error":{"code":"subscription_sharing_usage_limit_exceeded","message":"limit"}}'),
     (error) => error.code === 'ALLOWANCE_EXHAUSTED' && error.status === 429,
@@ -159,11 +166,51 @@ function signedToken(privateKey, kid, claims) {
   const generationBody = JSON.parse(generationCall.options.body);
   assert.deepEqual(generationBody, {
     model: 'gpt-test',
-    input: 'User instruction',
+    input: [{ role: 'user', content: 'User instruction' }],
     store: false,
     stream: true,
     instructions: 'System instruction',
   }, 'unsupported temperature and output-token options are not sent to the plan endpoint');
+  assert.equal(generationBody.input[0].role, 'user');
+  assert.equal(generationBody.input[0].content, 'User instruction');
+
+  const detailProvider = createChatgptPlanProvider({
+    secrets: makeSecrets({
+      id: 'detail-account',
+      clientId: 'oaiapp_detail',
+      subject: 'detail-subject',
+      accessToken: 'secret-access-token-for-test',
+      refreshToken: 'secret-refresh-token-for-test',
+      idToken: 'secret-id-token-for-test',
+      expiresAt: now + 3600000,
+      scopes: [DIRECT_SCOPE],
+      models: [{ id: 'gpt-test', label: 'GPT Test' }],
+    }),
+    placement: 'desktop',
+    now: () => now,
+    fetchImpl: async (url) => {
+      if (String(url) === API_BASE + '/responses') {
+        return jsonResponse({
+          detail: 'Invalid input near Bearer bearer-secret and secret-access-token-for-test; access_token=sk-project-secret12345 ' + 'x'.repeat(400),
+        }, 400);
+      }
+      throw new Error('Unexpected fetch ' + url);
+    },
+  });
+  await assert.rejects(
+    () => detailProvider.generate({ prompt: 'safe prompt', model: 'gpt-test' }),
+    (error) => {
+      assert.equal(error.code, 'REQUEST_FAILED');
+      assert.equal(error.status, 400);
+      assert.match(error.message, /Invalid input near Bearer \[redacted\]/);
+      assert.equal(error.message.includes('secret-access-token-for-test'), false);
+      assert.equal(error.message.includes('bearer-secret'), false);
+      assert.equal(error.message.includes('sk-project-secret12345'), false);
+      assert.ok(error.message.length < 320, 'provider diagnostics remain bounded');
+      return true;
+    },
+  );
+  assert.equal(safeErrorDetail({ message: 'safe detail' }), 'safe detail');
 
   const reconnect = await provider.beginConnect();
   const authUrl = new URL(reconnect.authUrl);
