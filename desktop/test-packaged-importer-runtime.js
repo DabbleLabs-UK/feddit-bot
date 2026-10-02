@@ -399,7 +399,7 @@ globalThis.fetch = async (input, options = {}) => {
       document.getElementById('culturePostCount').value = '2';
       document.getElementById('cultureCommentCount').value = '2';
       document.getElementById('cultureWindow').value = '7';
-      document.getElementById('cultureFetchBtn').click();
+      document.getElementById('cultureRefreshBtn').click();
       return true;
     })()`);
     const missingKey = await waitForValue(cdp, `(() => ({
@@ -463,7 +463,7 @@ globalThis.fetch = async (input, options = {}) => {
       document.getElementById('culturePostCount').value = '2';
       document.getElementById('cultureCommentCount').value = '2';
       document.getElementById('cultureWindow').value = '7';
-      document.getElementById('cultureFetchBtn').click();
+      document.getElementById('cultureRefreshBtn').click();
       return true;
     })()`);
     const retrieved = await waitForValue(cdp, `(() => ({
