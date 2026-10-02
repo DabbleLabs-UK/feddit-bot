@@ -287,16 +287,73 @@ async function run() {
       creatorProvider: '',
       creatorModel: '',
     });
-    assert.throws(() => unconfigured.createCohort(1), /No strong character creator is configured/,
+    await assert.rejects(() => unconfigured.createCohort(1), /No connected strong character creator is available/,
       'population generation never silently falls back to the normal runtime model');
     checks++;
-    const explicitFallback = unconfigured.createCohort(1, '', {}, { allowRuntimeFallback: true });
+    const explicitFallback = await unconfigured.createCohort(1, '', {}, { allowRuntimeFallback: true });
     eq(explicitFallback.creator.model, 'shared-test-model',
       'operator may explicitly choose the normal runtime model when no strong creator is configured');
     eq(explicitFallback.creator.fallback, true, 'explicit runtime fallback is visible in cohort provenance');
     const controller = createPopulationController(options);
-    const created = controller.createCohort(99);
+    const created = await controller.createCohort(99);
     eq(created.requestedCount, MAX_COHORT_SIZE, 'cohort size is bounded even for an excessive request');
+
+    const directCalls = [];
+    const directStore = fakeStore();
+    const directController = createPopulationController({
+      ...options,
+      file: path.join(dir, 'direct-creator.json'),
+      profileStore: directStore,
+      feddit: {
+        ...feddit,
+        async register({ username }) {
+          return { ok: true, status: 201, data: { token: 'direct-token-' + username } };
+        },
+      },
+      runtimeProvider: 'ollama',
+      model: 'runtime-small',
+      providerStatuses: async () => [
+        {
+          id: 'ollama', label: 'Ollama', state: 'ready',
+          creator: { eligible: true, autoPreferred: false, preference: 50 },
+          models: [{ id: 'runtime-small', label: 'Runtime small' }],
+        },
+        {
+          id: 'chatgpt-plan', label: 'ChatGPT plan', state: 'ready',
+          creator: { eligible: true, autoPreferred: true, preference: 300 },
+          models: [{ id: 'gpt-creator', label: 'GPT creator' }],
+        },
+      ],
+      generateCreator: async (request) => {
+        directCalls.push(structuredClone(request));
+        return directCalls.length === 1
+          ? { provider: 'chatgpt-plan', model: 'gpt-creator', text: JSON.stringify(candidate()) }
+          : { provider: 'chatgpt-plan', model: 'gpt-creator', text: JSON.stringify({ choices: [
+            { id: 'C1', state: 'favored', strength: 0.9, reason: 'The character belongs in bot-life conversations.' },
+          ] }) };
+      },
+    });
+    const directCohort = await directController.createCohort(1);
+    eq(directCohort.creator.provider, 'chatgpt-plan',
+      'population generation uses the same automatic strong-creator preference policy');
+    eq(directCohort.creator.selectionMode, 'automatic-preferred',
+      'population cohort provenance records automatic preferred selection');
+    await directController.tick();
+    await directController.tick();
+    await directController.tick();
+    const directReady = directController.getCohort(directCohort.id);
+    eq(directReady.status, 'ready', 'a connected subscription creator completes the bounded population flow');
+    ok(directCalls.every((request) => request.providerOverride === 'chatgpt-plan' && request.model === 'gpt-creator'),
+      'both character creation and discovery stay on the selected creator provider and model');
+    eq(options.model, 'shared-test-model',
+      'creator selection does not mutate the configured bot runtime model');
+    const directStaged = await directController.stageCohort(directCohort.id);
+    eq(directStaged.status, 'staged', 'direct strong-creator output retains the normal explicit staging boundary');
+    const directProfile = directStore.profiles.find((profile) => profile.botOrigin === 'system');
+    eq([directProfile.provider, directProfile.model], ['ollama', 'runtime-small'],
+      'a strong creator never changes the staged bot runtime provider or model');
+    eq(directStore.profiles.find((profile) => profile.id === 'user-private').persona, 'PRIVATE-WORKSPACE-SENTINEL',
+      'AI character creation does not overwrite an existing manual persona');
 
     // Use a smaller isolated cohort for a readable sequential lifecycle.
     fs.rmSync(file, { force: true });
@@ -306,7 +363,7 @@ async function run() {
       strength: 'hard', activity: 'varied', balance: 'varied',
       reply: 'disabled', discuss: 'vary', links: 'enabled',
     };
-    const cohort = lifecycle.createCohort(2, cohortDirection, cohortConfiguration);
+    const cohort = await lifecycle.createCohort(2, cohortDirection, cohortConfiguration);
     await lifecycle.tick();
     eq(requests.length, 1, 'only one population generation is queued at a time');
     eq(requests[0].priority, 'background', 'population generation uses background queue priority');
@@ -415,7 +472,7 @@ async function run() {
         return structuredClone(job);
       },
     });
-    const failedDiscoveryCohort = failedDiscovery.createCohort(1);
+    const failedDiscoveryCohort = await failedDiscovery.createCohort(1);
     await failedDiscovery.tick();
     failedDiscoveryJobs.set('failed-discovery-job-1', {
       id: 'failed-discovery-job-1', status: 'completed',
@@ -449,6 +506,10 @@ async function run() {
       'staged profiles retain inspectable AI-population provenance');
     ok(systemProfiles.every((profile) => profile.creatorProvenance.model === 'strong-test-model'),
       'staged profiles retain creator provider and model provenance');
+    ok(systemProfiles.every((profile) => profile.creatorProvenance.selectionMode === 'configured-path' &&
+      profile.creatorProvenance.selectionReason && profile.creatorProvenance.selectedAt &&
+      profile.creatorProvenance.policyVersion === 1),
+    'staged profiles retain bounded creator-selection provenance without changing runtime prompts');
     ok(systemProfiles.every((profile) => profile.creatorProfile && profile.runtimeCharacterKernel),
       'staged profiles retain rich creator data separately from the runtime kernel');
     ok(systemProfiles.every((profile) => profile.communityAffinities.length >= 1),

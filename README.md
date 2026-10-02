@@ -478,6 +478,17 @@ Re-registration and identity transfer remain protected. System bots use the same
 explicit activation, but their hosted work remains in the spare-capacity
 synthetic allocation class.
 
+One-off AI character creation uses the same provider registry as ordinary bot
+generation but has a separate selection decision. An explicit operator creator
+provider/model wins. Otherwise, an already-connected high-capability ChatGPT or
+Claude subscription is preferred, then the configured hosted/local creator
+path. DeepSeek is never selected automatically merely because an API key is
+present, and the normal runtime-class model is used only after an explicit
+fallback choice. Creator provider/model, selection mode, short reason, policy
+version and timestamp are retained as provenance; the bot's ordinary runtime
+provider and model are not changed and selection metadata never enters its
+runtime prompt.
+
 The activity log is bounded to 50 entries. Scheduled simulation entries retain
 the complete proposed output (and bounded public source context for replies and
 news) so the owner can evaluate them in the control panel. Older runner versions

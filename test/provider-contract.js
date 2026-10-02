@@ -17,7 +17,16 @@ for (const id of providers.PROVIDERS) {
   assert.equal(typeof descriptor.capabilities.longLivedSession, 'boolean');
   assert.ok(Number(descriptor.capabilities.maxConcurrency) >= 0);
   assert.ok(Number(descriptor.capabilities.maxConcurrency) >= 1);
+  assert.equal(descriptor.creator.eligible, true, 'all generation providers declare creator eligibility explicitly');
+  assert.equal(typeof descriptor.creator.autoPreferred, 'boolean',
+    'creator auto-selection permission is provider capability metadata');
 }
+assert.equal(providers.providerDescriptor('chatgpt-plan').creator.autoPreferred, true,
+  'an already-connected ChatGPT plan may be preferred without PAYG fallback');
+assert.equal(providers.providerDescriptor('claude-plan').creator.autoPreferred, true,
+  'an already-connected Claude subscription may be preferred without PAYG fallback');
+assert.equal(providers.providerDescriptor('deepseek').creator.autoPreferred, false,
+  'a configured API key alone never authorises automatic PAYG creator use');
 
 const structured = contract.normalizeGeneration(
   { text: '{"choice":"WAIT"}', usage: { inputTokens: 2, outputTokens: 3 } },

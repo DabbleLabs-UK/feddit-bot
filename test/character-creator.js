@@ -60,6 +60,67 @@ const fallback = creator.resolveCreatorPlan({
 ok(fallback.available && fallback.fallback && fallback.model === 'runtime-small',
   'the normal runtime model is available only through an explicit fallback');
 
+const providerStates = [
+  {
+    id: 'ollama', label: 'Ollama', state: 'ready',
+    creator: { eligible: true, autoPreferred: false, preference: 50 },
+    models: [{ id: 'runtime-small', label: 'Runtime small' }],
+  },
+  {
+    id: 'deepseek', label: 'DeepSeek API', state: 'ready',
+    creator: { eligible: true, autoPreferred: false, preference: 250, preferredModels: ['deepseek-v4-pro'] },
+    models: [{ id: 'deepseek-v4-pro', label: 'DeepSeek Pro' }],
+  },
+  {
+    id: 'chatgpt-plan', label: 'ChatGPT plan', state: 'ready',
+    creator: { eligible: true, autoPreferred: true, preference: 300 },
+    models: [{ id: 'gpt-creator', label: 'GPT creator' }],
+  },
+  {
+    id: 'claude-plan', label: 'Claude subscription', state: 'ready',
+    creator: { eligible: true, autoPreferred: true, preference: 290, preferredModels: ['opus', 'sonnet'] },
+    models: [{ id: 'sonnet', label: 'Sonnet' }, { id: 'opus', label: 'Opus' }],
+  },
+];
+const automaticStrong = creator.resolveCreatorPlan({
+  providers: providerStates,
+  configuredProvider: 'ollama', configuredModel: 'runtime-small',
+  runtimeProvider: 'ollama', runtimeModel: 'runtime-small',
+});
+eq(automaticStrong.provider, 'chatgpt-plan',
+  'an already-connected high-capability subscription creator is preferred automatically');
+eq(automaticStrong.selectionMode, 'automatic-preferred',
+  'automatic creator provenance explains that the provider was preferred');
+const explicitCreator = creator.resolveCreatorPlan({
+  providers: providerStates,
+  explicitProvider: 'claude-plan', explicitModel: 'opus',
+  configuredProvider: 'ollama', configuredModel: 'runtime-small',
+});
+eq([explicitCreator.provider, explicitCreator.model, explicitCreator.selectionMode], ['claude-plan', 'opus', 'explicit'],
+  'an explicit operator creator choice wins over automatic preference');
+const automaticDoesNotSpend = creator.resolveCreatorPlan({
+  providers: providerStates.filter((status) => !['chatgpt-plan', 'claude-plan'].includes(status.id)),
+  configuredProvider: 'ollama', configuredModel: 'runtime-small',
+  runtimeProvider: 'ollama', runtimeModel: 'runtime-small',
+});
+eq(automaticDoesNotSpend.provider, 'ollama',
+  'a connected API key is not silently selected for paid creator use');
+eq(automaticDoesNotSpend.selectionMode, 'configured-path',
+  'the configured local creator path follows subscription preference without using the runtime implicitly');
+const unavailableExplicit = creator.resolveCreatorPlan({
+  providers: providerStates.map((status) => status.id === 'claude-plan'
+    ? { ...status, state: 'auth-required', detail: 'Sign in first.' } : status),
+  explicitProvider: 'claude-plan', explicitModel: 'opus',
+});
+ok(!unavailableExplicit.available && /not connected and ready/.test(unavailableExplicit.error),
+  'an unavailable explicit creator produces a clear error instead of silently falling back');
+const explicitRuntime = creator.resolveCreatorPlan({
+  providers: providerStates.filter((status) => status.id === 'ollama'),
+  runtimeProvider: 'ollama', runtimeModel: 'runtime-small', allowRuntimeFallback: true,
+});
+eq(explicitRuntime.selectionMode, 'explicit-runtime-fallback',
+  'the runtime-class model can be used only through an explicit fallback decision');
+
 const active = [
   { rank: 1, name: 'casualuk', title: 'Casual UK', recent: 80 },
   { rank: 2, name: 'botlife', title: 'Bot life', recent: 50 },

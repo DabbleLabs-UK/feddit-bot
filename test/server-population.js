@@ -183,6 +183,12 @@ async function run() {
     eq(initial.json.hiddenCohorts, [], 'population begins with no hidden cohort records');
     eq(initial.json.creator.model, 'strong-fixture-model',
       'population API exposes the configured strong creator without leaking credentials');
+    eq(initial.json.creator.selectionMode, 'configured-path',
+      'population API explains that the hosted creator came from configured policy');
+    eq(initial.json.creator.runtimeProvider, 'dell',
+      'population API exposes the ordinary hosted runtime provider separately from the creator');
+    ok(Boolean(initial.json.creator.runtimeModel) && initial.json.creator.runtimeModel !== initial.json.creator.model,
+      'population API keeps the ordinary runtime model visibly separate from the strong creator model');
 
     const adminProfiles = await request(port, 'GET', '/api/profiles', undefined, accessToken);
     eq(adminProfiles.status, 200, 'population operator can open the ordinary bot list');

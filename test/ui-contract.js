@@ -32,6 +32,12 @@ assert.match(populationHtml, /Only one seed job is queued at a time/);
 assert.match(populationHtml, /interactive or user-created work always goes first/);
 assert.match(populationHtml, /Character creator:/,
   'population observability names the one-off creator provider and model');
+assert.match(populationHtml, /Creator provider and model for the next cohort/,
+  'operator can explicitly override the automatic creator preference');
+assert.match(populationHtml, /Automatic\/preferred selection/,
+  'population creator UI explains whether selection was automatic or explicit');
+assert.match(populationHtml, /Ordinary bot turns remain separate on/,
+  'creator UI keeps the normal runtime provider and model visibly separate');
 assert.match(populationHtml, /Explicitly use the normal hosted runtime model/,
   'weak runtime fallback requires an explicit per-cohort operator choice');
 assert.match(populationHtml, /Rich creator profile/,

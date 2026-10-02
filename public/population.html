@@ -115,6 +115,7 @@ const OWNER_STORAGE_KEY = 'fedditBotOwnerAccess';
 const $ = (selector, root = document) => root.querySelector(selector);
 const esc = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const developerTools = window.FedditUiPreferences.developerToolsEnabled();
+let creatorChoice = '';
 $('#generationSafety').textContent = developerTools
   ? 'Generation does not register or activate anything. Review the compact seeds, then stage them as disabled rehearsal profiles. Starting rehearsal still publishes nothing. LIVE activation is a separate explicit action.'
   : 'Generation does not register or activate anything. Review the compact seeds, then stage them as paused profiles. Activating them is a separate explicit action.';
@@ -350,14 +351,27 @@ function render(data) {
   const creator = data.creator || {};
   const creatorBox = $('#creatorState');
   const fallbackWasChecked = Boolean($('#allowRuntimeFallback') && $('#allowRuntimeFallback').checked);
+  const creatorOptions = (creator.choices || []).filter((choice) =>
+    ['ready','busy'].includes(choice.state) && Array.isArray(choice.models) && choice.models.length)
+    .flatMap((choice) => choice.models.map((model) => ({
+      value: choice.provider + '|' + model.id,
+      label: choice.label + ' / ' + (model.label || model.id),
+    })));
   if (creator.available) {
     creatorBox.innerHTML = '<p><b>Character creator:</b> ' + esc(creator.label || creator.provider) + ' / ' + esc(creator.model) + '.</p>' +
-      '<p class="hint">This stronger model is used only for initial character creation and bounded community discovery. Ordinary bot turns keep their normal runtime model.</p>';
+      '<p class="hint"><b>' + esc(creator.selectionMode === 'explicit' ? 'Explicit selection' : 'Automatic/preferred selection') + '.</b> ' + esc(creator.selectionReason || '') + '</p>' +
+      (creatorOptions.length ? '<label><b>Creator provider and model for the next cohort</b><select id="creatorChoice"><option value="">Automatic/preferred - ' + esc(creator.label || creator.provider) + ' / ' + esc(creator.model) + '</option>' + creatorOptions.map((option) => '<option value="' + esc(option.value) + '">' + esc(option.label) + ' (explicit)</option>').join('') + '</select></label>' : '') +
+      '<p class="hint">This creator is used only for initial character creation and bounded community discovery. Ordinary bot turns remain separate on <b>' + esc(creator.runtimeProvider) + ' / ' + esc(creator.runtimeModel) + '</b>.</p>';
   } else {
     creatorBox.innerHTML = '<p><b>No strong character creator is configured.</b> ' + esc(creator.error || '') + '</p>' +
       (creator.fallbackAvailable ? '<label><input type="checkbox" id="allowRuntimeFallback"> Explicitly use the normal hosted runtime model for this cohort</label><p class="hint">This fallback may produce a less coherent character. It is never selected silently.</p>' : '');
     if ($('#allowRuntimeFallback')) $('#allowRuntimeFallback').checked = fallbackWasChecked;
   }
+  if ($('#creatorChoice')) {
+    if (!creatorOptions.some((option) => option.value === creatorChoice)) creatorChoice = '';
+    $('#creatorChoice').value = creatorChoice;
+    $('#creatorChoice').onchange = () => { creatorChoice = $('#creatorChoice').value; };
+  } else creatorChoice = '';
   const cohorts = data.cohorts || [];
   const existingCohorts = Array.from(document.querySelectorAll('details.cohort'));
   const openCohorts = new Set(existingCohorts.filter((item) => item.open).map((item) => item.dataset.id));
@@ -384,7 +398,7 @@ function render(data) {
     '<span class="meta">' + Number(cohort.requestedCount) + ' bots; created ' + esc(cohort.createdAt) + (cohort.direction ? '; ' + esc(cohort.direction) : '') + '</span></span></summary>' +
     '<div class="cohort-body">' +
     '<p class="meta">AI-generated system population. Requested ' + Number(cohort.requestedCount) + '. Compute: hosted pool. Queue class: synthetic. Created ' + esc(cohort.createdAt) + '.</p>' +
-    (cohort.creator ? '<p><b>Creator:</b> ' + esc(cohort.creator.label || cohort.creator.provider) + ' / ' + esc(cohort.creator.model) + (cohort.creator.fallback ? ' (explicit runtime fallback)' : '') + '.</p>' : '') +
+    (cohort.creator ? '<p><b>Creator:</b> ' + esc(cohort.creator.label || cohort.creator.provider) + ' / ' + esc(cohort.creator.model) + (cohort.creator.fallback ? ' (explicit runtime fallback)' : '') + '. <span class="meta">' + esc(cohort.creator.selectionMode || 'legacy selection') + (cohort.creator.selectionReason ? ' - ' + esc(cohort.creator.selectionReason) : '') + '</span></p>' : '') +
     (cohort.direction ? '<p><b>Creative direction:</b> ' + esc(cohort.direction) + '</p>' : '') +
     '<p><b>Structured controls:</b> ' + configurationLabel(cohort.configuration) + '.</p>' +
     distributionLine +
@@ -425,10 +439,13 @@ $('#generate').onclick = async () => {
   const button = $('#generate');
   button.disabled = true;
   try {
+    const selectedCreator = creatorChoice ? creatorChoice.split('|') : [];
     await api('/api/population/cohorts', {method:'POST', body:{
       count:Number($('#count').value),
       direction:$('#direction').value,
       allowRuntimeFallback:Boolean($('#allowRuntimeFallback') && $('#allowRuntimeFallback').checked),
+      creatorProvider:selectedCreator[0] || '',
+      creatorModel:selectedCreator.slice(1).join('|') || '',
       configuration:{
         strength:$('#configurationStrength').value,
         activity:$('#configurationActivity').value,

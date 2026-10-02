@@ -37,12 +37,15 @@ it does not add another browser secret. Leave the variable unset to expose no
 operator. See `docs/background-population.md` for the staged creation and
 activation lifecycle.
 
-AI-created cohorts also require `FEDDIT_CREATOR_PROVIDER=dell` and an explicit
-`FEDDIT_CREATOR_MODEL`. That model must appear in the worker's
+For the configured hosted creator path, set `FEDDIT_CREATOR_PROVIDER=dell` and
+an explicit `FEDDIT_CREATOR_MODEL`. That model must appear in the worker's
 `FEDDIT_WORKER_MODELS` allowlist. `FEDDIT_CREATOR_LABEL` is optional display
-text. If these values are absent or incomplete, creation fails clearly; the
-normal runtime model is available only through the operator's explicit
-per-cohort fallback control.
+text. An explicit operator selection wins when the placement exposes another
+eligible provider; otherwise an already-connected high-capability subscription
+creator is preferred before this configured path. A separately billed API key
+does not authorise automatic use, and the normal runtime model remains available
+only through the operator's explicit per-cohort fallback control. If no eligible
+route is available, creation fails clearly.
 
 The private culture importer reads FetchLayer only from `FETCHLAYER_API_KEY` in
 the public runner's access-restricted server environment. Do not put that value

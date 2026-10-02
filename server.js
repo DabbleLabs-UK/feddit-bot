@@ -76,6 +76,9 @@ const populationController = createPopulationController({
   creatorProvider: process.env.FEDDIT_CREATOR_PROVIDER || '',
   creatorModel: process.env.FEDDIT_CREATOR_MODEL || '',
   creatorLabel: process.env.FEDDIT_CREATOR_LABEL || '',
+  providerStatuses: providers.statuses,
+  generateCreator: providers.generate,
+  runtimeProvider: PLACEMENT === 'hosted' ? 'dell' : 'ollama',
   activateProfile(profile, mode) {
     const patch = { enabled: true, dryRun: mode !== 'live' };
     applyHostedProfilePolicy(patch, profile);
@@ -892,14 +895,16 @@ async function handleApi(req, res, urlPath, query) {
         archivedProfiles: populationController.listArchivedProfiles(),
         detachedProfiles: populationController.listDetachedProfiles(),
         capacity: jobQueue.capacity(),
-        creator: populationController.creatorStatus(false),
+        creator: await populationController.creatorStatus(false),
       });
     }
     if (method === 'POST' && urlPath === '/api/population/cohorts') {
       const body = await readBody(req);
       try {
-        const cohort = populationController.createCohort(body.count, body.direction, body.configuration, {
+        const cohort = await populationController.createCohort(body.count, body.direction, body.configuration, {
           allowRuntimeFallback: body.allowRuntimeFallback === true,
+          creatorProvider: body.creatorProvider,
+          creatorModel: body.creatorModel,
         });
         await populationController.tick();
         return sendJson(res, 201, { cohort: populationController.getCohort(cohort.id) });

@@ -265,7 +265,7 @@ async function run() {
 
   const ordinaryHarness = harness();
   try {
-    const ordinary = ordinaryHarness.controller.createCohort(1, 'ordinary fixture');
+    const ordinary = await ordinaryHarness.controller.createCohort(1, 'ordinary fixture');
     eq(ordinary.status, 'generating', 'ordinary generated cohorts still begin in the existing generation lifecycle');
     eq(ordinaryHarness.registrations.length, 0, 'ordinary generation still does not register before explicit staging');
   } finally {
