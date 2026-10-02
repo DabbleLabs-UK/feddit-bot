@@ -173,6 +173,146 @@ function signedToken(privateKey, kid, claims) {
   }, 'unsupported temperature and output-token options are not sent to the plan endpoint');
   assert.equal(generationBody.input[0].role, 'user');
   assert.equal(generationBody.input[0].content, 'User instruction');
+  assert.equal(output.transport.httpStatus, 200);
+  assert.equal(output.transport.responseStarted, true);
+  assert.equal(output.transport.streamStarted, true);
+  assert.equal(output.transport.eventsReceived, 2);
+
+  const slowProgressProvider = createChatgptPlanProvider({
+    secrets: makeSecrets({
+      id: 'slow-progress-account', clientId: 'oaiapp_slow_progress', subject: 'slow-progress-subject',
+      accessToken: 'slow-progress-access', refreshToken: 'slow-progress-refresh', expiresAt: now + 3600000,
+      scopes: [DIRECT_SCOPE], models: [{ id: 'gpt-test', label: 'GPT Test' }],
+    }),
+    placement: 'desktop',
+    now: () => now,
+    fetchImpl: async (url, options) => {
+      if (String(url) !== API_BASE + '/responses') throw new Error('Unexpected fetch ' + url);
+      const chunks = [
+        'data: {"type":"response.output_text.delta","delta":"Slow"}\n',
+        'data: {"type":"response.output_text.delta","delta":" but active"}\n',
+        'data: {"type":"response.completed","response":{"id":"resp_slow"}}\n\n',
+      ];
+      return new Response(new ReadableStream({
+        start(controller) {
+          const timers = chunks.map((chunk, index) => setTimeout(() => {
+            controller.enqueue(new TextEncoder().encode(chunk));
+            if (index === chunks.length - 1) controller.close();
+          }, index * 700));
+          options.signal.addEventListener('abort', () => {
+            timers.forEach(clearTimeout);
+            controller.error(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          }, { once: true });
+        },
+      }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    },
+  });
+  const slowProgress = await slowProgressProvider.generate({
+    prompt: 'slow but active', model: 'gpt-test', timeoutMs: 1000, totalTimeoutMs: 4000,
+  });
+  assert.equal(slowProgress.text, 'Slow but active',
+    'real streaming progress keeps a request alive beyond one progress window');
+  assert.equal(slowProgress.transport.eventsReceived, 3);
+
+  const stalledProvider = createChatgptPlanProvider({
+    secrets: makeSecrets({
+      id: 'stalled-account', clientId: 'oaiapp_stalled', subject: 'stalled-subject',
+      accessToken: 'stalled-access', refreshToken: 'stalled-refresh', expiresAt: now + 3600000,
+      scopes: [DIRECT_SCOPE], models: [{ id: 'gpt-test', label: 'GPT Test' }],
+    }),
+    placement: 'desktop',
+    now: () => now,
+    fetchImpl: async (url, options) => {
+      if (String(url) !== API_BASE + '/responses') throw new Error('Unexpected fetch ' + url);
+      return new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(
+            'data: {"type":"response.output_text.delta","delta":"Started"}\n',
+          ));
+          options.signal.addEventListener('abort', () => {
+            controller.error(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          }, { once: true });
+        },
+      }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    },
+  });
+  await assert.rejects(
+    () => stalledProvider.generate({ prompt: 'stall', model: 'gpt-test', timeoutMs: 1000, totalTimeoutMs: 5000 }),
+    (error) => {
+      assert.equal(error.code, 'TIMEOUT');
+      assert.equal(error.timeoutKind, 'no-progress');
+      assert.equal(error.phase, 'streaming');
+      assert.equal(error.responseStarted, true);
+      assert.equal(error.streamStarted, true);
+      assert.equal(error.eventsReceived, 1);
+      assert.match(error.message, /stopped sending data/);
+      return true;
+    },
+  );
+
+  const totalBoundProvider = createChatgptPlanProvider({
+    secrets: makeSecrets({
+      id: 'total-bound-account', clientId: 'oaiapp_total_bound', subject: 'total-bound-subject',
+      accessToken: 'total-bound-access', refreshToken: 'total-bound-refresh', expiresAt: now + 3600000,
+      scopes: [DIRECT_SCOPE], models: [{ id: 'gpt-test', label: 'GPT Test' }],
+    }),
+    placement: 'desktop',
+    now: () => now,
+    fetchImpl: async (url, options) => {
+      if (String(url) !== API_BASE + '/responses') throw new Error('Unexpected fetch ' + url);
+      return new Response(new ReadableStream({
+        start(controller) {
+          const timer = setInterval(() => {
+            controller.enqueue(new TextEncoder().encode(
+              'data: {"type":"response.output_text.delta","delta":"."}\n',
+            ));
+          }, 300);
+          options.signal.addEventListener('abort', () => {
+            clearInterval(timer);
+            controller.error(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          }, { once: true });
+        },
+      }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    },
+  });
+  await assert.rejects(
+    () => totalBoundProvider.generate({ prompt: 'never finish', model: 'gpt-test', timeoutMs: 1000, totalTimeoutMs: 1300 }),
+    (error) => {
+      assert.equal(error.code, 'TIMEOUT');
+      assert.equal(error.timeoutKind, 'total');
+      assert.equal(error.phase, 'streaming');
+      assert.ok(error.eventsReceived >= 3);
+      assert.match(error.message, /bounded/);
+      return true;
+    },
+  );
+
+  const cancellableProvider = createChatgptPlanProvider({
+    secrets: makeSecrets({
+      id: 'cancel-account', clientId: 'oaiapp_cancel', subject: 'cancel-subject',
+      accessToken: 'cancel-access', refreshToken: 'cancel-refresh', expiresAt: now + 3600000,
+      scopes: [DIRECT_SCOPE], models: [{ id: 'gpt-test', label: 'GPT Test' }],
+    }),
+    placement: 'desktop',
+    now: () => now,
+    fetchImpl: async (url, options) => new Promise((resolve, reject) => {
+      if (String(url) !== API_BASE + '/responses') return reject(new Error('Unexpected fetch ' + url));
+      options.signal.addEventListener('abort', () => {
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      }, { once: true });
+    }),
+  });
+  const callerController = new AbortController();
+  const cancelledGeneration = cancellableProvider.generate({
+    prompt: 'cancel me', model: 'gpt-test', signal: callerController.signal,
+    timeoutMs: 5000, totalTimeoutMs: 6000,
+  });
+  setTimeout(() => callerController.abort(), 25);
+  await assert.rejects(cancelledGeneration, (error) => {
+    assert.equal(error.code, 'CANCELLED');
+    assert.match(error.message, /cancelled/);
+    return true;
+  });
 
   const detailProvider = createChatgptPlanProvider({
     secrets: makeSecrets({
