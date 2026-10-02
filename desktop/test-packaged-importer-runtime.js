@@ -401,7 +401,8 @@ globalThis.fetch = async (input, options = {}) => {
       hostedOption: Array.from(document.getElementById('cultureStagingDestination')?.options || [])
         .some((option) => option.value === 'hosted' && option.textContent.includes('Hosted Feddit Bots')),
       managementLinkPresent: Boolean(document.getElementById('cultureManagementLink')),
-      disabledExplanation: document.body.innerText.includes('disabled and in rehearsal'),
+      disabledExplanation: document.getElementById('cultureStagingDestination')?.closest('details')
+        ?.textContent.includes('disabled and in rehearsal') === true,
     }))()`);
     if (localStaging.destination !== 'local' || !localStaging.localOption || !localStaging.hostedOption ||
         localStaging.managementLinkPresent || !localStaging.disabledExplanation) {
