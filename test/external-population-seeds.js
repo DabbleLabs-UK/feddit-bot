@@ -79,6 +79,8 @@ function harness(options = {}) {
     queue: { get() { return null; } },
     enqueueDell() { throw new Error('External staging must not enqueue seed generation.'); },
     model: 'fixture-model',
+    creatorProvider: 'dell',
+    creatorModel: 'strong-fixture-model',
     now: () => Date.parse('2026-10-02T12:00:00.000Z'),
     random: () => 0.5,
   });
