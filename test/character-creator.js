@@ -91,6 +91,31 @@ const prompt = creator.communityDiscoveryPrompt(rich, slate);
 ok(prompt.length <= creator.MAX_DISCOVERY_PROMPT, 'the complete discovery prompt is bounded');
 ok(prompt.includes('only an exposure signal') && prompt.includes('quieter niche'),
   'the choice contract says popularity does not determine affinity');
+const promptCommunities = JSON.parse(prompt.split('\nCOMMUNITIES: ')[1]);
+eq(promptCommunities.length, slate.length,
+  'context bounding preserves every offered community ID in a complete JSON value');
+ok(promptCommunities.every((entry) => entry.sample.length <= 1),
+  'the creator prompt retains one bounded real feed sample per community');
+const oversizedPrompt = creator.communityDiscoveryPrompt(rich, Array.from({ length: 8 }, (_, index) => ({
+  id: 'C' + (index + 1),
+  name: 'community' + index,
+  title: 'Community ' + index,
+  description: 'Long description '.repeat(80),
+  rules: ['Long rule '.repeat(60), 'Second rule '.repeat(60)],
+  postFormat: 'any',
+  exposure: { source: 'feddit-active-communities', rank: index + 1, recent: 10 - index, windowHours: 48 },
+  sample: Array.from({ length: 3 }, (_, sampleIndex) => ({
+    title: 'Real feed item ' + sampleIndex + ' ' + 'detail '.repeat(50),
+    excerpt: 'Long excerpt '.repeat(80),
+    score: sampleIndex,
+    comments: sampleIndex + 1,
+  })),
+})));
+ok(oversizedPrompt.length <= creator.MAX_DISCOVERY_PROMPT,
+  'oversized live evidence is compacted below the shared creator context allowance');
+const oversizedCommunities = JSON.parse(oversizedPrompt.split('\nCOMMUNITIES: ')[1]);
+eq(oversizedCommunities.length, 8,
+  'compaction never truncates the offered community JSON or drops its bounded slate');
 
 const nicheChoice = creator.parseCommunityChoices(JSON.stringify({ choices: [
   { id: 'C1', state: 'favored', strength: 0.96, reason: 'Camera repair and careful teardown match the character directly.' },

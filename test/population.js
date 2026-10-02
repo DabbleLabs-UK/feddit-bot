@@ -394,6 +394,47 @@ async function run() {
     ok(!fs.readFileSync(path.join(dir, 'lifecycle.json'), 'utf8').includes('RAW-CHAIN-OF-THOUGHT-SENTINEL'),
       'raw model-only fields and hidden reasoning are not persisted');
 
+    const failedDiscoveryJobs = new Map();
+    let failedDiscoverySequence = 0;
+    const failedDiscovery = createPopulationController({
+      ...options,
+      file: path.join(dir, 'failed-discovery.json'),
+      profileStore: fakeStore(),
+      queue: {
+        get(id) {
+          const job = failedDiscoveryJobs.get(id);
+          return job ? structuredClone(job) : null;
+        },
+      },
+      enqueueDell() {
+        const job = {
+          id: 'failed-discovery-job-' + (++failedDiscoverySequence),
+          status: 'queued', result: null, lastError: '',
+        };
+        failedDiscoveryJobs.set(job.id, job);
+        return structuredClone(job);
+      },
+    });
+    const failedDiscoveryCohort = failedDiscovery.createCohort(1);
+    await failedDiscovery.tick();
+    failedDiscoveryJobs.set('failed-discovery-job-1', {
+      id: 'failed-discovery-job-1', status: 'completed',
+      result: { text: JSON.stringify(candidate()) },
+    });
+    await failedDiscovery.tick();
+    for (let attempt = 2; attempt <= 4; attempt++) {
+      failedDiscoveryJobs.set('failed-discovery-job-' + attempt, {
+        id: 'failed-discovery-job-' + attempt, status: 'completed',
+        result: { text: 'not structured community JSON' },
+      });
+      await failedDiscovery.tick();
+    }
+    const failedDiscoveryResult = failedDiscovery.getCohort(failedDiscoveryCohort.id);
+    eq(failedDiscoveryResult.candidates[0].status, 'failed',
+      'a character remains failed after exhausting bounded community-discovery attempts');
+    eq(failedDiscoveryResult.status, 'failed',
+      'a seed without successful community discovery cannot make its cohort ready');
+
     const restarted = createPopulationController({ ...options, file: path.join(dir, 'lifecycle.json') });
     eq(restarted.getCohort(cohort.id).status, 'ready', 'cohort state survives a controller restart');
     const staged = await restarted.stageCohort(cohort.id);
