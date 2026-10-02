@@ -871,9 +871,13 @@ async function handleApi(req, res, urlPath, query) {
         return sendJson(res, 200, { session: cultureImportSessions.cancel(importOwner, sessionId) });
       }
       const localStageExternalSeeds = populationController.stageExternalSeeds.bind(populationController);
-      const stageExternalSeeds = PLACEMENT === 'hosted'
-        ? localStageExternalSeeds
-        : createDesktopCultureStageRoute(body, { localStageExternalSeeds }).stageExternalSeeds;
+      const stageRoute = PLACEMENT === 'hosted'
+        ? { destination: 'hosted', stageExternalSeeds: localStageExternalSeeds }
+        : createDesktopCultureStageRoute(body, { localStageExternalSeeds });
+      const stageExternalSeeds = async (input) => ({
+        ...await stageRoute.stageExternalSeeds(input),
+        destination: stageRoute.destination,
+      });
       const result = await cultureImportSessions.stage(importOwner, sessionId, body, stageExternalSeeds);
       return sendJson(res, 200, {
         result,
