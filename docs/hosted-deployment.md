@@ -37,6 +37,12 @@ it does not add another browser secret. Leave the variable unset to expose no
 operator. See `docs/background-population.md` for the staged creation and
 activation lifecycle.
 
+The private culture importer reads FetchLayer only from `FETCHLAYER_API_KEY` in
+the public runner's access-restricted server environment. Do not put that value
+in the release directory, browser configuration, reverse-proxy configuration or
+desktop update payload. Hosted operators can read only configured/not-configured
+state and cannot set or clear the server credential through the browser API.
+
 Feddit's write endpoints do not currently provide an idempotency key. The runner
 therefore records `attempting` before a live submit or comment call and stores
 the response before it finalises the turn. If the runner restarts while a write

@@ -378,6 +378,10 @@ async function run() {
     'leaving the page warns about meaningful importer state even after returning to the bot editor');
   ok(html.includes('id="developerToolsToggle"') && html.includes('id="providerCards"'),
     'ordinary Developer-tools and provider settings remain present');
+  ok(html.includes('id="cultureSourceSettings"') && html.includes('id="fetchLayerKeyState"'),
+    'desktop Developer tools includes the separate FetchLayer credential control');
+  ok(html.includes("'/api/culture-imports/source-credential'") && html.includes("'configured' : 'not configured'"),
+    'FetchLayer settings use a presence-only server credential contract');
   ok(html.includes('id="populationBtn"') && html.includes('function renderEditor('),
     'ordinary population and bot editor paths remain present');
 

@@ -81,6 +81,7 @@ async function run() {
   eq(first.corpus.comments[0].author, 'DryWit', 'public contributor identity is preserved in the private corpus');
   eq(first.corpus.posts[1].outboundUrl, 'https://example.test/diagram', 'link post destination is preserved');
   eq(first.corpus.provenance.provider, 'FetchLayer', 'provider provenance is explicit');
+  ok(!JSON.stringify(first).includes('fixture-key'), 'source results and provenance never contain the FetchLayer credential');
   ok(progress.some((event) => event.kind === 'post') && progress.some((event) => event.kind === 'comment'), 'post and comment progress is reported');
 
   const cached = await source.fetchCorpus({
@@ -211,6 +212,28 @@ async function run() {
     'missing FetchLayer key explains the configuration dependency',
   );
   eq(missingKeyCalls, 0, 'missing key fails before any source request');
+
+  let dynamicKey = '';
+  let dynamicAuthorization = '';
+  const dynamicKeySource = createFetchLayerSource({
+    apiKeyProvider: () => dynamicKey,
+    cacheDirectory: path.join(temporaryRoot, 'dynamic-key-cache'),
+    transport: {
+      async postJson(_url, _body, request) {
+        dynamicAuthorization = request.headers.Authorization;
+        return structuredClone(communityFixture);
+      },
+    },
+  });
+  await rejectedCode(
+    () => dynamicKeySource.fetchCorpus({ subreddit: 'ExampleSub', maxPosts: 2, maxComments: 0 }),
+    'FETCHLAYER_NOT_CONFIGURED',
+    'a dynamic key provider reports the clear local configuration error while empty',
+  );
+  dynamicKey = 'runtime-fetchlayer-fixture-key';
+  const dynamicResult = await dynamicKeySource.fetchCorpus({ subreddit: 'ExampleSub', maxPosts: 2, maxComments: 0 });
+  eq(dynamicAuthorization, 'Bearer runtime-fetchlayer-fixture-key', 'a saved key becomes usable without rebuilding the importer');
+  ok(!JSON.stringify(dynamicResult).includes(dynamicKey), 'a dynamically supplied key never enters the cached corpus or result');
 
   const statuses = [
     [403, 'FETCHLAYER_FORBIDDEN'],

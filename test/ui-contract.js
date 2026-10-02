@@ -245,6 +245,10 @@ assert.match(html, /id="healthBtn"[\s\S]*aria-haspopup="dialog"[\s\S]*aria-contr
 assert.match(html, /<dialog id="statusDialog" aria-labelledby="statusDialogTitle">/);
 assert.match(html, /<dialog id="settingsDialog" aria-labelledby="settingsDialogTitle">/);
 assert.match(html, /id="developerToolsToggle"/);
+assert.match(html, /id="cultureSourceSettings"/);
+assert.match(html, /FetchLayer key: <b id="fetchLayerKeyState">not configured<\/b>/);
+assert.match(html, /state\.developerTools && state\.placement === 'desktop'/,
+  'FetchLayer credential settings remain desktop Developer-tools only');
 assert.match(html, /Shows rehearsal, simulation and advanced diagnostic controls intended for testing and experimentation/);
 assert.match(html, /<script src="\/ui-preferences\.js"><\/script>/);
 assert.match(html, /developerTools: uiPreferences\.developerToolsEnabled\(\)/,

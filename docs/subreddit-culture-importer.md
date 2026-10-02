@@ -18,6 +18,8 @@ The ordinary backend remains independent of its optional human-facing UI and doe
 
 The existing Settings dialog exposes **Import subreddit culture** only while Developer tools is enabled. It is available on a desktop runner and to the existing hosted population operator. It does not appear to ordinary hosted workspace owners.
 
+On desktop, the same Developer-tools area exposes a separate FetchLayer key control. It writes to the runner's existing gitignored, atomic `data/secrets.json` store and returns only configured/not-configured state. The packaged launcher already points every replaceable application version at the update-safe `%LOCALAPPDATA%\DabbleLabs\FedditBots\data` directory, so application updates do not copy or replace this credential. Hosted runners do not accept browser writes for this key and read it only from the server process environment.
+
 The UI keeps the workflow explicit:
 
 1. choose a subreddit, bounded post/comment sample and recent window, then fetch or refresh the private cache;
@@ -62,7 +64,7 @@ RedditWatch currently uses FetchLayer's known-thread endpoint for full thread en
 
 Source corpora are cached by normalized request hash for six hours by default. Cache files live under the runner's gitignored `data/culture-import-cache` directory unless the caller chooses another private directory. Writes are atomic and request owner-only permissions where supported.
 
-The cache contains public Reddit text, public usernames, scores, timestamps and source relationships received from FetchLayer. It must remain private runtime data and must not be committed. Delete the cache directory to remove it. Expired data is not used for a normal import, although a later maintenance pass may add bounded automatic deletion. `FETCHLAYER_API_KEY` stays server-side and is never placed in the cache, browser response, provider prompt or importer result.
+The cache contains public Reddit text, public usernames, scores, timestamps and source relationships received from FetchLayer. It must remain private runtime data and must not be committed. Delete the cache directory to remove it. Expired data is not used for a normal import, although a later maintenance pass may add bounded automatic deletion. Hosted `FETCHLAYER_API_KEY` and the desktop secret-store value stay server-side and are never placed in the cache, browser response, provider prompt or importer result.
 
 Provider prompts use anonymous labels such as `contributor-1`; candidate-generation prompts never include Reddit usernames. The analysis prompt explicitly prohibits diagnosis, protected-characteristic inference and claims about hidden motives. Generated bots are fictional composites, not replicas of source contributors.
 
@@ -157,7 +159,7 @@ node bin/import-subreddit-culture.js stage \
 
 `--select` accepts zero-based candidate indexes or the stable IDs returned by `bridge.review()`. The action rejects an empty selection, duplicate selection or more than six candidates before making a request. It sends the whole selection once, so a larger selection is never silently split and a failed registration is never blindly retried by the importer.
 
-Use `--refresh` to bypass a valid cache and Ctrl+C to cancel. `FETCHLAYER_API_KEY` configures the source connection separately for this application. A missing, rejected, forbidden, rate-limited, unavailable, malformed, blocked or empty source receives a stable FetchLayer-specific error. Retryable network, timeout, HTTP 429 and HTTP 5xx failures receive at most two bounded retries. A thread-specific blocked or malformed response retains any usable posts/comments and allows the bounded sample to continue. Authentication and permission failures stop immediately. After a provider-wide rate-limit, availability, network or timeout failure exhausts its bounded retries, remaining thread sampling stops instead of repeating the failure across every candidate thread; the retained corpus, warning and stop code remain reviewable.
+Use `--refresh` to bypass a valid cache and Ctrl+C to cancel. The standalone CLI reads `FETCHLAYER_API_KEY`; hosted reads the same protected environment variable; desktop reads the existing local secret store. A missing, rejected, forbidden, rate-limited, unavailable, malformed, blocked or empty source receives a stable FetchLayer-specific error. Retryable network, timeout, HTTP 429 and HTTP 5xx failures receive at most two bounded retries. A thread-specific blocked or malformed response retains any usable posts/comments and allows the bounded sample to continue. Authentication and permission failures stop immediately. After a provider-wide rate-limit, availability, network or timeout failure exhausts its bounded retries, remaining thread sampling stops instead of repeating the failure across every candidate thread; the retained corpus, warning and stop code remain reviewable.
 
 ## Provider and batching policy
 
@@ -177,5 +179,4 @@ The result is a characterization of a bounded recent sample, not a definitive ac
 The following future work remains outside this integration:
 
 - explicit retention controls and cache cleanup policy;
-- a dedicated UI for configuring the server-side FetchLayer source credential;
 - a deliberate decision about any future runtime use of richer provenance and psychology metadata.
