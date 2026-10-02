@@ -34,7 +34,7 @@ const { createPopulationController } = require('./lib/population');
 const { createCultureImporter } = require('./lib/culture-importer');
 const { createFetchLayerSource } = require('./lib/culture-importer/fetchlayer-source');
 const { createCultureImportUiSessions, CultureImportUiError } = require('./lib/culture-importer/ui-sessions');
-const { createDesktopCultureStager } = require('./lib/culture-importer/desktop-staging');
+const { createDesktopCultureStageRoute } = require('./lib/culture-importer/desktop-staging');
 
 const ollama = providers.ollama; // the ollama provider (status/isBusy/generate)
 
@@ -870,9 +870,10 @@ async function handleApi(req, res, urlPath, query) {
       if (action === 'cancel') {
         return sendJson(res, 200, { session: cultureImportSessions.cancel(importOwner, sessionId) });
       }
+      const localStageExternalSeeds = populationController.stageExternalSeeds.bind(populationController);
       const stageExternalSeeds = PLACEMENT === 'hosted'
-        ? populationController.stageExternalSeeds.bind(populationController)
-        : createDesktopCultureStager(body.managementLink);
+        ? localStageExternalSeeds
+        : createDesktopCultureStageRoute(body, { localStageExternalSeeds }).stageExternalSeeds;
       const result = await cultureImportSessions.stage(importOwner, sessionId, body, stageExternalSeeds);
       return sendJson(res, 200, {
         result,
