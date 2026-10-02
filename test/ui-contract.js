@@ -248,6 +248,18 @@ assert.match(html, /<option value="30m">30 minutes<\/option>[\s\S]*<option value
 assert.match(html, /api\('\/api\/speed', \{ method: 'PUT'/);
 assert.match(html, /setInterval\(renderSpeedControl, 1000\)/,
   'the active Speed countdown redraws without extra polling');
+assert.match(html, /id="burstControl"/);
+assert.match(html, /id="burstBtn"[\s\S]*aria-expanded="false"[\s\S]*aria-controls="burstPopover"/);
+assert.match(html, /id="burstProvider"/);
+assert.match(html, /id="burstDuration"[\s\S]*<option value="30m">30 minutes<\/option>[\s\S]*<option value="3h">3 hours<\/option>[\s\S]*<option value="untilOff">Until turned off<\/option>/);
+assert.match(html, /api\('\/api\/burst', \{ method: 'PUT'/);
+assert.match(html, /setInterval\(loadBurstState, 3000\)/,
+  'concise Burst session state is refreshed without flooding the main UI');
+assert.match(html, /<script src="\/ui-burst\.js"><\/script>/);
+assert.match(html, /Subscription Burst/);
+assert.match(html, /Normal cadences and Speed stay unchanged/);
+assert.match(html, /\$\('#burstControl'\)\.style\.display = hosted \? 'none' : ''/,
+  'subscription Burst remains a desktop/self-hosted control and is not offered by the hosted runner');
 assert.match(html, /<dialog id="statusDialog" aria-labelledby="statusDialogTitle">/);
 assert.match(html, /<dialog id="settingsDialog" aria-labelledby="settingsDialogTitle">/);
 assert.match(html, /id="developerToolsToggle"/);

@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 
 process.env.FEDDIT_DEFAULT_MODEL = 'qwen3:4b';
 const store = require('../lib/store');
+const burst = require('../lib/burst');
 
 const upgraded = store.migrateProfiles([
   { id: 'light', model: 'qwen3:1.7b' },
@@ -31,6 +32,28 @@ assert.equal(settings.dryRun, true);
 
 const currentSettings = store.migrateSettings({ localDefaultModel: 'qwen3:4b' }, 4);
 assert.equal(currentSettings.localDefaultModel, 'qwen3:4b');
+
+const burstStartedAt = Date.parse('2026-10-02T12:00:00.000Z');
+const burstSettings = store.migrateSettings({
+  speed: { multiplier: 5, duration: 'untilOff', active: true },
+  burst: burst.startState('chatgpt-plan', 'untilOff', burstStartedAt),
+}, 22);
+assert.equal(burstSettings.burst.active, true,
+  'an active until-stopped Burst session survives the schema-23 migration');
+assert.equal(burstSettings.burst.provider, 'chatgpt-plan',
+  'the explicitly selected subscription provider survives migration');
+assert.equal(burstSettings.burst.expiresAt, null,
+  'until-stopped Burst remains unbounded across restart');
+assert.equal(burstSettings.speed.multiplier, 5,
+  'Burst migration does not modify independent Speed state');
+
+const invalidBurstSettings = store.migrateSettings({
+  burst: { active: true, provider: 'deepseek', duration: 'untilOff' },
+}, 22);
+assert.equal(invalidBurstSettings.burst.active, false,
+  'an invalid non-subscription Burst provider cannot become active through migration');
+assert.equal(invalidBurstSettings.burst.provider, '',
+  'migration never invents a subscription provider fallback');
 
 const chatgptProviderUpgrade = store.migrateProfiles([{
   id: 'chatgpt-plan-profile',

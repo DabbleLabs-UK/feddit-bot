@@ -202,7 +202,8 @@ async function main() {
   const serverFile = path.join(appRoot, 'server.js');
   const publicIndex = path.join(appRoot, 'public', 'index.html');
   const importerFile = path.join(appRoot, 'public', 'ui-culture-importer.js');
-  for (const file of [serverFile, publicIndex, importerFile, browserExe]) {
+  const burstFile = path.join(appRoot, 'public', 'ui-burst.js');
+  for (const file of [serverFile, publicIndex, importerFile, burstFile, browserExe]) {
     if (!fs.existsSync(file)) throw new Error('Required packaged-runtime file is missing: ' + file);
   }
 
@@ -333,10 +334,32 @@ globalThis.fetch = async (input, options = {}) => {
     await evaluate(cdp, "localStorage.setItem('fedditBotsDeveloperTools', '1'); location.reload(); true");
     await loaded;
     await waitForValue(cdp,
-      "Boolean(document.getElementById('settingsBtn') && window.FedditCultureImporterUi)",
+      "Boolean(document.getElementById('settingsBtn') && window.FedditCultureImporterUi && window.FedditUiBurst)",
       Boolean,
-      'packaged importer assets');
-    trace('packaged importer assets loaded with Developer tools enabled');
+      'packaged importer and Burst assets');
+    trace('packaged importer and Burst assets loaded with Developer tools enabled');
+
+    await evaluate(cdp, "document.getElementById('burstBtn').click(); true");
+    const burst = await waitForValue(cdp, `(() => {
+      const control = document.getElementById('burstControl');
+      const button = document.getElementById('burstBtn');
+      const popover = document.getElementById('burstPopover');
+      return {
+        controlVisible: Boolean(control && getComputedStyle(control).display !== 'none' && control.getClientRects().length),
+        buttonVisible: Boolean(button && getComputedStyle(button).display !== 'none' && button.getClientRects().length),
+        expanded: button?.getAttribute('aria-expanded') === 'true',
+        popoverOpen: popover?.hidden === false,
+        heading: document.getElementById('burstPopoverTitle')?.textContent || '',
+        durationCount: document.getElementById('burstDuration')?.options.length || 0,
+      };
+    })()`, (value) => value && value.popoverOpen, 'opened packaged Burst control');
+    if (!burst.controlVisible || !burst.buttonVisible || !burst.expanded ||
+        burst.heading !== 'Subscription Burst' || burst.durationCount !== 3) {
+      throw new Error('Packaged Burst contract failed: ' + JSON.stringify(burst));
+    }
+    trace('packaged Burst control is visible and opens');
+    await evaluate(cdp, "document.getElementById('burstBtn').click(); true");
+
     await evaluate(cdp, "document.getElementById('settingsBtn').click(); true");
 
     const visible = await waitForValue(cdp, `(() => {
@@ -459,8 +482,8 @@ globalThis.fetch = async (input, options = {}) => {
     });
     if (shippedSecret) throw new Error('Packaged application assets contained the FetchLayer key');
 
-    console.log('packaged desktop importer runtime: 22 checks passed');
-    console.log(JSON.stringify({ visible, opened, missingKey, configuredState, connectionTest, browserExposure, retrieved }));
+    console.log('packaged desktop FetchLayer importer and Burst runtime: 28 checks passed');
+    console.log(JSON.stringify({ burst, visible, opened, missingKey, configuredState, connectionTest, browserExposure, retrieved }));
   } catch (error) {
     if (serverOutput.length) console.error('Packaged server output:\n' + serverOutput.join(''));
     if (browserOutput.length) console.error('Headless browser output:\n' + browserOutput.join(''));

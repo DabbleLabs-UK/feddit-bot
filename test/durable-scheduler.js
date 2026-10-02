@@ -334,7 +334,7 @@ function harness(options = {}) {
   const dell = createDellProvider(queue, { now });
   const providers = {
     enqueueDell: dell.enqueue,
-    generate: async () => { throw new Error('scheduled DELL turns must not use the blocking provider path'); },
+    generate: options.providerGenerate || (async () => { throw new Error('scheduled DELL turns must not use the blocking provider path'); }),
     ollamaBusy: () => false,
   };
   const writes = [];
@@ -342,6 +342,7 @@ function harness(options = {}) {
   const feddit = {
     submit: async (request) => {
       writes.push({ type: 'submit', request });
+      if (options.submitResponse) return options.submitResponse(request, writes);
       return { ok: true, status: 200, data: { post: { data: { id: 900 + writes.length } } } };
     },
     comment: async (request) => {
@@ -365,7 +366,8 @@ function harness(options = {}) {
     }),
     feddit: async () => ({
       ok: true, status: 200,
-      data: { data: { children: Array.isArray(options.feedPosts) ? options.feedPosts.map((post) => ({ data: post })) : [] } },
+      data: { data: { children: (typeof options.feedPosts === 'function' ? options.feedPosts() :
+        (Array.isArray(options.feedPosts) ? options.feedPosts : [])).map((post) => ({ data: post })) } },
     }),
     comments: async () => ({ ok: true, status: 200, data: { comments: [] } }),
   };
@@ -401,7 +403,7 @@ function harness(options = {}) {
     const restartedDell = createDellProvider(restartedQueue, { now });
     const restartedProviders = {
       enqueueDell: restartedDell.enqueue,
-      generate: async () => { throw new Error('scheduled DELL turns must not use the blocking provider path'); },
+      generate: options.providerGenerate || (async () => { throw new Error('scheduled DELL turns must not use the blocking provider path'); }),
       ollamaBusy: () => false,
     };
     const restartedScheduler = createScheduler({
@@ -1184,6 +1186,216 @@ async function run() {
         'capacity yield telemetry remains attached to the accelerated run');
       eq(events[0].outcome, 'capacity-skip',
         'capacity yield telemetry records the capacity-skip outcome');
+    } finally {
+      h.cleanup();
+    }
+  }
+
+  {
+    const profile = makeProfile('burst-bundle', false);
+    profile.provider = 'ollama';
+    profile.canReply = true;
+    profile.canStartDiscussions = true;
+    profile.postsPerHour = 0.25;
+    profile.commentsPerHour = 0.5;
+    profile.sched.nextPostAt = 111_111;
+    profile.sched.nextCommentAt = 222_222;
+    let generations = 0;
+    const h = harness({
+      profiles: [profile],
+      feedPosts: [{
+        id: 301, feddit: 'general', author: 'alice', title: 'A live discussion',
+        selftext: 'A concrete thought worth answering.', created_utc: 9,
+      }],
+      providerGenerate: async (request) => {
+        generations++;
+        eq(request.providerOverride, 'chatgpt-plan',
+          'Burst routes the one inference only through the explicitly selected subscription');
+        return {
+          provider: 'chatgpt-plan', model: 'subscription-test',
+          text: JSON.stringify({
+            reason: 'A reply followed by a small new discussion fits.',
+            actions: [
+              { candidate: 'C1', text: 'A concise reply to the existing discussion.', reason: 'It is relevant.' },
+              { candidate: 'C2', title: 'A related new thought', body: 'A short opening.', reason: 'It follows naturally.' },
+            ],
+            votes: [],
+          }),
+          usage: { inputTokens: 20, outputTokens: 20, cachedInputTokens: 0 }, ms: 10,
+        };
+      },
+    });
+    try {
+      const runtime = h.scheduler();
+      const started = runtime.startBurstSession(profile.id, 'chatgpt-plan');
+      ok(started.turnId, 'a Burst session is represented by one durable turn');
+      await settle(12);
+      const finished = h.turnStore.get(started.turnId);
+      eq(finished.status, 'completed', 'the ordered Burst bundle reaches a durable terminal state');
+      eq(generations, 1, 'the complete ordered action bundle uses exactly one model inference');
+      eq(h.writes.map((write) => write.type), ['comment', 'submit'],
+        'multiple selected actions execute in the model-defined order');
+      eq(finished.result.actions.length, 2, 'both confirmed actions are retained in the session result');
+      eq(profile.postsPerHour, 0.25, 'Burst does not mutate stored text-post cadence');
+      eq(profile.commentsPerHour, 0.5, 'Burst does not mutate stored reply cadence');
+      eq(profile.sched.nextPostAt, 111_111, 'Burst does not move the ordinary next-post deadline');
+      eq(profile.sched.nextCommentAt, 222_222, 'Burst does not move the ordinary next-reply deadline');
+
+      h.restartRuntime().scheduler.reconcileDurableTurns();
+      await settle();
+      eq(h.writes.map((write) => write.type), ['comment', 'submit'],
+        'terminal Burst replay cannot duplicate durable publications');
+    } finally {
+      h.cleanup();
+    }
+  }
+
+  {
+    const profile = makeProfile('burst-partial-failure', false);
+    profile.canReply = true;
+    profile.canStartDiscussions = true;
+    const h = harness({
+      profiles: [profile],
+      feedPosts: [{
+        id: 401, feddit: 'general', author: 'bob', title: 'A changing discussion',
+        selftext: 'The first write will fail.', created_utc: 9,
+      }],
+      commentResponse: async () => ({ ok: false, status: 500, error: 'deliberate write failure' }),
+      providerGenerate: async () => ({
+        provider: 'claude-plan', model: 'subscription-test',
+        text: JSON.stringify({
+          reason: 'Try the reply first, then a discussion only if it succeeds.',
+          actions: [
+            { candidate: 'C1', text: 'This write will fail.', reason: 'Relevant reply.' },
+            { candidate: 'C2', title: 'Must not run', body: 'Later assumption.', reason: 'Only after reply.' },
+          ],
+          votes: [],
+        }),
+        usage: { inputTokens: 10, outputTokens: 10, cachedInputTokens: 0 }, ms: 10,
+      }),
+    });
+    try {
+      const runtime = h.scheduler();
+      const started = runtime.startBurstSession(profile.id, 'claude-plan');
+      await settle(12);
+      const finished = h.turnStore.get(started.turnId);
+      eq(finished.status, 'completed', 'a handled action failure produces a durable terminal session');
+      eq(h.writes.map((write) => write.type), ['comment'],
+        'a hard action failure stops later ordered actions whose assumptions may be stale');
+      eq(finished.result.actions.length, 1, 'unattempted later actions are not reported as committed');
+    } finally {
+      h.cleanup();
+    }
+  }
+
+  {
+    const profile = makeProfile('burst-duplicate-votes', false);
+    profile.canReply = true;
+    profile.canStartDiscussions = false;
+    profile.postsPerHour = 0;
+    profile.commentsPerHour = 1;
+    const h = harness({
+      profiles: [profile],
+      feedPosts: [{
+        id: 401, feddit: 'general', author: 'alice', title: 'A voteable discussion',
+        selftext: 'One visible discussion for a bounded Burst reply and vote.', created_utc: 10,
+      }],
+      providerGenerate: async () => ({
+        provider: 'claude-plan', model: 'subscription-test',
+        text: JSON.stringify({
+          reason: 'One reply and one secondary vote fit.',
+          actions: [{ candidate: 'C1', text: 'A concise bounded reply.', reason: 'It is relevant.' }],
+          votes: Array.from({ length: 20 }, (_, index) => ({
+            id: 'V1', direction: 'up', reason: 'The first valid vote reason remains ' + index + '.',
+          })),
+        }),
+        usage: { inputTokens: 20, outputTokens: 20, cachedInputTokens: 0 }, ms: 10,
+      }),
+    });
+    try {
+      const runtime = h.scheduler();
+      const started = runtime.startBurstSession(profile.id, 'claude-plan');
+      await settle(12);
+      const finished = h.turnStore.get(started.turnId);
+      eq(finished.status, 'completed', 'duplicate Burst votes do not prevent durable completion');
+      eq(finished.result.votes.length, 1, 'only one unique offered vote reaches the durable result');
+      eq(finished.result.votes[0].reason, 'The first valid vote reason remains 0.',
+        'the downstream vote retains the first matching decision reason');
+      eq(h.writes.filter((write) => write.type === 'vote').length, 1,
+        'duplicate vote IDs never reach the downstream voting path twice');
+    } finally {
+      h.cleanup();
+    }
+  }
+
+  {
+    const profile = makeProfile('burst-wait', false);
+    let generations = 0;
+    const h = harness({
+      profiles: [profile],
+      providerGenerate: async () => {
+        generations++;
+        return {
+          provider: 'chatgpt-plan', model: 'subscription-test',
+          text: '{"wait":true,"reason":"Nothing is worth doing right now.","actions":[],"votes":[]}',
+          usage: { inputTokens: 5, outputTokens: 5, cachedInputTokens: 0 }, ms: 5,
+        };
+      },
+    });
+    try {
+      const runtime = h.scheduler();
+      const started = runtime.startBurstSession(profile.id, 'chatgpt-plan');
+      await settle(12);
+      const finished = h.turnStore.get(started.turnId);
+      eq(generations, 1, 'WAIT is decided by the same single session inference');
+      eq(finished.result.action, 'wait', 'WAIT remains an explicit successful no-action outcome');
+      eq(h.writes.length, 0, 'WAIT creates no publication');
+      eq(profile.sched.nextPostAt, 0, 'WAIT incurs no ordinary cadence debt or reschedule');
+    } finally {
+      h.cleanup();
+    }
+  }
+
+  {
+    const worldPosts = [];
+    const first = makeProfile('burst-world-first', false);
+    first.canReply = false;
+    first.canStartDiscussions = true;
+    const later = makeProfile('burst-world-later', false);
+    later.canReply = true;
+    later.canStartDiscussions = false;
+    const h = harness({
+      profiles: [first, later],
+      feedPosts: () => worldPosts,
+      submitResponse: async (request) => {
+        worldPosts.push({
+          id: 501, feddit: request.feddit, author: first.fedditUsername,
+          title: request.title, selftext: request.text, created_utc: 10,
+        });
+        return { ok: true, status: 200, data: { post: { data: { id: 501 } } } };
+      },
+      providerGenerate: async (request) => ({
+        provider: 'chatgpt-plan', model: 'subscription-test',
+        text: request.profileId === first.id
+          ? '{"reason":"Start a thread.","actions":[{"candidate":"C1","title":"Fresh shared state","body":"Visible to the next bot.","reason":"Fits."}],"votes":[]}'
+          : '{"reason":"The new post is visible.","actions":[{"candidate":"C1","text":"I can see and answer this new post.","reason":"It just appeared."}],"votes":[]}',
+        usage: { inputTokens: 8, outputTokens: 8, cachedInputTokens: 0 }, ms: 5,
+      }),
+    });
+    try {
+      const runtime = h.scheduler();
+      const firstTurn = runtime.startBurstSession(first.id, 'chatgpt-plan');
+      await settle(12);
+      eq(h.turnStore.get(firstTurn.turnId).status, 'completed', 'the earlier bot commits before another session starts');
+      const laterInspection = await runtime.inspectBurstCandidates();
+      const laterView = laterInspection.find((entry) => entry.profileId === later.id);
+      ok(laterView.candidates.some((candidate) => candidate.candidateType === 'ordinary_post'),
+        'a later bot candidate scan observes the earlier bot publication from shared state');
+      const laterTurn = runtime.startBurstSession(later.id, 'chatgpt-plan');
+      await settle(12);
+      eq(h.turnStore.get(laterTurn.turnId).status, 'completed', 'the later bot can act on refreshed shared state');
+      eq(h.writes.map((write) => write.type), ['submit', 'comment'],
+        'sessions remain sequential and the later action targets the refreshed world');
     } finally {
       h.cleanup();
     }

@@ -150,6 +150,11 @@ async function localPlacementContract(placement) {
     const speedStatus = await requestJson(runner.port, 'GET', '/api/status');
     eq(speedStatus.json.settings.speed.multiplier, 5, placement + ' status exposes the shared Speed state');
 
+    const burstState = await requestJson(runner.port, 'GET', '/api/burst');
+    eq(burstState.status, 200, placement + ' exposes local subscription Burst state');
+    eq(burstState.json.burst.active, false, placement + ' starts without an implicit Burst session');
+    eq(burstState.json.burst.provider, '', placement + ' starts without an implicit provider');
+
     const populationPage = await requestJson(runner.port, 'GET', '/population.html');
     eq(populationPage.status, 404, placement + ' does not expose the hosted population operator page');
 
@@ -275,6 +280,13 @@ async function hostedPlacementContract() {
     eq(hostedSpeed.json.speed.multiplier, 10, 'hosted Speed reports its active multiplier');
     const hostedSpeedStatus = await requestJson(runner.port, 'GET', '/api/status', undefined, ownerHeaders);
     eq(hostedSpeedStatus.json.settings.speed.multiplier, 10, 'hosted status exposes that workspace Speed');
+    const hostedBurst = await requestJson(runner.port, 'GET', '/api/burst', undefined, ownerHeaders);
+    eq(hostedBurst.status, 403, 'hosted workspaces cannot expose personal subscription Burst state');
+    const hostedBurstStart = await requestJson(runner.port, 'PUT', '/api/burst', {
+      provider: 'chatgpt-plan',
+      duration: '30m',
+    }, ownerHeaders);
+    eq(hostedBurstStart.status, 403, 'hosted workspaces cannot start Burst with server-side credentials');
     const secondSession = await requestJson(runner.port, 'POST', '/api/session');
     const secondOwnerStatus = await requestJson(runner.port, 'GET', '/api/status', undefined, {
       'X-Feddit-Bot-Owner': secondSession.json.accessToken,
