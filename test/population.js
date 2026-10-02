@@ -383,6 +383,8 @@ async function run() {
     eq(ready.candidates[1].duplicateRegenerations, 1, 'duplicate regeneration is visible in provenance');
     ok(ready.candidates.every((item) => item.creatorProfile && item.runtimeKernel),
       'rich creator profiles remain separate from compact runtime kernels');
+    ok(ready.candidates.every((item) => item.runtimeKernel.length <= JSON.stringify(item.creatorProfile).length * 0.8),
+      'runtime kernels remain materially smaller than their rich source profiles');
     eq(ready.candidates[0].seed.biography, candidate().creatorProfile.summary,
       'compact creator output derives compatibility seed fields from the rich profile');
     ok(ready.candidates.every((item) => item.communityAffinities.some((entry) => entry.state === 'favored')),

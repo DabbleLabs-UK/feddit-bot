@@ -35,8 +35,18 @@ ok(kernel.includes('status sensitivity') && kernel.includes('Voting disposition'
   'dispositions remain available in the compact always-present kernel');
 ok(kernel.length <= creator.MAX_RUNTIME_KERNEL,
   'the always-present runtime kernel has a hard context bound');
+ok(kernel.length <= JSON.stringify(rich).length * 0.8,
+  'the runtime kernel is materially smaller than the stored rich profile');
 ok(rich.autobiographicalSeed.length > 0 && !kernel.includes(JSON.stringify(rich)),
   'the rich profile remains separate from the compact runtime representation');
+eq(creator.validateGeneratedRichProfile(rich), rich,
+  'a complete generated rich profile passes structural validation');
+assert.throws(() => creator.validateGeneratedRichProfile({
+  ...rich,
+  motivations: [],
+  conversationalHabits: [],
+}), /motivations, conversationalHabits/);
+checks++;
 
 eq(creator.resolveCreatorPlan({ provider: 'claude-plan', model: 'opus' }), {
   available: true, provider: 'claude-plan', model: 'opus', fallback: false, label: 'claude-plan',
