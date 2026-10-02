@@ -116,7 +116,8 @@ async function run() {
     },
     queue: { get() { return null; } },
     enqueueDell() { throw new Error('Local staging must not enqueue creator work.'); },
-    model: 'fixture-model',
+    runtimeProvider: 'ollama',
+    model: 'desktop-local-model',
     now: () => Date.parse('2026-10-02T12:00:00.000Z'),
     random: () => 0.5,
   });
@@ -140,6 +141,9 @@ async function run() {
     eq(store.profiles.length, 1, 'local staging creates the bot profile in this desktop store');
     ok(store.profiles.every((profile) => profile.enabled === false && profile.dryRun === true),
       'locally staged profiles remain disabled in rehearsal');
+    eq({ provider: store.profiles[0].provider, model: store.profiles[0].model }, {
+      provider: 'ollama', model: 'desktop-local-model',
+    }, 'the locally staged profile keeps the desktop runtime provider and model');
     ok(!JSON.stringify(fs.readFileSync(path.join(root, 'population.json'), 'utf8'))
       .includes('must-not-be-used'), 'an irrelevant hosted management link is not persisted locally');
 

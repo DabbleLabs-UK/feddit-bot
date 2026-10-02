@@ -72,7 +72,7 @@ const populationController = createPopulationController({
   profileStore: store,
   turnStore,
   feddit,
-  model: modelCatalog.DELL_SHARED_MODEL,
+  model: PLACEMENT === 'hosted' ? modelCatalog.DELL_SHARED_MODEL : activeDefaultModel(),
   creatorProvider: process.env.FEDDIT_CREATOR_PROVIDER || '',
   creatorModel: process.env.FEDDIT_CREATOR_MODEL || '',
   creatorLabel: process.env.FEDDIT_CREATOR_LABEL || '',
