@@ -1289,6 +1289,46 @@ async function run() {
   }
 
   {
+    const profile = makeProfile('burst-duplicate-votes', false);
+    profile.canReply = true;
+    profile.canStartDiscussions = false;
+    profile.postsPerHour = 0;
+    profile.commentsPerHour = 1;
+    const h = harness({
+      profiles: [profile],
+      feedPosts: [{
+        id: 401, feddit: 'general', author: 'alice', title: 'A voteable discussion',
+        selftext: 'One visible discussion for a bounded Burst reply and vote.', created_utc: 10,
+      }],
+      providerGenerate: async () => ({
+        provider: 'claude-plan', model: 'subscription-test',
+        text: JSON.stringify({
+          reason: 'One reply and one secondary vote fit.',
+          actions: [{ candidate: 'C1', text: 'A concise bounded reply.', reason: 'It is relevant.' }],
+          votes: Array.from({ length: 20 }, (_, index) => ({
+            id: 'V1', direction: 'up', reason: 'The first valid vote reason remains ' + index + '.',
+          })),
+        }),
+        usage: { inputTokens: 20, outputTokens: 20, cachedInputTokens: 0 }, ms: 10,
+      }),
+    });
+    try {
+      const runtime = h.scheduler();
+      const started = runtime.startBurstSession(profile.id, 'claude-plan');
+      await settle(12);
+      const finished = h.turnStore.get(started.turnId);
+      eq(finished.status, 'completed', 'duplicate Burst votes do not prevent durable completion');
+      eq(finished.result.votes.length, 1, 'only one unique offered vote reaches the durable result');
+      eq(finished.result.votes[0].reason, 'The first valid vote reason remains 0.',
+        'the downstream vote retains the first matching decision reason');
+      eq(h.writes.filter((write) => write.type === 'vote').length, 1,
+        'duplicate vote IDs never reach the downstream voting path twice');
+    } finally {
+      h.cleanup();
+    }
+  }
+
+  {
     const profile = makeProfile('burst-wait', false);
     let generations = 0;
     const h = harness({

@@ -41,6 +41,76 @@ const parsed = burst.parsePlan(JSON.stringify({
 }), candidates, []);
 eq(parsed.actions.map((action) => action.candidateId), ['C1', 'C2', 'C3'],
   'one inference can return an ordered bundle capped at three actions');
+
+const voteCandidates = Array.from({ length: 8 }, (_, index) => ({
+  id: 'V' + (index + 1),
+  targetType: index % 2 ? 'comment' : 'post',
+  targetId: index + 1,
+  label: 'Vote candidate ' + (index + 1),
+  content: 'Visible vote candidate ' + (index + 1),
+}));
+let votePlan = burst.parsePlan(JSON.stringify({
+  actions: [{ candidate: 'C1', text: 'One reply.' }],
+  votes: Array.from({ length: 20 }, (_, index) => ({
+    id: 'V1', direction: 'up', reason: 'First reason remains aligned ' + index + '.',
+  })),
+}), candidates, voteCandidates);
+eq(votePlan.votes.length, 1, 'twenty copies of one offered vote ID produce one processed vote');
+eq(votePlan.votes[0].reason, 'First reason remains aligned 0.',
+  'the first duplicate vote decision and reason are retained');
+
+votePlan = burst.parsePlan(JSON.stringify({
+  actions: [{ candidate: 'C1', text: 'One reply.' }],
+  votes: [
+    { id: 'V2', direction: 'down', reason: 'First V2 reason is retained.' },
+    { id: 'V1', direction: 'up', reason: 'The V1 reason stays aligned.' },
+    { id: 'V2', direction: 'up', reason: 'Later V2 reason is ignored.' },
+    { id: 'V3', direction: 'down', reason: 'The V3 reason stays aligned.' },
+    { id: 'V1', direction: 'down', reason: 'Later V1 reason is ignored.' },
+  ],
+}), candidates, voteCandidates);
+eq(votePlan.votes.map((vote) => vote.id), ['V2', 'V1', 'V3'],
+  'mixed duplicates preserve only the first occurrence of each offered ID in order');
+eq(votePlan.votes.map((vote) => vote.reason), [
+  'First V2 reason is retained.',
+  'The V1 reason stays aligned.',
+  'The V3 reason stays aligned.',
+], 'retained vote reasons stay aligned with their first decisions');
+
+votePlan = burst.parsePlan(JSON.stringify({
+  actions: [{ candidate: 'C1', text: 'One reply.' }],
+  votes: [
+    { id: 'V999', direction: 'up', reason: 'Unknown candidates cannot be voted on.' },
+    { id: 'V1', direction: 'down', reason: 'Known candidates remain available.' },
+  ],
+}), candidates, voteCandidates);
+eq(votePlan.votes.map((vote) => vote.id), ['V1'], 'unknown vote IDs are ignored safely');
+
+const normalVotes = voteCandidates.slice(0, 3).map((vote, index) => ({
+  id: vote.id,
+  direction: index === 1 ? 'down' : 'up',
+  reason: 'Normal unique reason ' + (index + 1) + ' remains unchanged.',
+}));
+votePlan = burst.parsePlan(JSON.stringify({
+  actions: [{ candidate: 'C1', text: 'One reply.' }],
+  votes: normalVotes,
+}), candidates, voteCandidates);
+eq(votePlan.votes.map((vote) => ({ id: vote.id, direction: vote.direction, reason: vote.reason })), normalVotes,
+  'a normal unique vote list remains unchanged');
+
+votePlan = burst.parsePlan(JSON.stringify({
+  actions: [{ candidate: 'C1', text: 'One reply.' }],
+  votes: [
+    ...voteCandidates.map((vote) => ({
+      id: vote.id, direction: 'up', reason: 'A valid bounded vote reason for ' + vote.id + '.',
+    })),
+    ...voteCandidates.map((vote) => ({
+      id: vote.id, direction: 'down', reason: 'A duplicate reason that must be ignored for ' + vote.id + '.',
+    })),
+  ],
+}), candidates, voteCandidates);
+eq(votePlan.votes.length, voteCandidates.length,
+  'the maximum valid unique vote result cannot exceed the offered H14 slate');
 eq(burst.parsePlan('{"wait":true,"reason":"Nothing fits.","actions":[]}', candidates, []).wait, true,
   'WAIT remains a valid zero-action session');
 eq(burst.parsePlan('not json', candidates, []).actions, [],
