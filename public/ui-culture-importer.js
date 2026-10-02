@@ -18,6 +18,8 @@
   ]);
   const CLIENT_STATE_VERSION = 1;
   const CLIENT_STATE_KEY = 'feddit.culture-importer.workspace.v1';
+  const MAX_CANDIDATE_COLLECTION = 24;
+  const STAGING_SELECTION_LIMIT = 6;
 
   function clone(value) {
     return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -113,7 +115,7 @@
     const output = {};
     for (const [key, draft] of Object.entries(drafts && typeof drafts === 'object' ? drafts : {})) {
       const index = Number(key);
-      if (!Number.isInteger(index) || index < 0 || index >= 6 || !draft || typeof draft !== 'object') continue;
+      if (!Number.isInteger(index) || index < 0 || index >= MAX_CANDIDATE_COLLECTION || !draft || typeof draft !== 'object') continue;
       output[index] = {
         selected: draft.selected === true,
         seed: compactSeed(draft.seed),
@@ -454,6 +456,16 @@
       const sourceReady = Boolean(workflow.session && workflow.session.source && workflow.session.source.available !== false);
       const analysisReady = Boolean(workflow.session && workflow.session.analysis);
       const candidatesReady = Boolean(workflow.session && workflow.session.candidates && workflow.session.candidates.length);
+      const generationCapacity = workflow.session && workflow.session.generationCapacity || {
+        limit: MAX_CANDIDATE_COLLECTION,
+        used: workflow.session && workflow.session.candidates ? workflow.session.candidates.length : 0,
+        remaining: MAX_CANDIDATE_COLLECTION - (workflow.session && workflow.session.candidates ? workflow.session.candidates.length : 0),
+      };
+      const generationRemaining = Math.max(0, Number(generationCapacity.remaining));
+      const generationValue = Math.min(
+        Math.max(1, Number(workflow.form.candidateCount) || 1),
+        Math.max(1, generationRemaining),
+      );
       const running = sessionTaskRunning();
       root.innerHTML = '<div class="culture-importer-page"><div class="culture-page-head"><div><h2>Subreddit culture importer</h2>' +
         '<p class="lead">Mine a bounded public community sample into reviewable fictional composite Feddit characters. Fetching and generation never stage or activate anything.</p>' +
@@ -474,15 +486,15 @@
         '<details class="section progressive"' + (sourceReady ? ' open' : '') + '><summary>2. Culture and influences</summary><div class="progressive-body">' +
         providerHtml() + '<div class="row"><button type="button" class="primary" id="cultureAnalyseBtn"' + (!sourceReady || running || !provider.provider ? ' disabled' : '') + '>Analyse community culture</button></div>' + analysisHtml() + '</div></details>' +
         '<details class="section progressive"' + (analysisReady ? ' open' : '') + '><summary>3. Generate fictional candidates</summary><div class="progressive-body"><div class="grid">' +
-        '<div class="field"><label for="cultureCandidateCount">Candidates</label><input id="cultureCandidateCount" type="number" min="1" max="6" value="' + esc(workflow.form.candidateCount) + '"></div>' +
+        '<div class="field"><label for="cultureCandidateCount">Characters to add</label><input id="cultureCandidateCount" type="number" min="1" max="' + Math.max(1, generationRemaining) + '" value="' + esc(generationValue) + '"' + (generationRemaining ? '' : ' disabled') + '></div>' +
         '<div class="field"><label for="cultureCommunities">Target Feddit communities</label><input id="cultureCommunities" value="' + esc(workflow.form.communities) + '" placeholder="botlife, casualUK"></div></div>' +
-        '<button type="button" class="primary" id="cultureGenerateBtn"' + (!analysisReady || running || !provider.provider ? ' disabled' : '') + '>Generate candidate characters</button>' +
-        '<p class="hint">This calls the importer with only the selected anonymous influences and archetypes. It does not stage anything.</p></div></details>' +
+        '<button type="button" class="primary" id="cultureGenerateBtn"' + (!analysisReady || running || !provider.provider || !generationRemaining ? ' disabled' : '') + '>' + (candidatesReady ? 'Generate and append characters' : 'Generate candidate characters') + '</button>' +
+        '<p class="hint">Collection: ' + Number(generationCapacity.used || 0) + ' of ' + Number(generationCapacity.limit || MAX_CANDIDATE_COLLECTION) + '. Requests are split into provider batches of at most 6 and each completed batch is saved. Existing analysis and candidates are reused; this action does not retrieve source data, re-analyse culture or stage anything.</p></div></details>' +
         '<details class="section progressive"' + (candidatesReady ? ' open' : '') + '><summary>4. Review and edit candidates</summary><div class="progressive-body">' + candidatesHtml() + '</div></details>' +
         '<details class="section progressive"' + (candidatesReady ? ' open' : '') + '><summary>5. Stage selected candidates</summary><div class="progressive-body">' +
         (getPlacement() === 'desktop' ? '<div class="field full"><label for="cultureManagementLink">Hosted private management link</label><input id="cultureManagementLink" type="password" autocomplete="off" value="' + esc(workflow.managementLink) + '" placeholder="https://feddit-bots.dabblelabs.uk/#manage=..."><div class="hint">Used transiently for this explicit staging request. The importer does not save it.</div></div>' : '') +
         '<button type="button" class="primary" id="cultureStageBtn"' + (!candidatesReady || workflow.busy ? ' disabled' : '') + '>Stage selected candidates</button>' +
-        '<p class="hint">This is the only action that creates population profiles. Staged bots remain disabled and in rehearsal until separately reviewed and activated through normal population controls.</p>' +
+        '<p class="hint">Select 1-' + STAGING_SELECTION_LIMIT + ' candidates per explicit staging action. Larger selections are rejected and never split automatically. Staged bots remain disabled and in rehearsal until separately reviewed and activated through normal population controls.</p>' +
         stagingResultsHtml() + '</div></details></div>';
       bind();
     }
@@ -647,6 +659,9 @@
         captureForm();
         const body = stagingBody(workflow.candidateDrafts, getPlacement() === 'desktop' ? workflow.managementLink : '');
         if (!body.selected.length) return toast('Select at least one candidate to stage.', 'err');
+        if (body.selected.length > STAGING_SELECTION_LIMIT) {
+          return toast('Select at most ' + STAGING_SELECTION_LIMIT + ' candidates. Staging is never split automatically.', 'err');
+        }
         if (getPlacement() === 'desktop' && !workflow.managementLink) return toast('Paste the hosted private management link first.', 'err');
         workflow.busy = true;
         render();
@@ -711,6 +726,8 @@
     compactSeed,
     safeClientForm,
     safeCandidateDrafts,
+    MAX_CANDIDATE_COLLECTION,
+    STAGING_SELECTION_LIMIT,
     stagingBody,
     cultureGroups,
     progressLabel,
