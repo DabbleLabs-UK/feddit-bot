@@ -9,7 +9,7 @@ The importer owns five steps:
 1. Fetch recent public posts and comments through a replaceable source adapter.
 2. Normalize source items and preserve source identifiers, timestamps, parent links and provenance.
 3. Build deterministic contributor and interaction aggregates.
-4. Ask a caller-selected provider and model for one batched culture analysis and one batched set of composite characters.
+4. Ask a caller-selected provider and model for one batched culture analysis and one or more bounded batches of composite characters.
 5. Return exact `lib/population.normalizeSeed` objects plus separate importer metadata.
 
 The ordinary backend remains independent of its optional human-facing UI and does not change the population controller. The Developer-tools UI calls the same public staged methods through private runner workspaces. The staging bridge is additive: callers can continue to use the importer API and `POST /api/population/external-seeds/stage` directly. The bridge sends only selected compact seeds, the bounded importer/analysis association and the existing cohort configuration. Rich `importerMetadata` remains review-only and is never added to a seed, profile, persona or runtime prompt.
@@ -24,13 +24,15 @@ The UI keeps the workflow explicit:
 
 1. choose a subreddit, bounded post/comment sample and recent window, then reuse a compatible private cache entry or explicitly retrieve fresh source data;
 2. choose one of the runner's already-connected providers and models, then inspect the normalized culture summary and anonymous contributor evidence;
-3. select contributor influences and archetypes, choose one to six candidates and target Feddit communities, then generate fictional composites;
+3. select contributor influences and archetypes, choose how many fictional composites to add and target Feddit communities, then generate them into the persisted review collection;
 4. review, select and edit every compact population-seed field;
 5. explicitly stage the selected candidates through the frozen external-seed boundary.
 
-Fetch, analysis and generation do not stage anything. Staging stops at disabled rehearsal profiles; activation and LIVE publishing remain separate population actions. Long-running operations expose progress and cancellation. Provider or validation failures remain visible in the session, and partial staging results are shown per seed.
+Fetch, analysis and generation do not stage anything. The review collection holds up to 24 candidates. Each generation action can request 1-24 candidates within the remaining collection capacity and appends them without replacing earlier candidates, edits, selections or staging evidence. Provider requests are split into batches of at most six. Each completed batch is persisted immediately, so a later batch failure or cancellation leaves completed candidates reviewable. Generation reuses the saved corpus and completed analysis; it never refetches or re-analyses automatically.
 
-The raw Reddit corpus remains server-side. A runner keeps at most eight review workspaces per authorised operator for up to six hours and writes their secret-free snapshots atomically to the gitignored `data/culture-import-workspaces.json` file. The workspace stores the exact source settings, a cache key rather than a second raw-corpus copy, normalized analysis, generated candidates, progress, errors and staging outcomes. A backend restart rehydrates the corpus from that private reference. A running or cancelling action interrupted by restart becomes a visible terminal error and is never resumed automatically.
+Staging remains a separate 1-6 seed action. A larger selection is rejected before registration and is never split into several cohorts. Staging stops at disabled rehearsal profiles; activation and LIVE publishing remain separate population actions. Long-running operations expose progress and cancellation. Provider or validation failures remain visible in the session, and partial staging results are shown per seed.
+
+The raw Reddit corpus remains server-side. A runner keeps at most eight review workspaces per authorised operator for up to six hours and writes their secret-free snapshots atomically to the gitignored `data/culture-import-workspaces.json` file. The workspace stores the exact source settings, a cache key rather than a second raw-corpus copy, normalized analysis, up to 24 generated candidates with stable deterministic IDs and completed-batch provenance, progress, errors and staging outcomes. A backend restart rehydrates the corpus from that private reference. A running or cancelling action interrupted by restart becomes a visible terminal error and is never resumed automatically; candidates from batches completed before interruption remain saved.
 
 The browser stores only the opaque workspace ID and secret-free review state needed to preserve edits across a page refresh. It never stores the FetchLayer key or hosted management link. On reopen it first reads the saved workspace. When upgrading the single-owner desktop from the older in-memory-only implementation, the backend can reconstruct a workspace from the newest private corpus cache entry without calling FetchLayer. Hosted restoration remains owner-bound and does not adopt an unowned cache entry. Restoration never calls an AI provider and never repeats staging.
 
@@ -169,10 +171,12 @@ Use `--refresh` to bypass a valid cache and Ctrl+C to cancel. The standalone CLI
 
 The caller always chooses the provider and model. The importer passes them through the existing provider abstraction using `providerOverride`; it never changes a bot or runner's saved provider settings.
 
-A normal complete import makes two inference calls:
+A direct complete import requesting at most six candidates normally makes two inference calls:
 
 1. one structured culture and contributor analysis for the entire bounded sample digest;
-2. one structured batch that generates all requested fictional candidates.
+2. one structured batch that generates the requested fictional candidates.
+
+The Developer-tools collection can request up to 24 candidates. It keeps the culture analysis fixed and divides generation into provider requests of at most six candidates. Each provider batch retains the existing single optional repair attempt, so the number and size of calls remain bounded. Successive generation includes all registered population seeds and all already accepted review candidates in duplicate detection.
 
 Deterministic contributor aggregation, duplicate detection, username checks and population-seed normalization require no model call.
 

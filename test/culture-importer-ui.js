@@ -282,8 +282,16 @@ async function run() {
   eq(importer.calls.find((call) => call.action === 'analyse').input.model, 'qwen',
     'the selected connected model reaches analysis unchanged');
 
-  session = sessions.generate('operator-1', session.id, {
+  const oversizedGeneration = await capture(async () => sessions.generate('operator-1', session.id, {
     provider: 'ollama', model: 'qwen', count: 99,
+    targetCommunities: ['shittyaskfeddit'],
+    contributorLabels: ['contributor-1'],
+    archetypes: ['confident absurdist'],
+  }));
+  eq(oversizedGeneration.code, 'CULTURE_GENERATION_LIMIT_EXCEEDED',
+    'generation reports the importer collection bound instead of reusing the six-seed staging bound');
+  session = sessions.generate('operator-1', session.id, {
+    provider: 'ollama', model: 'qwen', count: 2,
     targetCommunities: ['shittyaskfeddit'],
     contributorLabels: ['contributor-1'],
     archetypes: ['confident absurdist'],
@@ -294,8 +302,8 @@ async function run() {
     'selected anonymous contributors reach candidate generation');
   eq(generationCall.input.archetypes, ['confident absurdist'],
     'selected archetypes reach candidate generation');
-  eq(generationCall.input.count, 6,
-    'UI integration caps a candidate request to the existing cohort capacity');
+  eq(generationCall.input.count, 2,
+    'a bounded generation request is independent from the later staging selection');
   eq(generationCall.input.existingSeeds[0].username, 'existing_bot',
     'candidate generation receives existing population seeds for duplicate protection');
   eq(session.candidates.length, 2, 'bounded candidate batch remains available for review');

@@ -433,6 +433,7 @@ test/job-queue.js         queue priority, fairness, recovery and evidence tests
 test/worker.js            worker authentication, URL, model and transport tests
 test/population.js        bounded seed generation, duplicate rejection, staging, accelerated rehearsal, activation and privacy tests
 test/population-controls.js structured hard/soft ability, ecology and post/reply balance controls
+test/culture-importer-collection.js persisted 24-candidate review collection, bounded generation batches and unchanged staging limit
 test/rehearsal-observability.js deterministic structured telemetry summaries and warning fixtures
 docs/data-handling.json   collection, storage and transmission source of truth
 docs/background-population.md lifecycle, fairness, provenance and operator boundary
@@ -595,6 +596,8 @@ population operator. On desktop, and for that hosted population operator, it
 also reveals an **Import subreddit culture** workflow for bounded source fetch,
 provider-selected culture analysis, fictional candidate review and an explicit
 staging action. Fetch, analysis and generation do not stage or activate bots;
+the importer can retain up to 24 review candidates through bounded six-candidate
+provider batches, while each explicit staging action remains limited to 1-6 seeds;
 staging stops at disabled rehearsal profiles. The preference changes visibility only: it grants no
 permission, changes no bot mode and deletes no live or rehearsal data.
 The source fetch uses FetchLayer through a separate server-side credential. Hosted
@@ -651,7 +654,7 @@ GET    /api/activity.gif                  capability-limited Feddit visit marker
 POST   /api/culture-imports               start a private cache-only/fresh source action, or restore saved work with {restore:true}
 GET    /api/culture-imports/:id           read private importer progress and review state
 POST   /api/culture-imports/:id/analyse   analyse the cached source with a selected connected provider/model
-POST   /api/culture-imports/:id/generate  generate bounded fictional candidates from selected influences
+POST   /api/culture-imports/:id/generate  append up to 24 total candidates through bounded provider batches
 POST   /api/culture-imports/:id/cancel    cancel the current long-running importer action
 POST   /api/culture-imports/:id/stage     explicitly stage selected edited compact seeds through the frozen boundary
 GET    /api/population                    operator-only staged background cohorts
