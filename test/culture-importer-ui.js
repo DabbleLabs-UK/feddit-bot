@@ -215,6 +215,7 @@ async function run() {
     'browser refresh retains only the opaque backend workspace reference and review state');
 
   const restoreRequests = [];
+  const restoredCandidate = { id: 'culture_candidate_00000000000000000001', seed: seed('server-original') };
   const restoreController = ui.createController({
     storage: { getItem() { return null; }, setItem() {} },
     getDeveloperTools: () => true,
@@ -223,12 +224,30 @@ async function run() {
     toast() {},
     async api(route, options) {
       restoreRequests.push({ route, options });
+      if (options && options.method === 'PUT') {
+        return {
+          session: {
+            ...restoreController.workflow.session,
+            updatedAt: '2026-10-02T12:01:00.000Z',
+            candidateReview: { drafts: structuredClone(options.body.drafts) },
+          },
+        };
+      }
       return {
         session: {
           id: 'restored-session', createdAt: '2026-10-02T12:00:00.000Z', updatedAt: '2026-10-02T12:00:00.000Z',
           input: { subreddit: 'ExampleSub', maxPosts: 25, maxComments: 100 }, task: null,
           source: { available: true, subreddit: 'ExampleSub', posts: 25, comments: 100, warnings: [], cache: {} },
-          sourceStatus: { state: 'available', message: 'Restored.' }, analysis: null, candidates: [], staging: null,
+          sourceStatus: { state: 'available', message: 'Restored.' }, analysis: null,
+          candidates: [restoredCandidate], staging: null,
+          candidateReview: {
+            drafts: [{
+              id: restoredCandidate.id,
+              index: 0,
+              selected: false,
+              seed: { ...seed('server-original'), biography: 'Durably edited biography' },
+            }],
+          },
         },
       };
     },
@@ -240,6 +259,16 @@ async function run() {
     'opening the importer asks only for saved-work restoration and does not start retrieval');
   eq(restoreController.workflow.session.id, 'restored-session',
     'the restored backend workspace replaces the empty browser workflow after refresh');
+  eq(restoreController.workflow.candidateDrafts[0].seed.biography, 'Durably edited biography',
+    'reopening hydrates candidate edits from the private workspace when browser state is absent');
+  eq(restoreController.workflow.candidateDrafts[0].selected, false,
+    'reopening hydrates candidate selection from the private workspace');
+  restoreController.workflow.candidateDrafts[0].seed.biography = 'Edited after reopen';
+  await restoreController.saveReviewNow();
+  eq(restoreRequests[1].route, '/api/culture-imports/restored-session/review',
+    'reopened candidate work saves back to the same private workspace');
+  eq(restoreRequests[1].options.body.drafts[0].seed.biography, 'Edited after reopen',
+    'the durable review save includes the current compact edit');
 
   const importer = mockImporter();
   let now = Date.parse('2026-10-02T12:00:00.000Z');

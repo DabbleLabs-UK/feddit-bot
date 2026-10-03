@@ -124,6 +124,32 @@
     return output;
   }
 
+  function durableCandidateDrafts(candidates, candidateReview) {
+    const saved = new Map((candidateReview && Array.isArray(candidateReview.drafts) ? candidateReview.drafts : [])
+      .map((draft) => [String(draft && draft.id || ''), draft]));
+    const drafts = {};
+    (Array.isArray(candidates) ? candidates : []).forEach((candidate, index) => {
+      const draft = saved.get(String(candidate && candidate.id || ''));
+      if (!draft) return;
+      drafts[index] = {
+        selected: draft.selected !== false,
+        seed: compactSeed(draft.seed),
+      };
+    });
+    return drafts;
+  }
+
+  function candidateReviewBody(candidates, drafts) {
+    return {
+      drafts: (Array.isArray(candidates) ? candidates : []).map((candidate, index) => ({
+        id: String(candidate && candidate.id || ''),
+        index,
+        selected: Boolean(drafts && drafts[index] && drafts[index].selected),
+        seed: compactSeed(drafts && drafts[index] && drafts[index].seed || candidate && candidate.seed),
+      })).filter((draft) => draft.id),
+    };
+  }
+
   function normalizedStagingDestination(placement, requested) {
     if (placement === 'hosted') return 'hosted';
     return String(requested || '').toLowerCase() === 'hosted' ? 'hosted' : 'local';
@@ -438,6 +464,8 @@
       : options.storage;
     const storageKey = String(options.storageKey || CLIENT_STATE_KEY);
     const pollWait = options.pollWait || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+    const setReviewTimeout = options.setReviewTimeout || ((handler, milliseconds) => setTimeout(handler, milliseconds));
+    const clearReviewTimeout = options.clearReviewTimeout || ((timer) => clearTimeout(timer));
     const workflow = defaultWorkflow();
     const savedClientState = readClientState(storage, storageKey);
     if (savedClientState) {
@@ -450,6 +478,8 @@
     let root = null;
     let hasRenderedImporter = false;
     let lastRenderedSessionId = '';
+    let reviewSaveTimer = null;
+    let reviewSavePromise = null;
 
     function persistClientState() {
       return writeClientState(storage, {
@@ -459,6 +489,41 @@
         contributorLabels: [...workflow.contributorLabels],
         archetypes: [...workflow.archetypes],
       }, storageKey);
+    }
+
+    async function saveReviewNow(quiet = false) {
+      if (reviewSaveTimer) {
+        clearReviewTimeout(reviewSaveTimer);
+        reviewSaveTimer = null;
+      }
+      if (!workflow.session || !Array.isArray(workflow.session.candidates) || !workflow.session.candidates.length) return null;
+      if (reviewSavePromise) await reviewSavePromise;
+      const sessionId = workflow.session.id;
+      const body = candidateReviewBody(workflow.session.candidates, workflow.candidateDrafts);
+      reviewSavePromise = api('/api/culture-imports/' + encodeURIComponent(sessionId) + '/review', {
+        method: 'PUT',
+        body,
+      }).then((response) => {
+        if (workflow.session && workflow.session.id === sessionId && response && response.session) {
+          workflow.session.candidateReview = clone(response.session.candidateReview);
+          workflow.session.updatedAt = response.session.updatedAt;
+        }
+        return response;
+      }).catch((error) => {
+        if (!quiet) toast('Could not save candidate review: ' + error.message, 'err');
+        throw error;
+      }).finally(() => {
+        reviewSavePromise = null;
+      });
+      return reviewSavePromise;
+    }
+
+    function scheduleReviewSave() {
+      if (reviewSaveTimer) clearReviewTimeout(reviewSaveTimer);
+      reviewSaveTimer = setReviewTimeout(() => {
+        reviewSaveTimer = null;
+        saveReviewNow(true).catch(() => {});
+      }, 400);
     }
 
     function allowed() {
@@ -849,7 +914,12 @@
         workflow.form.providerChoice = providerValue(session.analysisProvider);
       }
       if (session.candidates && session.candidates.length) {
-        workflow.candidateDrafts = createCandidateDrafts(session.candidates, sameSession || hadCandidates ? workflow.candidateDrafts : null);
+        const durableDrafts = durableCandidateDrafts(session.candidates, session.candidateReview);
+        const hasClientDrafts = Object.keys(workflow.candidateDrafts || {}).length > 0;
+        const priorDrafts = ((sameSession && hasClientDrafts) || hadCandidates)
+          ? workflow.candidateDrafts
+          : durableDrafts;
+        workflow.candidateDrafts = createCandidateDrafts(session.candidates, priorDrafts);
         const confirmed = confirmedStagingCandidateIds(session.staging);
         session.candidates.forEach((candidate, index) => {
           if (confirmed.has(String(candidate.id || '')) && workflow.candidateDrafts[index]) {
@@ -1001,6 +1071,11 @@
         if (showsHostedManagementLink(getPlacement(), destination) && !workflow.managementLink) {
           return toast('Paste the private management link for the hosted workspace first.', 'err');
         }
+        try {
+          await saveReviewNow(false);
+        } catch {
+          return;
+        }
         const managementLink = workflow.managementLink;
         workflow.managementLink = '';
         workflow.stagingCancelRequested = false;
@@ -1053,11 +1128,13 @@
       root.querySelectorAll('[data-candidate-selected]').forEach((element) => element.onchange = () => {
         updateCandidateDraft(workflow.candidateDrafts, Number(element.dataset.candidateSelected), 'selected', element.checked);
         persistClientState();
+        scheduleReviewSave();
       });
       root.querySelectorAll('[data-candidate-index][data-seed-field]').forEach((element) => element.oninput = () => {
         const value = element.type === 'checkbox' ? element.checked : element.value;
         updateCandidateDraft(workflow.candidateDrafts, Number(element.dataset.candidateIndex), element.dataset.seedField, value);
         persistClientState();
+        scheduleReviewSave();
       });
       ['#cultureSubreddit', '#culturePostCount', '#cultureCommentCount', '#cultureWindow', '#cultureCandidateCount', '#cultureCommunities', '#cultureManagementLink']
         .forEach((selector) => on(selector, 'input', captureForm));
@@ -1077,6 +1154,7 @@
         else restoreWorkspace();
       },
       render,
+      saveReviewNow,
       allowed,
       hasState() { return Boolean(workflow.session); },
     };
@@ -1093,6 +1171,8 @@
     compactSeed,
     safeClientForm,
     safeCandidateDrafts,
+    durableCandidateDrafts,
+    candidateReviewBody,
     MAX_CANDIDATE_COLLECTION,
     STAGING_SELECTION_LIMIT,
     normalizedStagingDestination,

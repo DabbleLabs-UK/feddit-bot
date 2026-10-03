@@ -196,6 +196,8 @@ async function waitUntil(predicate, message) {
 
 async function run() {
   const waits = [];
+  const reviewTimers = [];
+  const reviewSaves = [];
   const responses = [
     session(task('running', 'Provider progress one.', 1)),
     session(task('running', 'Provider progress two.', 2)),
@@ -211,7 +213,25 @@ async function run() {
     pollWait() {
       return new Promise((resolve) => waits.push(resolve));
     },
-    async api(route) {
+    setReviewTimeout(handler) {
+      reviewTimers.push(handler);
+      return handler;
+    },
+    clearReviewTimeout(handler) {
+      const index = reviewTimers.indexOf(handler);
+      if (index >= 0) reviewTimers.splice(index, 1);
+    },
+    async api(route, options) {
+      if (options && options.method === 'PUT') {
+        eq(route, '/api/culture-imports/polling-session/review', 'candidate review saves to the existing workspace');
+        reviewSaves.push(structuredClone(options.body));
+        return {
+          session: {
+            ...structuredClone(controller.workflow.session),
+            candidateReview: { drafts: structuredClone(options.body.drafts) },
+          },
+        };
+      }
       eq(route, '/api/culture-imports/polling-session', 'polling reads only the active importer workspace');
       return { session: structuredClone(responses[apiCalls++]) };
     },
@@ -234,6 +254,7 @@ async function run() {
   root.subreddit.setSelectionRange(3, 10, 'forward');
   root.candidateSelection.checked = false;
   root.candidateSelection.onchange();
+  eq(reviewTimers.length, 1, 'an edited selection schedules one durable review save');
   const focusedInput = root.subreddit;
 
   waits.shift()();
@@ -264,6 +285,10 @@ async function run() {
     'a necessary terminal rerender restores the text selection');
   eq(root.candidateSelection.checked, false, 'a necessary terminal rerender restores candidate selection');
   ok(root.progressUpdates.at(-1).includes('Generation completed.'), 'the terminal progress message is visible');
+  reviewTimers.shift()();
+  await waitUntil(() => reviewSaves.length === 1, 'the durable candidate review save');
+  eq(reviewSaves[0].drafts[0].selected, false, 'saving after progress polling preserves the revised selection');
+  eq(apiCalls, 3, 'saving review state does not trigger retrieval, AI generation, staging or another poll');
 
   console.log('culture importer section state: ' + checks + ' checks passed');
 }
