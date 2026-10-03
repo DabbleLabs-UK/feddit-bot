@@ -202,9 +202,11 @@ async function run() {
       canReply: true,
       canStartDiscussions: false,
       canShareLinks: true,
+      canVote: true,
       postsPerHour: 0.2,
       articlePostsPerHour: 0.3,
       commentsPerHour: 1,
+      votesPerHour: 0.4,
       enabled: false,
       dryRun: true,
       botOrigin: 'user',
@@ -215,10 +217,12 @@ async function run() {
     eq(editable.json.profile.toneNotes, 'Operator-edited tone.', 'ordinary editor saves system bot tone notes');
     eq(editable.json.profile.readFeddits, ['shittyaskfeddit'], 'ordinary editor saves system bot communities');
     eq(editable.json.profile.canShareLinks, true, 'ordinary editor saves system bot abilities');
+    eq(editable.json.profile.canVote, true, 'ordinary editor saves the voting ability');
     eq(editable.json.profile.postsPerHour, 0.2, 'ordinary editor saves system bot post frequency');
     eq(editable.json.profile.articlePostsPerHour, 0.3,
       'ordinary editor saves system bot article frequency');
     eq(editable.json.profile.commentsPerHour, 1, 'ordinary editor saves system bot reply frequency');
+    eq(editable.json.profile.votesPerHour, 0.4, 'ordinary editor saves system bot voting frequency');
     eq(editable.json.profile.populationCadenceMode, 'custom',
       'editing population frequencies switches the bot to persistent custom cadence');
     const savedAfterCadence = JSON.parse(fs.readFileSync(path.join(dataDir, 'profiles.json'), 'utf8'))
@@ -229,12 +233,16 @@ async function run() {
       'changing population article frequency discards the obsolete live due time');
     eq(savedAfterCadence.sched.nextCommentAt, null,
       'changing population reply frequency discards the obsolete live due time');
+    eq(savedAfterCadence.sched.nextVoteAt, null,
+      'changing population vote frequency discards the obsolete live due time');
     eq(savedAfterCadence.simulationState.sched.nextPostAt, null,
       'changing population post frequency discards the obsolete rehearsal due time');
     eq(savedAfterCadence.simulationState.sched.nextArticleAt, null,
       'changing population article frequency discards the obsolete rehearsal due time');
     eq(savedAfterCadence.simulationState.sched.nextCommentAt, null,
       'changing population reply frequency discards the obsolete rehearsal due time');
+    eq(savedAfterCadence.simulationState.sched.nextVoteAt, null,
+      'changing population vote frequency discards the obsolete rehearsal due time');
     eq(editable.json.profile.botOrigin, 'system', 'ordinary editor cannot replace system origin');
     eq(editable.json.profile.populationSeed.temperament, 'curious', 'ordinary editor cannot replace seed provenance');
     const biography = await request(port, 'PUT', '/api/profiles/' + systemProfileId + '/biography', {
@@ -324,7 +332,7 @@ async function run() {
     const rejectedConfiguration = await request(port, 'POST', '/api/population/cohorts', {
       count: 2,
       configuration: {
-        strength: 'hard', reply: 'disabled', discuss: 'disabled', links: 'disabled',
+        strength: 'hard', reply: 'disabled', discuss: 'disabled', links: 'disabled', vote: 'disabled',
       },
     }, accessToken);
     eq(rejectedConfiguration.status, 409, 'contradictory hard cohort controls are rejected at the API boundary');
@@ -332,7 +340,7 @@ async function run() {
 
     const configuration = {
       strength: 'hard', activity: 'quiet', balance: 'mostly-replies',
-      reply: 'enabled', discuss: 'disabled', links: 'vary',
+      reply: 'enabled', discuss: 'disabled', links: 'vary', vote: 'vary', mode: 'varied',
     };
     const created = await request(port, 'POST', '/api/population/cohorts', {
       count: 2, direction, configuration,

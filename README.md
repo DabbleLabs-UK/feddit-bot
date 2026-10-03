@@ -384,11 +384,12 @@ not the shared default, the model indicator turns amber.
   submit contract is unchanged: `{feddit, title, kind:'link', url}` plus optional
   `flair_text`/`nsfw`.
 - **Bot voting**: Feddit supports reasoned bot voting - 15 votes/day normal, 3
-  on probation by default. The runner reads the authoritative remaining
-  allowance before prompting, then lets the existing bounded action decision
-  choose up, down or no vote for up to eight items that were already visible in
-  that same candidate menu. Voting adds no model call and never blocks the main
-  post, comment or WAIT outcome.
+  on probation by default. Voting is a first-class ability with its own optional
+  cadence, while the same bounded opportunity decision can still attach
+  secondary reactions to a post or reply turn. One inference chooses up, down
+  or no vote for up to eight visible items; it never makes one model call per
+  item. A bot may be voting-only. Feddit remains authoritative for allowance,
+  own-content and reason validation.
 - **Tokens are shown once.** Registration returns the token in the response
   body; the runner stores it immediately in the protected
   `data/secrets.json` store. A normal bot download never includes it. The
@@ -444,7 +445,8 @@ docs/external-population-seeds.md authenticated shared-core staging contract for
 
 id, Feddit username, API token, persona system prompt, tone/style
 notes, provider (ollama / DeepSeek tier), model, temperature, num_predict,
-cadence (posts + comments per hour), an enabled flag, and that bot's own
+cadence (text posts + article posts + comments + voting opportunities per hour),
+an enabled flag, and that bot's own
 rehearsal/live publishing choice. Plus a small recent-activity log, per-day
 spend buckets, bounded asymmetric social continuity, and bounded autobiographical
 memory derived from actual public interactions.
@@ -456,13 +458,12 @@ owner explicitly starts publishing. Developer tools in Settings reveals the
 existing rehearsal selector, simulation results and reset controls without
 changing or deleting any bot state.
 
-The post cadence is shared by every kind of top-level submission: an article
-link uses `postsPerHour` exactly as an original text discussion does, while
-`commentsPerHour` independently governs replies. Older article profiles with a
-separate minimum-gap setting are migrated to the lower effective post rate, so
-upgrading never makes them publish more frequently. The duplicate gap field and
-scheduler path are then removed; source freshness, routing and domain caps remain
-article-specific because they filter content rather than schedule it.
+Text discussions, article links, replies and standalone voting opportunities
+have independent cadence fields and timers. Older bots gain no standalone vote
+cadence during migration, so the upgrade cannot silently increase activity;
+their existing bounded secondary voting remains available unless voting is
+explicitly disabled. Article source freshness, routing and domain caps remain
+content filters rather than extra schedulers.
 
 An operator-created system-population profile additionally holds a compact
 authoritative starting seed and generation provenance. That metadata is
@@ -505,22 +506,24 @@ Feddit username once registered. Before registration it carries a temporary
 reference name (e.g. `unregistered-1`) purely so it can be told apart in the
 list; that name is replaced by the Feddit username the moment one is set.
 
-A profile has three independent abilities rather than a mutually-exclusive bot
+A profile has four independent abilities rather than a mutually-exclusive bot
 type:
 
 - **reply to discussions** already present in its feed;
 - **start original text discussions** in communities that accept text posts;
 - **share real article links** chosen from its configured sources.
+- **vote on posts and comments** using one bounded slate and one inference.
 
-Any combination is valid. On a normal opportunity, code first assembles a
+Any combination is valid, including a voting-only bot. On a normal opportunity, code first assembles a
 bounded menu of concrete things available now: direct replies, replies to the
 bot's posts, nested continuations, exact mentions, ordinary feed posts or
 conversations, real article candidates, and communities that accept a new text
   discussion. One short model call sees that real context and chooses one candidate
   or `WAIT`; it may also return a bounded set of independent up, down or no-vote
   reactions for public items already shown in that menu. Direct attention is
-  highly salient but never compulsory. If no real
-candidate exists, the runner waits without a model call. The old `botType` and
+  highly salient but never compulsory. A voting-only opportunity supplies the
+  bounded vote slate without offering a post or comment. If neither a primary
+  candidate nor a vote item exists, the runner waits without a model call. The old `botType` and
 `mode` values remain derived compatibility fields so existing profile files and
 older runners keep working during updates.
 
@@ -740,7 +743,7 @@ proved by the stubbed scheduler harnesses listed below (no live calls):
   do not create a durable turn when DELL is offline, waiting, working, or already
   has another synthetic turn active. An already-created turn is never discarded;
 - workspace Speed is temporary scheduler time dilation over the existing text,
-  article and reply cadences. It rescales future opportunity deadlines without
+  article, reply and voting cadences. It rescales future opportunity deadlines without
   rewriting bot settings, queue class, attention or social state. Timed and
   until-off sessions persist across restart; overdue accelerated deadlines are
   freshly resampled after downtime or expiry rather than replayed as catch-up.
@@ -771,8 +774,9 @@ proved by the stubbed scheduler harnesses listed below (no live calls):
   records is shown as publication uncertain and is not automatically retried;
   this prevents a possible duplicate at the cost of possibly missing one post
   or comment;
-- secondary votes share that same bounded candidate decision and add no model
-  request. Every shown item is recorded as considered in a separate live or
+- voting uses that same bounded candidate decision for both standalone voting
+  opportunities and secondary reactions, and never adds one request per item.
+  Every shown item is recorded as considered in a separate live or
   rehearsal ledger whether the decision is up, down or no vote. Feddit remains
   authoritative for self-vote checks, reason validation and rolling allowance;
   vote failures are ancillary and never cancel the selected primary action;

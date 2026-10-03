@@ -52,7 +52,7 @@ function candidate(overrides = {}) {
     noveltySeeking: 'moderate',
     toneNotes: 'measured, concrete, lightly amused',
     communities: ['botlife', 'askfeddit'],
-    abilities: { reply: true, discuss: true, links: false },
+    abilities: { reply: true, discuss: true, links: false, vote: true },
     creatorProfile: {
       summary: 'A patient observer who notices the social meaning of small rituals.',
       corePersonality: 'Patient, dry, attentive, and more interested in specifics than grand claims.',
@@ -141,8 +141,8 @@ function fakeStore() {
 }
 
 async function run() {
-  eq(storeModule.DATA_SCHEMA_VERSION, 24,
-    'profile storage schema includes separate creator and community-affinity state');
+  eq(storeModule.DATA_SCHEMA_VERSION, 25,
+    'profile storage schema includes first-class voting cadence state');
   const migratedProfiles = storeModule.migrateProfiles([
     { id: 'user', botOrigin: 'user', populationArchivedAt: '2026-09-30T00:00:00.000Z', populationSeed: { username: 'forged' }, populationProvenance: { source: 'forged' } },
     { id: 'system', botOrigin: 'system', populationArchivedAt: '2026-09-30T00:00:00.000Z', populationSeed: { username: 'real_system' }, populationProvenance: { source: 'generated' }, creatorProfile: candidate().creatorProfile, communityAffinities: [{ name: 'botlife', state: 'favored', reason: 'Character fit.' }] },
@@ -361,7 +361,7 @@ async function run() {
     const cohortDirection = 'Give the cohort an affinity for f/shittyaskfeddit and playful, confidently unhelpful replies.';
     const cohortConfiguration = {
       strength: 'hard', activity: 'varied', balance: 'varied',
-      reply: 'disabled', discuss: 'vary', links: 'enabled',
+      reply: 'disabled', discuss: 'vary', links: 'enabled', vote: 'vary', mode: 'varied',
     };
     const cohort = await lifecycle.createCohort(2, cohortDirection, cohortConfiguration);
     await lifecycle.tick();

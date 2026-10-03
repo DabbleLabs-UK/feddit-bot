@@ -1529,6 +1529,7 @@ async function handleApi(req, res, urlPath, query) {
       const requestedPostRate = Object.prototype.hasOwnProperty.call(body, 'postsPerHour');
       const requestedArticleRate = Object.prototype.hasOwnProperty.call(body, 'articlePostsPerHour');
       const requestedReplyRate = Object.prototype.hasOwnProperty.call(body, 'commentsPerHour');
+      const requestedVoteRate = Object.prototype.hasOwnProperty.call(body, 'votesPerHour');
       // Public biography writes deliberately use /biography so an ordinary
       // behaviour/settings save can never overwrite the live Feddit profile.
       delete body.fedditBio;
@@ -1565,7 +1566,7 @@ async function handleApi(req, res, urlPath, query) {
       if (requestOwner) {
         delete body.token;
         if (existing.botOrigin === 'system' &&
-            (requestedPostRate || requestedArticleRate || requestedReplyRate)) {
+            (requestedPostRate || requestedArticleRate || requestedReplyRate || requestedVoteRate)) {
           body.populationCadenceMode = 'custom';
         }
         applyHostedProfilePolicy(body, existing);
@@ -1580,12 +1581,15 @@ async function handleApi(req, res, urlPath, query) {
         Number(body.articlePostsPerHour) !== Number(existing.articlePostsPerHour);
       const effectiveReplyRateChanged = requestedReplyRate &&
         Number(body.commentsPerHour) !== Number(existing.commentsPerHour);
-      if (effectivePostRateChanged || effectiveArticleRateChanged || effectiveReplyRateChanged) {
+      const effectiveVoteRateChanged = requestedVoteRate &&
+        Number(body.votesPerHour) !== Number(existing.votesPerHour);
+      if (effectivePostRateChanged || effectiveArticleRateChanged || effectiveReplyRateChanged || effectiveVoteRateChanged) {
         body.sched = {
           ...(existing.sched || {}),
           ...(effectivePostRateChanged ? { nextPostAt: null } : {}),
           ...(effectiveArticleRateChanged ? { nextArticleAt: null } : {}),
           ...(effectiveReplyRateChanged ? { nextCommentAt: null } : {}),
+          ...(effectiveVoteRateChanged ? { nextVoteAt: null } : {}),
         };
         const simulationState = existing.simulationState && typeof existing.simulationState === 'object'
           ? existing.simulationState
@@ -1597,6 +1601,7 @@ async function handleApi(req, res, urlPath, query) {
             ...(effectivePostRateChanged ? { nextPostAt: null } : {}),
             ...(effectiveArticleRateChanged ? { nextArticleAt: null } : {}),
             ...(effectiveReplyRateChanged ? { nextCommentAt: null } : {}),
+            ...(effectiveVoteRateChanged ? { nextVoteAt: null } : {}),
           },
         };
       }

@@ -44,6 +44,31 @@ const safe = voting.parseDecisions({ votes: [
 ] }, slate);
 assert.deepEqual(safe.map((item) => item.direction), ['nil', 'nil'], 'bad and missing decisions safely become nil');
 
+const duplicates = voting.parseDecisions({ votes: Array.from({ length: 20 }, (_, index) => ({
+  id: 'V1',
+  direction: index === 0 ? 'up' : 'down',
+  reason: index === 0
+    ? 'The first offered decision and reason must be retained.'
+    : 'A later duplicate must not replace the first decision.',
+})) }, slate);
+assert.equal(duplicates.filter((item) => item.direction !== 'nil').length, 1,
+  'twenty copies of one vote identifier produce one processed vote');
+assert.equal(duplicates[0].direction, 'up', 'the first duplicate occurrence keeps its direction');
+assert.equal(duplicates[0].reason, 'The first offered decision and reason must be retained.',
+  'the retained direction keeps the matching first reason');
+
+const mixed = voting.parseDecisions({ votes: [
+  { id: 'V2', direction: 'down', reason: 'The factual claim is presented without supporting evidence.' },
+  { id: 'UNKNOWN', direction: 'up', reason: 'This was never in the offered voting slate.' },
+  { id: 'V2', direction: 'up', reason: 'A duplicate must not overwrite the first direction.' },
+  { id: 'V1', direction: 'up', reason: 'The contribution is unusually clear and directly useful.' },
+] }, slate);
+assert.deepEqual(mixed.map((item) => item.direction), ['up', 'down'],
+  'mixed duplicates and unknown IDs leave only unique offered decisions');
+assert.equal(mixed.length, slate.length, 'parsed vote decisions never exceed the offered slate');
+assert.equal(mixed[1].reason, 'The factual claim is presented without supporting evidence.',
+  'vote reasons remain aligned with the retained decision');
+
 const recorded = voting.record({ considered: ['comment:22'] }, decisions);
 assert.deepEqual(recorded.considered, ['comment:22', 'post:10', 'comment:20']);
 assert.equal(voting.collect(candidates, { self: 'self_bot', state: recorded }).length, 0,

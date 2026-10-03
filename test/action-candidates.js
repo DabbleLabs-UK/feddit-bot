@@ -189,8 +189,8 @@ const voteItems = [
   { id: 'V3', targetType: 'comment', targetId: 3, label: 'Comment by carol' },
 ];
 const votingPrompt = candidates.prompt(menu, 200_000, { voteCandidates: voteItems, voteAllowance: { remaining: 3 } });
-ok(votingPrompt.includes('SECONDARY VOTING') && votingPrompt.includes('"votes"'),
-  'the existing action prompt carries a bounded secondary voting contract');
+ok(votingPrompt.includes('VOTING') && votingPrompt.includes('"votes"'),
+  'the existing action prompt carries a bounded voting contract');
 decision = candidates.parseDecision(JSON.stringify({
   choice: 'C4', reason: 'The ordinary post fits.', votes: [
     { id: 'V1', direction: 'up', reason: 'This contribution is concrete and useful.' },
@@ -213,5 +213,29 @@ decision = candidates.parseDecision(JSON.stringify({
 }), menu, { voteCandidates: voteItems });
 ok(decision.valid && decision.waited && decision.votes[0].direction === 'up' && decision.votes[2].direction === 'down',
   'secondary up/down votes can coexist with WAIT and do not force a reply');
+
+const votingOnlyPrompt = candidates.prompt([], 200_000, {
+  voteCandidates: voteItems,
+  voteAllowance: { remaining: 3 },
+});
+ok(votingOnlyPrompt.includes('voting-only opportunity') &&
+  votingOnlyPrompt.includes('Do not create a post or comment'),
+  'a standalone voting opportunity explicitly forbids written publication');
+ok(votingOnlyPrompt.includes('choice value must be exactly WAIT'),
+  'voting-only decisions retain the shared choice contract without inventing a primary action');
+const votingOnlyRepair = candidates.repairPrompt([], 200_000, { voteCandidates: voteItems });
+ok(votingOnlyRepair.includes('Put WAIT in the choice value') && !votingOnlyRepair.includes('such as C1'),
+  'voting-only repair cannot ask for a nonexistent primary candidate');
+decision = candidates.parseDecision(JSON.stringify({
+  choice: 'WAIT', reason: 'Voting-only opportunity', votes: [
+    { id: 'V1', direction: 'up', reason: 'This contribution is concrete and useful.' },
+    { id: 'V2', direction: 'nil', reason: '' },
+    { id: 'V3', direction: 'down', reason: 'This claim is misleading and unsupported.' },
+  ],
+}), [], { voteCandidates: voteItems });
+ok(decision.valid && decision.waited && !decision.candidate,
+  'a voting-only response is a valid no-primary-action decision');
+eq(decision.votes.map((vote) => vote.direction), ['up', 'nil', 'down'],
+  'one voting-only inference retains the full bounded up/down/nil slate');
 
 console.log('action candidates: ' + checks + ' checks passed');
