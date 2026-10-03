@@ -192,10 +192,19 @@
     return Number.isInteger(candidateIndex) && candidateIndex >= 0 ? 'index:' + candidateIndex : '';
   }
 
+  function isConfirmedStagingResult(result) {
+    return Boolean(result && result.ok === true && String(result.code || '').toUpperCase() === 'STAGED' && stagingResultKey(result));
+  }
+
   function confirmedStagingCandidateIds(staging) {
     return new Set((staging && Array.isArray(staging.results) ? staging.results : [])
-      .filter((result) => result && result.ok === true && stagingResultKey(result))
+      .filter(isConfirmedStagingResult)
       .map((result) => stagingResultKey(result)));
+  }
+
+  function skippedStagingCandidateIds(staging) {
+    return new Set((staging && Array.isArray(staging.skippedCandidateIds) ? staging.skippedCandidateIds : [])
+      .map(String).filter(Boolean));
   }
 
   function stagingPlan(candidates, drafts, options = {}) {
@@ -227,29 +236,42 @@
     const sessionPath = String(options.sessionPath || '');
     const plan = options.plan || { candidateIds: [], editsById: {}, destination: 'local' };
     const initialConfirmed = confirmedStagingCandidateIds(options.session && options.session.staging);
-    const candidateIds = [...new Set((plan.candidateIds || []).map(String))]
-      .filter((candidateId) => !initialConfirmed.has(candidateId));
-    const total = candidateIds.length;
-    const batchCount = Math.ceil(total / STAGING_SELECTION_LIMIT);
+    const initialSkipped = skippedStagingCandidateIds(options.session && options.session.staging);
+    const selectedIds = [...new Set((plan.candidateIds || []).map(String))];
+    const overallIds = [...new Set([
+      ...((options.session && options.session.staging && options.session.staging.selectionCandidateIds) || []).map(String),
+      ...selectedIds,
+      ...initialConfirmed,
+      ...initialSkipped,
+    ])];
+    const candidateIds = selectedIds
+      .filter((candidateId) => !initialConfirmed.has(candidateId) && !initialSkipped.has(candidateId));
+    const total = overallIds.length;
+    const batchCount = Math.ceil(candidateIds.length / STAGING_SELECTION_LIMIT);
     const emit = (progress) => {
-      const value = { total, batchCount, ...progress };
+      const value = { total, batchCount, skipped: initialSkipped.size, ...progress };
       if (typeof options.onProgress === 'function') options.onProgress(value);
       return value;
     };
-    if (!total) return emit({ state: 'completed', completed: 0, remaining: [], batch: 0, outcomes: [] });
+    if (!candidateIds.length) {
+      return emit({
+        state: 'completed', completed: initialConfirmed.size, remaining: [], batch: 0,
+        outcomes: options.session && options.session.staging && options.session.staging.results || [],
+      });
+    }
 
     let latestSession = options.session || null;
-    for (let offset = 0; offset < total; offset += STAGING_SELECTION_LIMIT) {
+    for (let offset = 0; offset < candidateIds.length; offset += STAGING_SELECTION_LIMIT) {
       const batch = candidateIds.slice(offset, offset + STAGING_SELECTION_LIMIT);
       const batchNumber = Math.floor(offset / STAGING_SELECTION_LIMIT) + 1;
       if (typeof options.shouldCancel === 'function' && options.shouldCancel()) {
         return emit({
-          state: 'cancelled', completed: offset, remaining: candidateIds.slice(offset),
+          state: 'cancelled', completed: initialConfirmed.size + offset, remaining: candidateIds.slice(offset),
           batch: batchNumber, outcomes: latestSession && latestSession.staging && latestSession.staging.results || [],
         });
       }
       emit({
-        state: 'running', completed: offset, remaining: candidateIds.slice(offset), batch: batchNumber,
+        state: 'running', completed: initialConfirmed.size + offset, remaining: candidateIds.slice(offset), batch: batchNumber,
         activeCandidateIds: batch, outcomes: latestSession && latestSession.staging && latestSession.staging.results || [],
       });
       let response;
@@ -269,7 +291,7 @@
         const confirmed = confirmedStagingCandidateIds(latestSession && latestSession.staging);
         const remaining = candidateIds.filter((candidateId) => !confirmed.has(candidateId));
         return emit({
-          state: 'attention', completed: total - remaining.length, remaining, batch: batchNumber,
+          state: 'attention', completed: confirmed.size, remaining, batch: batchNumber,
           ambiguousCandidateIds: batch.filter((candidateId) => !confirmed.has(candidateId)),
           outcomes: latestSession && latestSession.staging && latestSession.staging.results || [],
           error: String(error && error.message || 'The staging request did not return a confirmed result.'),
@@ -282,19 +304,20 @@
       const remaining = candidateIds.filter((candidateId) => !confirmed.has(candidateId));
       if (unresolvedBatch.length) {
         return emit({
-          state: 'attention', completed: total - remaining.length, remaining, batch: batchNumber,
+          state: 'attention', completed: confirmed.size, remaining, batch: batchNumber,
           ambiguousCandidateIds: [],
           outcomes: latestSession && latestSession.staging && latestSession.staging.results || [],
           error: 'One or more candidates in this batch were not confirmed. No later batch was started.',
         });
       }
       emit({
-        state: 'running', completed: total - remaining.length, remaining, batch: batchNumber,
+        state: 'running', completed: confirmed.size, remaining, batch: batchNumber,
         outcomes: latestSession && latestSession.staging && latestSession.staging.results || [],
       });
     }
     return emit({
-      state: 'completed', completed: total, remaining: [], batch: batchCount,
+      state: 'completed', completed: confirmedStagingCandidateIds(latestSession && latestSession.staging).size,
+      remaining: [], batch: batchCount,
       outcomes: latestSession && latestSession.staging && latestSession.staging.results || [],
     });
   }
@@ -356,18 +379,101 @@
     return session;
   }
 
-  function stagingResultRows(staging) {
+  function stagingResultRows(staging, candidates = [], drafts = {}) {
+    const names = new Map((Array.isArray(candidates) ? candidates : []).map((candidate, index) => [
+      String(candidate && candidate.id || ''),
+      String(drafts[index] && drafts[index].seed && drafts[index].seed.username || candidate && candidate.seed && candidate.seed.username || ''),
+    ]));
     return (staging && Array.isArray(staging.results) ? staging.results : []).map((result) => {
       const candidateIndex = result.importerCandidateIndex == null
         ? Number(result.index)
         : Number(result.importerCandidateIndex);
+      const candidateId = stagingResultKey(result);
       return {
-        label: String(result.username || 'Candidate ' + ((Number.isFinite(candidateIndex) ? candidateIndex : 0) + 1)),
+        label: String(result.username || names.get(candidateId) || 'Candidate ' + ((Number.isFinite(candidateIndex) ? candidateIndex : 0) + 1)),
         code: String(result.code || (result.ok ? 'STAGED' : 'FAILED')),
         message: String(result.message || ''),
-        ok: result.ok === true,
+        ok: isConfirmedStagingResult(result),
       };
     });
+  }
+
+  function stagingStatus(session, drafts = {}, operation = null, at = Date.now()) {
+    const candidates = session && Array.isArray(session.candidates) ? session.candidates : [];
+    const staging = session && session.staging || {};
+    const confirmed = confirmedStagingCandidateIds(staging);
+    const skipped = skippedStagingCandidateIds(staging);
+    const resultById = new Map((staging.results || []).map((result) => [stagingResultKey(result), result]));
+    const candidateById = new Map(candidates.map((candidate, index) => [String(candidate.id || ''), { candidate, index }]));
+    const selected = candidates.filter((candidate, index) => drafts[index] && drafts[index].selected !== false)
+      .map((candidate) => String(candidate.id || '')).filter(Boolean);
+    const scope = [...new Set([
+      ...(Array.isArray(staging.selectionCandidateIds) ? staging.selectionCandidateIds : []),
+      ...selected,
+      ...confirmed,
+      ...skipped,
+    ].map(String).filter((candidateId) => candidateById.has(candidateId)))];
+    const pending = scope.filter((candidateId) => {
+      if (confirmed.has(candidateId) || skipped.has(candidateId)) return false;
+      const result = resultById.get(candidateId);
+      return selected.includes(candidateId) || Boolean(result && ['VALID', 'DUPLICATE_SEED', 'STAGE_FAILED', 'REGISTRATION_UNCERTAIN'].includes(String(result.code || '').toUpperCase()));
+    });
+    const duplicates = pending.filter((candidateId) => String(resultById.get(candidateId) && resultById.get(candidateId).code || '').toUpperCase() === 'DUPLICATE_SEED');
+    const ambiguousFromEvidence = pending.filter((candidateId) => /UNCERTAIN|AMBIGUOUS/.test(String(resultById.get(candidateId) && resultById.get(candidateId).code || '').toUpperCase()));
+    const ambiguous = [...new Set([
+      ...ambiguousFromEvidence,
+      ...(operation && Array.isArray(operation.ambiguousCandidateIds) ? operation.ambiguousCandidateIds : []),
+    ].map(String))].filter((candidateId) => pending.includes(candidateId));
+    const eligible = pending.filter((candidateId) => !duplicates.includes(candidateId) && !ambiguous.includes(candidateId));
+    const cooldownAt = Date.parse(staging.cooldown && staging.cooldown.eligibleAt || '');
+    const cooldownRemainingMs = Number.isFinite(cooldownAt) ? Math.max(0, cooldownAt - Number(at)) : 0;
+    const nameFor = (candidateId) => {
+      const entry = candidateById.get(String(candidateId));
+      if (!entry) return 'this character';
+      return String(drafts[entry.index] && drafts[entry.index].seed && drafts[entry.index].seed.username ||
+        entry.candidate.seed && entry.candidate.seed.username || 'this character');
+    };
+    const hasEvidence = Boolean((staging.results || []).length || confirmed.size || skipped.size);
+    const state = operation && ['running', 'stopping'].includes(operation.state)
+      ? operation.state
+      : cooldownRemainingMs > 0
+        ? 'cooldown'
+        : ambiguous.length
+          ? 'ambiguous'
+          : duplicates.length
+            ? 'duplicate'
+            : pending.length
+              ? (hasEvidence ? 'ready' : 'initial')
+              : scope.length
+                ? 'complete'
+                : 'initial';
+    return {
+      state,
+      total: scope.length,
+      confirmed: scope.filter((candidateId) => confirmed.has(candidateId)).length,
+      skipped: scope.filter((candidateId) => skipped.has(candidateId)).length,
+      pending,
+      eligible,
+      duplicates,
+      ambiguous,
+      duplicateCandidateId: duplicates[0] || '',
+      duplicateName: duplicates.length ? nameFor(duplicates[0]) : '',
+      cooldownAt: Number.isFinite(cooldownAt) ? new Date(cooldownAt).toISOString() : '',
+      cooldownRemainingMs,
+      action: state === 'duplicate' ? 'skip-duplicate' : state === 'ready' || state === 'initial' ? 'stage' : '',
+      actionLabel: state === 'duplicate' ? 'Skip duplicate and continue' :
+        state === 'cooldown' ? 'Continue after the countdown' :
+          state === 'ready' ? 'Continue with remaining candidates' : 'Stage selected candidates',
+      actionDisabled: state === 'cooldown' || state === 'ambiguous' || state === 'complete' || state === 'running' || state === 'stopping',
+    };
+  }
+
+  function countdownLabel(milliseconds) {
+    const seconds = Math.max(0, Math.ceil(Number(milliseconds) / 1000));
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const remainder = seconds % 60;
+    return (hours ? hours + 'h ' : '') + String(minutes).padStart(2, '0') + 'm ' + String(remainder).padStart(2, '0') + 's';
   }
 
   function defaultWorkflow() {
@@ -466,6 +572,8 @@
     const pollWait = options.pollWait || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
     const setReviewTimeout = options.setReviewTimeout || ((handler, milliseconds) => setTimeout(handler, milliseconds));
     const clearReviewTimeout = options.clearReviewTimeout || ((timer) => clearTimeout(timer));
+    const setCooldownTimeout = options.setCooldownTimeout || ((handler, milliseconds) => setTimeout(handler, milliseconds));
+    const clearCooldownTimeout = options.clearCooldownTimeout || ((timer) => clearTimeout(timer));
     const workflow = defaultWorkflow();
     const savedClientState = readClientState(storage, storageKey);
     if (savedClientState) {
@@ -480,6 +588,7 @@
     let lastRenderedSessionId = '';
     let reviewSaveTimer = null;
     let reviewSavePromise = null;
+    let cooldownTimer = null;
 
     function persistClientState() {
       return writeClientState(storage, {
@@ -506,6 +615,8 @@
       }).then((response) => {
         if (workflow.session && workflow.session.id === sessionId && response && response.session) {
           workflow.session.candidateReview = clone(response.session.candidateReview);
+          workflow.session.staging = clone(response.session.staging);
+          workflow.staging = clone(response.session.staging);
           workflow.session.updatedAt = response.session.updatedAt;
         }
         return response;
@@ -640,8 +751,10 @@
       const abilities = seed.abilities || {};
       const disclosureKey = 'candidate:' + String(candidate.id || index);
       const staged = confirmedStagingCandidateIds(workflow.session && workflow.session.staging).has(String(candidate.id || ''));
+      const skipped = skippedStagingCandidateIds(workflow.session && workflow.session.staging).has(String(candidate.id || ''));
+      const selectionLabel = staged ? 'Staged ' : skipped ? 'Skipped duplicate - edit to try later ' : 'Stage ';
       return '<details class="culture-candidate" data-culture-disclosure="' + esc(disclosureKey) + '"' + disclosureAttribute(disclosureKey, true) + '><summary><label><input type="checkbox" data-candidate-selected="' + index + '"' +
-        (draft.selected && !staged ? ' checked' : '') + (staged ? ' disabled' : '') + '> ' + (staged ? 'Staged ' : 'Stage ') + esc(seed.username || 'candidate ' + (index + 1)) + '</label><span>' + esc(seed.biography || '') + '</span></summary>' +
+        (draft.selected && !staged ? ' checked' : '') + (staged ? ' disabled' : '') + '> ' + selectionLabel + esc(seed.username || 'candidate ' + (index + 1)) + '</label><span>' + esc(seed.biography || '') + '</span></summary>' +
         '<div class="culture-candidate-body"><div class="grid">' +
         fieldInput(index, seed, 'username', 'Feddit username') +
         fieldInput(index, seed, 'biography', 'Public biography', 'textarea') +
@@ -673,40 +786,51 @@
     function stagingResultsHtml() {
       const staging = workflow.staging || workflow.session && workflow.session.staging;
       if (!staging) return '';
+      const rows = stagingResultRows(staging, workflow.session && workflow.session.candidates, workflow.candidateDrafts);
       const error = staging.error && (staging.error.message || staging.error);
-      const destination = normalizedStagingDestination(getPlacement(), staging.destination || workflow.form.stagingDestination);
-      const destinationLabel = destination === 'local' ? 'this desktop app' : 'the hosted Feddit Bots workspace';
-      return '<div class="culture-stage-results ' + (staging.ok === false ? 'failed' : '') + '"><b>' +
-        (staging.ok === false ? 'Staging needs attention' : 'Staging result') + '</b>' +
+      return '<details class="culture-stage-details"><summary>Details (' + rows.length + ' candidate outcomes)</summary>' +
         (error ? '<p>' + esc(error) + '</p>' : '') +
-        '<ul>' + stagingResultRows(staging).map((result) => '<li><b>' + esc(result.label) +
-          ':</b> ' + esc(result.code) + ' - ' + esc(result.message) + '</li>').join('') + '</ul>' +
-        (staging.ok !== false ? '<p>Created in ' + esc(destinationLabel) + '. Staged candidates remain disabled rehearsal bots. Nothing was activated or published.</p>' : '') + '</div>';
+        '<ul>' + rows.map((result) => '<li><b>' + esc(result.label) +
+          ':</b> ' + esc(result.code) + ' - ' + esc(result.message) + '</li>').join('') + '</ul></details>';
     }
 
-    function stagingOperationHtml() {
-      const operation = workflow.stagingOperation;
-      if (!operation) return '';
-      const completed = Math.max(0, Number(operation.completed) || 0);
-      const total = Math.max(0, Number(operation.total) || 0);
-      const remaining = Array.isArray(operation.remaining) ? operation.remaining.length : Math.max(0, total - completed);
-      const batch = Math.max(0, Number(operation.batch) || 0);
-      const batchCount = Math.max(0, Number(operation.batchCount) || 0);
-      const state = String(operation.state || 'running');
-      const title = state === 'completed' ? 'Staging completed' :
-        state === 'cancelled' ? 'Staging stopped safely' :
-          state === 'attention' ? 'Staging needs attention' :
-            state === 'stopping' ? 'Stopping after the current batch' : 'Staging selected candidates';
-      const explanation = state === 'attention'
-        ? '<p>' + esc(operation.error || 'A batch was not fully confirmed.') + ' ' + remaining + ' candidate(s) remain selected. Review the outcomes, then use Continue remaining safely to make another explicit attempt.</p>'
-        : state === 'cancelled'
-          ? '<p>' + remaining + ' candidate(s) remain selected. Confirmed successes were saved and will not be repeated.</p>'
-          : state === 'completed'
-            ? '<p>All selected candidates were confirmed. They remain disabled and in rehearsal.</p>'
-            : '<p>Confirmed results are saved after every batch. Stopping waits for the current registration response rather than creating an ambiguous cancellation.</p>';
-      return '<div class="culture-stage-results' + (state === 'attention' ? ' failed' : '') + '" role="status" aria-live="polite"><b>' + esc(title) + '</b>' +
-        '<p>' + completed + ' of ' + total + ' confirmed' + (batchCount ? '; batch ' + Math.min(batch, batchCount) + ' of ' + batchCount : '') + '.</p>' + explanation +
-        (state === 'running' || state === 'stopping' ? '<button type="button" id="cultureCancelStagingBtn"' + (state === 'stopping' ? ' disabled' : '') + '>Stop after current batch</button>' : '') + '</div>';
+    function stagingNextStepHtml(status) {
+      let title = 'Ready to create selected bots';
+      let message = status.pending.length + ' candidate(s) are selected. They will be created in bounded groups and remain disabled in rehearsal.';
+      if (status.state === 'cooldown') {
+        const localTime = new Date(status.cooldownAt).toLocaleString();
+        title = 'Wait before continuing';
+        message = 'Feddit will accept another registration at <b id="cultureCooldownRetryTime">' + esc(localTime) + '</b> ' +
+          '(<span id="cultureCooldownCountdown">' + esc(countdownLabel(status.cooldownRemainingMs)) + '</span>). ' +
+          'Nothing will start automatically when the timer ends; return here and continue explicitly.';
+      } else if (status.state === 'duplicate') {
+        title = esc(status.duplicateName) + ' is already represented';
+        message = 'Skip this duplicate and continue with the other ' + status.eligible.length + ' eligible candidate(s). ' +
+          'The character stays here for editing and duplicate validation is not bypassed.';
+      } else if (status.state === 'ambiguous') {
+        title = 'Check an uncertain registration before continuing';
+        message = 'A registration response was ambiguous. No candidate in that uncertain set will be submitted again automatically. See Details for the affected character(s).';
+      } else if (status.state === 'complete') {
+        title = status.skipped ? 'Eligible staging is complete' : 'Staging is complete';
+        message = status.confirmed + ' of ' + status.total + ' candidate(s) were created' +
+          (status.skipped ? '; ' + status.skipped + ' duplicate remains here for editing.' : '.') +
+          ' Created bots remain disabled and in rehearsal.';
+      } else if (status.state === 'running' || status.state === 'stopping') {
+        title = status.state === 'stopping' ? 'Stopping after the current batch' : 'Creating selected bots';
+        message = 'Confirmed registrations are saved after every bounded batch. Already confirmed bots are never submitted again.';
+      } else if (status.confirmed) {
+        title = 'Continue with the remaining candidates';
+        message = status.confirmed + ' of ' + status.total + ' candidate(s) are created; ' + status.pending.length + ' remain selected.';
+      }
+      const counts = status.total
+        ? '<p class="culture-stage-counts"><b>' + status.confirmed + ' created</b>; ' + status.eligible.length + ' ready' +
+          (status.duplicates.length ? '; ' + status.duplicates.length + ' duplicate' : '') +
+          (status.skipped ? '; ' + status.skipped + ' skipped' : '') + '</p>'
+        : '';
+      return '<div class="culture-stage-next ' + esc(status.state) + '" role="status" aria-live="polite"><h3>' + title + '</h3><p>' + message + '</p>' + counts +
+        ((status.state === 'running' || status.state === 'stopping')
+          ? '<button type="button" id="cultureCancelStagingBtn"' + (status.state === 'stopping' ? ' disabled' : '') + '>Stop after current batch</button>'
+          : '') + '</div>';
     }
 
     function candidatesHtml() {
@@ -810,6 +934,7 @@
       const placement = getPlacement();
       const stagingDestination = normalizedStagingDestination(placement, workflow.form.stagingDestination);
       const showHostedLink = showsHostedManagementLink(placement, stagingDestination);
+      const stageStatus = stagingStatus(workflow.session, workflow.candidateDrafts, workflow.stagingOperation);
       root.innerHTML = '<div class="culture-importer-page"><div class="culture-page-head"><div><h2>Subreddit culture importer</h2>' +
         '<p class="lead">Mine a bounded public community sample into reviewable fictional composite Feddit characters. Fetching and generation never stage or activate anything.</p>' +
         '<p class="hint">Saved work is restored privately on reopen. Restoration never retrieves source data, calls an AI provider, or repeats staging.</p>' +
@@ -841,14 +966,24 @@
           '<p class="hint">Selected candidates will be created in this hosted Feddit Bots workspace.</p>') +
         (showHostedLink ? '<div class="field full"><label for="cultureManagementLink">Hosted private management link</label><input id="cultureManagementLink" type="password" autocomplete="off" value="' + esc(workflow.managementLink) + '" placeholder="https://feddit-bots.dabblelabs.uk/#manage=...">' +
           '<div class="hint">This private capability authorizes access to that hosted workspace, which must also be an authorized background-population operator. In the hosted dashboard, open Settings and choose Copy private management link. It is used only for this explicit request and is never saved, logged or sent to an AI model.</div></div>' : '') +
-        '<button type="button" class="primary" id="cultureStageBtn"' + (!candidatesReady || workflow.busy ? ' disabled' : '') + '>' +
-          (workflow.stagingOperation && ['attention', 'cancelled'].includes(workflow.stagingOperation.state) ? 'Continue remaining safely' : 'Stage selected candidates') + '</button>' +
+        stagingNextStepHtml(stageStatus) +
+        ((!['complete', 'ambiguous', 'running', 'stopping'].includes(stageStatus.state))
+          ? '<button type="button" class="primary" id="cultureStageBtn"' +
+            (!candidatesReady || workflow.busy || stageStatus.actionDisabled ? ' disabled' : '') + '>' + esc(stageStatus.actionLabel) + '</button>'
+          : '') +
         '<p class="hint">One explicit action stages every selected candidate, up to ' + MAX_CANDIDATE_COLLECTION + '. The app uses sequential batches of at most ' + STAGING_SELECTION_LIMIT + ' while preserving validation, capacity and registration safeguards. Staged bots remain disabled and in rehearsal until separately reviewed and activated through normal population controls.</p>' +
-        stagingOperationHtml() + stagingResultsHtml() + '</div></details></div>';
+        stagingResultsHtml() + '</div></details></div>';
       bind();
       restoreFocus(focus);
       hasRenderedImporter = true;
       lastRenderedSessionId = sessionId;
+      if (cooldownTimer) clearCooldownTimeout(cooldownTimer);
+      cooldownTimer = stageStatus.cooldownRemainingMs > 0
+        ? setCooldownTimeout(() => {
+          cooldownTimer = null;
+          render();
+        }, Math.min(1000, stageStatus.cooldownRemainingMs))
+        : null;
     }
 
     function captureForm(persist = true) {
@@ -921,9 +1056,15 @@
           : durableDrafts;
         workflow.candidateDrafts = createCandidateDrafts(session.candidates, priorDrafts);
         const confirmed = confirmedStagingCandidateIds(session.staging);
+        const skipped = skippedStagingCandidateIds(session.staging);
+        const pendingEvidence = new Set([
+          ...(session.staging && session.staging.selectionCandidateIds || []),
+          ...(session.staging && session.staging.results || []).map((result) => stagingResultKey(result)),
+        ]
+          .filter((candidateId) => candidateId && !confirmed.has(candidateId) && !skipped.has(candidateId)));
         session.candidates.forEach((candidate, index) => {
-          if (confirmed.has(String(candidate.id || '')) && workflow.candidateDrafts[index]) {
-            workflow.candidateDrafts[index].selected = false;
+          if (pendingEvidence.has(String(candidate.id || '')) && workflow.candidateDrafts[index]) {
+            workflow.candidateDrafts[index].selected = true;
           }
         });
       } else if (!hadCandidates) workflow.candidateDrafts = {};
@@ -1062,12 +1203,9 @@
       on('#cultureStageBtn', 'click', async () => {
         if (workflow.busy) return;
         captureForm();
+        let status = stagingStatus(workflow.session, workflow.candidateDrafts, workflow.stagingOperation);
+        if (status.state === 'cooldown') return;
         const destination = normalizedStagingDestination(getPlacement(), workflow.form.stagingDestination);
-        const plan = stagingPlan(workflow.session && workflow.session.candidates || [], workflow.candidateDrafts, {
-          destination,
-        });
-        if (!plan.candidateIds.length) return toast('Select at least one unstaged candidate to stage.', 'err');
-        if (plan.candidateIds.length > MAX_CANDIDATE_COLLECTION) return toast('Select at most ' + MAX_CANDIDATE_COLLECTION + ' candidates.', 'err');
         if (showsHostedManagementLink(getPlacement(), destination) && !workflow.managementLink) {
           return toast('Paste the private management link for the hosted workspace first.', 'err');
         }
@@ -1076,6 +1214,23 @@
         } catch {
           return;
         }
+        status = stagingStatus(workflow.session, workflow.candidateDrafts, workflow.stagingOperation);
+        if (status.state === 'duplicate') {
+          try {
+            const response = await api('/api/culture-imports/' + encodeURIComponent(workflow.session.id) + '/skip-duplicate', {
+              method: 'POST',
+              body: { candidateId: status.duplicateCandidateId },
+            });
+            applySession(response.session);
+          } catch (error) {
+            return toast('Could not preserve and skip the duplicate: ' + error.message, 'err');
+          }
+        }
+        const plan = stagingPlan(workflow.session && workflow.session.candidates || [], workflow.candidateDrafts, {
+          destination,
+        });
+        if (!plan.candidateIds.length) return toast('Select at least one unstaged candidate to stage.', 'err');
+        if (plan.candidateIds.length > MAX_CANDIDATE_COLLECTION) return toast('Select at most ' + MAX_CANDIDATE_COLLECTION + ' candidates.', 'err');
         const managementLink = workflow.managementLink;
         workflow.managementLink = '';
         workflow.stagingCancelRequested = false;
@@ -1097,7 +1252,10 @@
           });
           workflow.stagingOperation = result;
           if (result.state === 'completed') {
-            toast('All selected candidates were created in ' + (destination === 'local' ? 'this desktop app' : 'the hosted workspace') + ' in rehearsal. Nothing was activated.', 'ok');
+            const finalStatus = stagingStatus(workflow.session, workflow.candidateDrafts, result);
+            toast(finalStatus.skipped
+              ? 'Eligible candidates were created in rehearsal. The skipped duplicate remains available to edit.'
+              : 'All selected candidates were created in ' + (destination === 'local' ? 'this desktop app' : 'the hosted workspace') + ' in rehearsal. Nothing was activated.', 'ok');
           } else if (result.state === 'cancelled') {
             toast('Staging stopped between batches. Confirmed successes were saved.', 'ok');
           } else {
@@ -1179,7 +1337,9 @@
     showsHostedManagementLink,
     stagingBody,
     stagingResultKey,
+    isConfirmedStagingResult,
     confirmedStagingCandidateIds,
+    skippedStagingCandidateIds,
     stagingPlan,
     stagingBatchBody,
     runStagingBatches,
@@ -1190,6 +1350,8 @@
     sessionRenderFingerprint,
     requireSession,
     stagingResultRows,
+    stagingStatus,
+    countdownLabel,
     providerValue,
     readProviderValue,
     defaultWorkflow,

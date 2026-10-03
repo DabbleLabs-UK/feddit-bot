@@ -852,7 +852,7 @@ async function handleApi(req, res, urlPath, query) {
         const body = await readBody(req);
         return sendJson(res, 202, { session: cultureImportSessions.create(importOwner, body) });
       }
-      const cultureRoute = urlPath.match(/^\/api\/culture-imports\/([^/]+)(?:\/(analyse|generate|cancel|review|stage))?$/);
+      const cultureRoute = urlPath.match(/^\/api\/culture-imports\/([^/]+)(?:\/(analyse|generate|cancel|review|skip-duplicate|stage))?$/);
       if (!cultureRoute) return sendJson(res, 404, { error: 'Unknown culture importer route' });
       const sessionId = decodeURIComponent(cultureRoute[1]);
       const action = cultureRoute[2] || '';
@@ -873,6 +873,9 @@ async function handleApi(req, res, urlPath, query) {
       }
       if (action === 'cancel') {
         return sendJson(res, 200, { session: cultureImportSessions.cancel(importOwner, sessionId) });
+      }
+      if (action === 'skip-duplicate') {
+        return sendJson(res, 200, { session: cultureImportSessions.skipDuplicate(importOwner, sessionId, body) });
       }
       const localStageExternalSeeds = populationController.stageExternalSeeds.bind(populationController);
       const stageRoute = PLACEMENT === 'hosted'

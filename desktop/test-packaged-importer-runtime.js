@@ -445,6 +445,48 @@ globalThis.fetch = async (input, options = {}) => {
     }
     trace('packaged importer supports polling-safe state and four bounded staging batches');
 
+    const nextStep = await evaluate(cdp, `(() => {
+      const ui = window.FedditCultureImporterUi;
+      const candidates = Array.from({ length: 24 }, (_, index) => ({
+        id: 'culture_candidate_' + index.toString(16).padStart(20, '0'),
+        seed: { username: 'package_' + String(index).padStart(2, '0') },
+      }));
+      const drafts = ui.createCandidateDrafts(candidates);
+      const results = candidates.map((candidate, index) => ({
+        importerCandidateId: candidate.id,
+        importerCandidateIndex: index,
+        ok: index < 5 || index > 5,
+        code: index < 5 ? 'STAGED' : index === 5 ? 'DUPLICATE_SEED' : 'VALID',
+      }));
+      const session = {
+        candidates,
+        staging: { results, selectionCandidateIds: candidates.map((candidate) => candidate.id) },
+      };
+      const blocked = ui.stagingStatus(session, drafts, null, Date.now());
+      session.staging.skippedCandidateIds = [candidates[5].id];
+      const skipped = ui.stagingStatus(session, drafts, null, Date.now());
+      return {
+        blocked: {
+          state: blocked.state, total: blocked.total, confirmed: blocked.confirmed,
+          eligible: blocked.eligible.length, duplicateName: blocked.duplicateName,
+          actionLabel: blocked.actionLabel,
+        },
+        skipped: {
+          state: skipped.state, total: skipped.total, confirmed: skipped.confirmed,
+          eligible: skipped.eligible.length, skipped: skipped.skipped,
+        },
+      };
+    })()`);
+    if (nextStep.blocked.state !== 'duplicate' || nextStep.blocked.total !== 24 ||
+        nextStep.blocked.confirmed !== 5 || nextStep.blocked.eligible !== 18 ||
+        nextStep.blocked.duplicateName !== 'package_05' ||
+        nextStep.blocked.actionLabel !== 'Skip duplicate and continue' ||
+        nextStep.skipped.state !== 'ready' || nextStep.skipped.total !== 24 ||
+        nextStep.skipped.confirmed !== 5 || nextStep.skipped.eligible !== 18 || nextStep.skipped.skipped !== 1) {
+      throw new Error('Packaged staging next-step contract failed: ' + JSON.stringify(nextStep));
+    }
+    trace('packaged importer distinguishes STAGED, VALID and skipped duplicate outcomes');
+
     const localStaging = await evaluate(cdp, `(() => ({
       destination: document.getElementById('cultureStagingDestination')?.value || '',
       localOption: Array.from(document.getElementById('cultureStagingDestination')?.options || [])
@@ -571,8 +613,8 @@ globalThis.fetch = async (input, options = {}) => {
     });
     if (shippedSecret) throw new Error('Packaged application assets contained the FetchLayer key');
 
-    console.log('packaged desktop FetchLayer importer and Burst runtime: 35 checks passed');
-    console.log(JSON.stringify({ burst, visible, opened, boundedStaging, missingKey, configuredState, connectionTest, browserExposure, retrieved }));
+    console.log('packaged desktop FetchLayer importer and Burst runtime: 46 checks passed');
+    console.log(JSON.stringify({ burst, visible, opened, boundedStaging, nextStep, missingKey, configuredState, connectionTest, browserExposure, retrieved }));
   } catch (error) {
     if (serverOutput.length) console.error('Packaged server output:\n' + serverOutput.join(''));
     if (browserOutput.length) console.error('Headless browser output:\n' + browserOutput.join(''));
