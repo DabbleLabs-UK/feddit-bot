@@ -391,6 +391,15 @@
   .culture-reference { padding: 10px 12px; border: 1px dashed #596775; border-radius: 6px; color: var(--dim); }
   .culture-stage-results { margin-top: 14px; padding: 11px 13px; border: 1px solid var(--good); border-radius: 7px; background: #17251a; }
   .culture-stage-results.failed { border-color: var(--bad); background: #2a1717; }
+  .culture-stage-next { margin: 14px 0 10px; padding: 14px 16px; border: 2px solid var(--accent); border-radius: 9px; background: #14283a; }
+  .culture-stage-next h3 { margin: 0 0 6px; color: var(--text); }
+  .culture-stage-next p { margin: 6px 0; }
+  .culture-stage-next.duplicate, .culture-stage-next.cooldown, .culture-stage-next.ambiguous { border-color: var(--warn); background: #2b2414; }
+  .culture-stage-next.complete { border-color: var(--good); background: #17251a; }
+  .culture-stage-counts { color: var(--dim); }
+  .culture-stage-details { margin-top: 12px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel2); }
+  .culture-stage-details > summary { cursor: pointer; font-weight: 700; }
+  .culture-stage-details ul { margin-bottom: 0; }
   .dirty-save {
     position: fixed; z-index: 70; right: 20px; bottom: 20px; display: flex; align-items: center; gap: 10px;
     padding: 8px 9px 8px 13px; border: 1px solid var(--warn); border-radius: 999px;
