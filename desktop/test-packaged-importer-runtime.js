@@ -394,6 +394,57 @@ globalThis.fetch = async (input, options = {}) => {
     if (opened.settingsOpen) throw new Error('Settings dialog stayed open after opening the importer');
     trace('packaged importer page opened');
 
+    const boundedStaging = await evaluate(cdp, `(async () => {
+      const ui = window.FedditCultureImporterUi;
+      const candidates = Array.from({ length: 24 }, (_, index) => ({
+        id: 'culture_candidate_' + index.toString(16).padStart(20, '0'),
+        seed: {
+          username: 'package_' + String(index).padStart(2, '0'),
+          biography: 'Packaged staging fixture.',
+          communities: ['botlife'],
+          abilities: { reply: true, discuss: true, links: false },
+        },
+      }));
+      const plan = ui.stagingPlan(candidates, ui.createCandidateDrafts(candidates), { destination: 'local' });
+      const calls = [];
+      const session = { id: 'package-session', staging: { results: [] } };
+      const result = await ui.runStagingBatches({
+        session,
+        sessionPath: '/api/culture-imports/package-session',
+        plan,
+        async api(route, request) {
+          calls.push({ route, request });
+          const batchResults = request.body.selected.map((candidateId, index) => ({
+            index,
+            ok: true,
+            code: 'STAGED',
+            importerCandidateId: candidateId,
+            importerCandidateIndex: Number.parseInt(candidateId.slice(-2), 16),
+          }));
+          session.staging.results.push(...batchResults);
+          return { result: session.staging, session: structuredClone(session) };
+        },
+      });
+      return {
+        callCount: calls.length,
+        batchSizes: calls.map((call) => call.request.body.selected.length),
+        stableIds: calls.flatMap((call) => call.request.body.selected),
+        destination: calls.every((call) => call.request.body.destination === 'local'),
+        managementLinkAbsent: calls.every((call) => !Object.hasOwn(call.request.body, 'managementLink')),
+        state: result.state,
+        completed: result.completed,
+        pollingFingerprintPresent: typeof ui.sessionRenderFingerprint === 'function',
+      };
+    })()`);
+    if (boundedStaging.callCount !== 4 || boundedStaging.batchSizes.some((size) => size !== 6) ||
+        boundedStaging.stableIds.length !== 24 || new Set(boundedStaging.stableIds).size !== 24 ||
+        !boundedStaging.destination || !boundedStaging.managementLinkAbsent ||
+        boundedStaging.state !== 'completed' || boundedStaging.completed !== 24 ||
+        !boundedStaging.pollingFingerprintPresent) {
+      throw new Error('Packaged bounded staging contract failed: ' + JSON.stringify(boundedStaging));
+    }
+    trace('packaged importer supports polling-safe state and four bounded staging batches');
+
     const localStaging = await evaluate(cdp, `(() => ({
       destination: document.getElementById('cultureStagingDestination')?.value || '',
       localOption: Array.from(document.getElementById('cultureStagingDestination')?.options || [])
@@ -520,8 +571,8 @@ globalThis.fetch = async (input, options = {}) => {
     });
     if (shippedSecret) throw new Error('Packaged application assets contained the FetchLayer key');
 
-    console.log('packaged desktop FetchLayer importer and Burst runtime: 31 checks passed');
-    console.log(JSON.stringify({ burst, visible, opened, missingKey, configuredState, connectionTest, browserExposure, retrieved }));
+    console.log('packaged desktop FetchLayer importer and Burst runtime: 35 checks passed');
+    console.log(JSON.stringify({ burst, visible, opened, boundedStaging, missingKey, configuredState, connectionTest, browserExposure, retrieved }));
   } catch (error) {
     if (serverOutput.length) console.error('Packaged server output:\n' + serverOutput.join(''));
     if (browserOutput.length) console.error('Headless browser output:\n' + browserOutput.join(''));
