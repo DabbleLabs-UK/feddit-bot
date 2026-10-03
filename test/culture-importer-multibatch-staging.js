@@ -319,6 +319,18 @@ async function run() {
   }, {
     state: 'duplicate', total: 24, confirmed: 10, ready: 12, duplicates: 1, skipped: 1,
   }, 'all 24 candidates are counted once after the duplicate-stopped batch');
+  const incompleteValidationError = new Error('Validation response was incomplete.');
+  incompleteValidationError.code = 'EXTERNAL_SEED_VALIDATION_FAILED';
+  incompleteValidationError.data = {
+    error: { code: incompleteValidationError.code },
+    results: observedSession.staging.results.filter((result) =>
+      observedCalls[0].slice(0, 5).includes(result.importerCandidateId)),
+  };
+  eq(ui.isDefinitiveValidationFailure(
+    incompleteValidationError,
+    observedCalls[0],
+    observedSession.staging,
+  ), false, 'an incomplete validation response remains ambiguous even when stale saved results exist');
   observedSession.staging.skippedCandidateIds.push(items[11].id);
   const observedContinued = await ui.runStagingBatches({
     api: observedApi,

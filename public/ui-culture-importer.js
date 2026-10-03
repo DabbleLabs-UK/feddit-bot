@@ -240,7 +240,8 @@
     if (!expected.size) return false;
     const responseResults = Array.isArray(data.results) ? data.results : [];
     const persistedResults = staging && Array.isArray(staging.results) ? staging.results : [];
-    const byId = new Map([...persistedResults, ...responseResults]
+    const evidenceResults = responseResults.length ? responseResults : persistedResults;
+    const byId = new Map(evidenceResults
       .map((result) => [stagingResultKey(result), result])
       .filter((entry) => entry[0] && expected.has(entry[0])));
     if ([...expected].some((candidateId) => !byId.has(candidateId))) return false;
