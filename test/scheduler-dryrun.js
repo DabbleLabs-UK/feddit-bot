@@ -51,7 +51,7 @@ function makeStore(profiles) {
     monthlyCapUsd: 5, pricing: cost.defaultPricing(),
   };
   const byId = new Map(profiles.map((p) => [p.id, p]));
-  const schedDefaults = () => ({ nextPostAt: null, nextArticleAt: null, nextCommentAt: null, backoffUntil: 0, sentPosts: [], sentComments: [] });
+  const schedDefaults = () => ({ nextPostAt: null, nextArticleAt: null, nextCommentAt: null, nextVoteAt: null, backoffUntil: 0, sentPosts: [], sentComments: [] });
   function profileSpend(profile, dayKey, monthKey) {
     const daily = (profile && profile.spendDaily) || {};
     let todayUsd = 0, todayGens = 0, monthUsd = 0, monthGens = 0;
@@ -255,6 +255,7 @@ function profile(over) {
     postsPerHour: over.postsPerHour || 0,
     articlePostsPerHour: over.articlePostsPerHour || 0,
     commentsPerHour: over.commentsPerHour || 0,
+    votesPerHour: over.votesPerHour || 0,
     provider: over.provider || 'ollama',
     model: 'stub-model',
     deepseekModel: over.deepseekModel || 'deepseek-v4-flash',
@@ -263,7 +264,7 @@ function profile(over) {
     enabled: over.enabled !== false,
     ...(over.dryRun !== undefined ? { dryRun: over.dryRun } : {}),
     activity: [],
-    sched: over.sched || { nextPostAt: null, nextArticleAt: null, nextCommentAt: null, backoffUntil: 0, sentPosts: [], sentComments: [] },
+    sched: over.sched || { nextPostAt: null, nextArticleAt: null, nextCommentAt: null, nextVoteAt: null, backoffUntil: 0, sentPosts: [], sentComments: [] },
     repliedTo: [],
     attentionState: over.attentionState || { cursor: { comments: 0, posts: 0 }, seenEventIds: [] },
     activeThreadState: over.activeThreadState || { consideredEventIds: [] },
@@ -275,6 +276,7 @@ function profile(over) {
     ...(over.canReply !== undefined ? { canReply: over.canReply } : {}),
     ...(over.canStartDiscussions !== undefined ? { canStartDiscussions: over.canStartDiscussions } : {}),
     ...(over.canShareLinks !== undefined ? { canShareLinks: over.canShareLinks } : {}),
+    ...(over.canVote !== undefined ? { canVote: over.canVote } : {}),
     newsUseAllFeeds: over.newsUseAllFeeds != null ? over.newsUseAllFeeds : true,
     newsFeedSelection: over.newsFeedSelection || [],
     newsCustomFeeds: over.newsCustomFeeds || [],
@@ -446,6 +448,124 @@ async function scenarioSecondaryVoting() {
   ok(!exhaustedProviders.prompts[0].includes('SECONDARY VOTING'),
     'exhausted allowance does not waste model output on public vote reasons');
   eq(exhaustedClient.calls.comment.length, 1, 'allowance exhaustion does not block the main reply action');
+}
+
+// Standalone voting is its own fourth cadence. A voting-only bot receives one
+// bounded slate, makes one inference over the entire slate, and cannot publish
+// a post or comment as a side effect.
+async function scenarioStandaloneVoting() {
+  console.log('\n[1bd] standalone voting-only cadence');
+  const clock = makeClock(1_800_000);
+  const world = {
+    feddits: {
+      botlife: [{
+        id: 30, feddit: 'botlife', title: 'A specific useful post',
+        body: 'A bounded item for the voting slate.', author: 'alice',
+      }],
+    },
+    comments: {
+      30: [{ id: 31, postId: 30, author: 'bob', body: 'A second bounded item.' }],
+    },
+    abouts: { botlife: { post_format: 'any' } },
+  };
+  const p = profile({
+    id: 'vote-only', dryRun: true,
+    canReply: false, canStartDiscussions: false, canShareLinks: false, canVote: true,
+    postsPerHour: 0, articlePostsPerHour: 0, commentsPerHour: 0, votesPerHour: 1,
+    readFeddits: ['botlife'], postFeddits: ['botlife'],
+  });
+  p.simulationState = {
+    sched: {
+      nextPostAt: null, nextArticleAt: null, nextCommentAt: null,
+      nextVoteAt: clock.now() - 1, backoffUntil: 0, sentPosts: [], sentComments: [],
+    },
+    repliedTo: [], voteState: { considered: [] },
+    attentionState: { cursor: { comments: 0, posts: 0 }, seenEventIds: [] },
+    activeThreadState: { consideredEventIds: [] },
+    socialState: socialRelationships.defaults(), memoryState: autobiographicalMemory.defaults(),
+  };
+  const client = makeFeddit(world);
+  client.calls.vote = [];
+  client.voteAllowance = async () => ({
+    ok: true, status: 200,
+    data: { vote_allowance: { limited: true, limit: 15, used: 0, remaining: 2, on_probation: false } },
+  });
+  client.vote = async (request) => { client.calls.vote.push(request); return { ok: true, status: 200 }; };
+  const providers = makeProviders({
+    textFor: () => JSON.stringify({
+      choice: 'WAIT',
+      reason: 'Voting-only opportunity',
+      votes: [
+        { id: 'V1', direction: 'up', reason: 'This post is specific, concrete and useful.' },
+        { id: 'V2', direction: 'down', reason: 'This comment adds no support for its claim.' },
+      ],
+    }),
+  });
+  const store = makeStore([p]);
+  const sched = scheduler.createScheduler({
+    store, providers, feddit: client,
+    now: clock.now, random: () => 0, getDeepseekKey: KEY,
+  });
+
+  const result = await sched.runTick();
+  eq(result.results[0].action, 'vote', 'the independent due timer produces a voting action');
+  eq(providers.stats().calls, 1, 'one inference decides the complete bounded voting slate');
+  ok(providers.prompts[0].includes('voting-only opportunity') &&
+    providers.prompts[0].includes('Do not create a post or comment'),
+  'the standalone inference is explicitly non-publishing');
+  eq(client.calls.vote.length, 0, 'rehearsal casts no live votes');
+  eq(client.calls.submit.length, 0, 'voting-only rehearsal creates no post');
+  eq(client.calls.comment.length, 0, 'voting-only rehearsal creates no comment');
+  eq(p.simulationState.voteState.considered.length, 2,
+    'the bounded slate is durably considered in isolated rehearsal state');
+  ok(p.simulationState.sched.nextVoteAt > clock.now(),
+    'the standalone vote timer advances without changing other cadences');
+  const voteLog = p.activity.findLast((entry) => entry.kind === 'vote');
+  ok(JSON.stringify(voteLog.voteSummary) === JSON.stringify({
+    candidates: 2, up: 1, down: 1, nil: 0, accepted: 2, rejected: 0, failures: [],
+  }), 'observability reports candidates, direction counts and outcomes');
+
+  const disabled = profile({
+    id: 'vote-disabled', dryRun: true,
+    canReply: false, canStartDiscussions: false, canShareLinks: false, canVote: false,
+    votesPerHour: 100,
+  });
+  disabled.sched.nextVoteAt = clock.now() - 1;
+  const disabledProviders = makeProviders();
+  const disabledResult = await scheduler.createScheduler({
+    store: makeStore([disabled]), providers: disabledProviders, feddit: makeFeddit({ feddits: {}, comments: {} }),
+    now: clock.now, random: () => 0, getDeepseekKey: KEY,
+  }).runTick();
+  eq(disabledResult.acted, 0, 'turning voting off prevents standalone vote opportunities');
+  eq(disabledProviders.stats().calls, 0, 'a voting-disabled bot never reaches inference');
+
+  const empty = profile({
+    id: 'vote-empty', dryRun: true,
+    canReply: false, canStartDiscussions: false, canShareLinks: false, canVote: true,
+    postsPerHour: 0, articlePostsPerHour: 0, commentsPerHour: 0, votesPerHour: 1,
+    readFeddits: ['empty'], postFeddits: ['empty'],
+  });
+  empty.simulationState = {
+    sched: {
+      nextPostAt: null, nextArticleAt: null, nextCommentAt: null,
+      nextVoteAt: clock.now() - 1, backoffUntil: 0, sentPosts: [], sentComments: [],
+    },
+    repliedTo: [], voteState: { considered: [] },
+    attentionState: { cursor: { comments: 0, posts: 0 }, seenEventIds: [] },
+    activeThreadState: { consideredEventIds: [] },
+    socialState: socialRelationships.defaults(), memoryState: autobiographicalMemory.defaults(),
+  };
+  const emptyProviders = makeProviders();
+  const emptyResult = await scheduler.createScheduler({
+    store: makeStore([empty]), providers: emptyProviders,
+    feddit: makeFeddit({ feddits: { empty: [] }, comments: {} }),
+    now: clock.now, random: () => 0, getDeepseekKey: KEY,
+  }).runTick();
+  eq(emptyResult.results[0].action, 'vote', 'an empty voting slate still reaches a visible terminal outcome');
+  eq(emptyProviders.stats().calls, 0, 'an empty voting slate does not waste an inference');
+  const emptyLog = empty.activity.findLast((entry) => entry.kind === 'vote');
+  ok(emptyLog && emptyLog.voteSummary.candidates === 0 && /no eligible/i.test(emptyLog.note),
+    'an empty standalone opportunity records a concise observable reason');
 }
 
 // Format an epoch-ms as a GDELT seendate string ("20260819T091500Z").
@@ -3629,6 +3749,7 @@ async function scenarioDeepseekReasoning() {
   await scenarioReliableAttention();
   await scenarioPerProfileMode();
   await scenarioSecondaryVoting();
+  await scenarioStandaloneVoting();
   await scenarioImmediateSimulation();
   await scenarioNewsDiscussion();
   await scenarioRealCandidateCompetition();

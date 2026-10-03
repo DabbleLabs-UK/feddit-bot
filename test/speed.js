@@ -47,9 +47,11 @@ function makeProfile(id = 'speed-bot') {
     canReply: false,
     canStartDiscussions: true,
     canShareLinks: false,
+    canVote: false,
     postsPerHour: 1,
     articlePostsPerHour: 0,
     commentsPerHour: 0,
+    votesPerHour: 0,
     probation: { onProbation: false, checkedAt: start },
     sched: defaults(),
     simulationState: { sched: defaults() },
@@ -61,6 +63,7 @@ function defaults() {
     nextPostAt: null,
     nextArticleAt: null,
     nextCommentAt: null,
+    nextVoteAt: null,
     backoffUntil: 0,
     sentPosts: [],
     sentComments: [],
@@ -148,6 +151,17 @@ function harness(initialSpeed, profiles = [makeProfile()]) {
   const paused = harness(speed.startState(100, 'untilOff', start), [pausedProfile]);
   await paused.scheduler.runTick();
   eq(pausedProfile.sched.nextPostAt, null, '100x does not schedule a disabled bot');
+
+  const votingProfile = makeProfile('speed-voter');
+  votingProfile.canStartDiscussions = false;
+  votingProfile.canVote = true;
+  votingProfile.postsPerHour = 0;
+  votingProfile.votesPerHour = 1;
+  const voting = harness(speed.startState(10, 'untilOff', start), [votingProfile]);
+  await voting.scheduler.runTick();
+  eq(votingProfile.sched.nextVoteAt - start, 3 * 60 * 1000,
+    '10x Speed scales the independent voting deadline');
+  eq(votingProfile.votesPerHour, 1, 'Speed leaves stored voting cadence unchanged');
 
   console.log('speed: ' + checks + ' checks passed');
 })().catch((error) => {

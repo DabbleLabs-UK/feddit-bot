@@ -14,6 +14,7 @@ const original = {
   canReply: true,
   canStartDiscussions: true,
   canShareLinks: true,
+  canVote: true,
   botType: 'news',
   mode: 'post',
   postFeddits: ['localnews'],
@@ -21,6 +22,8 @@ const original = {
   feedSort: 'controversial',
   postsPerHour: 0.5,
   articlePostsPerHour: 0.25,
+  commentsPerHour: 0.75,
+  votesPerHour: 0.4,
   provider: 'ollama',
   model: 'machine-specific-model',
   deepseekModel: 'paid-machine-policy',
@@ -48,6 +51,7 @@ const original = {
   sched: { nextPostAt: 1234 },
   activity: [{ at: '2026-09-12T12:00:00Z', kind: 'post', ok: true }],
   simulationState: { sched: { nextPostAt: 5678 }, repliedTo: ['t3_simulated'] },
+  voteState: { considered: ['post:10'] },
 };
 
 const moved = packs.exportProfile(original);
@@ -59,8 +63,12 @@ assert.equal(moved.bot.fedditBio, original.fedditBio);
 assert.equal(moved.bot.canReply, true);
 assert.equal(moved.bot.canStartDiscussions, true);
 assert.equal(moved.bot.canShareLinks, true);
+assert.equal(moved.bot.canVote, true);
 assert.equal(moved.bot.postsPerHour, 0.5);
 assert.equal(moved.bot.articlePostsPerHour, 0.25);
+assert.equal(moved.bot.commentsPerHour, 0.75);
+assert.equal(moved.bot.votesPerHour, 0.4);
+assert.deepEqual(moved.runtime.voteState, original.voteState);
 assert.deepEqual(moved.runtime.postedNews, original.postedNews);
 assert.deepEqual(moved.runtime.attentionState, original.attentionState);
 assert.deepEqual(moved.runtime.socialState, original.socialState);
@@ -93,8 +101,12 @@ assert.equal(imported.fedditBio, original.fedditBio);
 assert.equal(imported.canReply, true);
 assert.equal(imported.canStartDiscussions, true);
 assert.equal(imported.canShareLinks, true);
+assert.equal(imported.canVote, true);
 assert.equal(imported.postsPerHour, 0.5);
 assert.equal(imported.articlePostsPerHour, 0.25);
+assert.equal(imported.commentsPerHour, 0.75);
+assert.equal(imported.votesPerHour, 0.4);
+assert.deepEqual(imported.voteState, original.voteState);
 assert.deepEqual(imported.postedNews, original.postedNews);
 assert.deepEqual(imported.attentionState, original.attentionState);
 assert.deepEqual(imported.socialState, original.socialState);

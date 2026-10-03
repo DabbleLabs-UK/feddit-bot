@@ -20,7 +20,7 @@ function seed(overrides = {}) {
     values: ['clarity'],
     communities: ['botlife'],
     initiative: 'balanced',
-    abilities: { reply: true, discuss: true, links: false },
+    abilities: { reply: true, discuss: true, links: false, vote: true },
     ...overrides,
   });
 }
@@ -53,12 +53,12 @@ eq(hardLinks.abilities.links, true, 'hard article-sharing ability is obeyed');
 const hostileOutput = population.applyCohortConfiguration(seed({ abilities: {
   reply: true, discuss: true, links: false,
 } }), { reply: 'disabled', discuss: 'disabled', links: 'enabled' }, 'hostile-output');
-eq(hostileOutput.abilities, { reply: false, discuss: false, links: true },
+eq(hostileOutput.abilities, { reply: false, discuss: false, links: true, vote: true },
   'invalid model choices cannot bypass hard ability constraints');
 population.validateHardSeed(hostileOutput, { reply: 'disabled', discuss: 'disabled', links: 'enabled' });
 
 assert.throws(() => population.normalizeCohortConfiguration({
-  reply: 'disabled', discuss: 'disabled', links: 'disabled',
+  reply: 'disabled', discuss: 'disabled', links: 'disabled', vote: 'disabled',
 }), /cannot disable/i);
 checks++;
 assert.throws(() => population.normalizeCohortConfiguration({
@@ -78,6 +78,30 @@ const softReplies = Array.from({ length: 40 }, (_, index) => population.applyCoh
 ok(softReplies.some((item) => item.abilities.reply), 'soft reply preference biases some generated members');
 ok(softReplies.some((item) => !item.abilities.reply), 'soft reply preference retains genuine variation');
 
+const votingOnly = population.normalizeCohortConfiguration({
+  mode: 'voting-only',
+  strength: 'soft',
+  reply: 'enabled',
+  discuss: 'enabled',
+  links: 'enabled',
+  vote: 'disabled',
+  balance: 'mostly-posts',
+});
+eq(votingOnly, {
+  strength: 'hard',
+  activity: 'varied',
+  reply: 'disabled',
+  discuss: 'disabled',
+  links: 'disabled',
+  vote: 'enabled',
+  balance: 'varied',
+  mode: 'voting-only',
+}, 'voting-only is an exact hard cohort contract rather than a soft suggestion');
+const votingOnlySeed = population.applyCohortConfiguration(seed(), votingOnly, 'voting-only');
+eq(votingOnlySeed.abilities, { reply: false, discuss: false, links: false, vote: true },
+  'voting-only cohorts cannot silently gain post or reply abilities');
+population.validateHardSeed(votingOnlySeed, votingOnly);
+
 const direction = 'Make distinct bots fascinated by municipal mysteries.';
 const prompt = population.generationPrompt({
   cohortId: 'cohort-test', slot: 0, attempt: 1, direction,
@@ -88,6 +112,13 @@ ok(prompt.includes('Operator creative direction for this cohort: ' + direction),
 ok(prompt.includes('Structured operational controls (separate from creative direction)'),
   'structured requirements are explicit and separate in the model request');
 ok(prompt.includes('HARD generation constraints'), 'the model request identifies hard controls as non-overridable');
+const votingPrompt = population.generationPrompt({
+  cohortId: 'cohort-vote', slot: 0, attempt: 1,
+  configuration: { mode: 'voting-only', activity: 'regular' },
+});
+ok(votingPrompt.includes('HARD voting only') &&
+  votingPrompt.includes('abilities ({reply, discuss, links, vote} booleans)'),
+  'the creator receives both the voting-only rule and the voting ability contract');
 
 const seeds = Array.from({ length: 100 }, (_, index) => seed({ username: 'cohort_' + index }));
 const varied = activity.assignCohort(seeds, { nowMs: 1, offset: 0, activity: 'varied' });

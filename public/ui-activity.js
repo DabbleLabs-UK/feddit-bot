@@ -10,6 +10,7 @@
       text: abilities.canStartDiscussions === true,
       article: abilities.canShareLinks === true,
       replies: abilities.canReply === true,
+      votes: abilities.canVote !== false,
     };
   }
 

@@ -175,9 +175,11 @@ async function localPlacementContract(placement) {
       deepseekModel: 'deepseek-v4-flash',
       postsPerHour: 7,
       commentsPerHour: 11,
+      votesPerHour: 2,
       canReply: true,
       canStartDiscussions: true,
       canShareLinks: false,
+      canVote: true,
       botOrigin: 'system',
       hostedOnboardingTurnsCompleted: 99,
     });
@@ -185,6 +187,8 @@ async function localPlacementContract(placement) {
     eq(created.json.profile.provider, 'deepseek', placement + ' preserves the selected provider');
     eq(created.json.profile.postsPerHour, 7, placement + ' preserves the selected post cadence');
     eq(created.json.profile.commentsPerHour, 11, placement + ' preserves the selected reply cadence');
+    eq(created.json.profile.votesPerHour, 2, placement + ' preserves the selected voting cadence');
+    eq(created.json.profile.canVote, true, placement + ' preserves the voting ability');
     eq(created.json.profile.postsPerHour, 7, placement + ' Speed does not rewrite post cadence');
 
     const stoppedSpeed = await requestJson(runner.port, 'PUT', '/api/speed', {

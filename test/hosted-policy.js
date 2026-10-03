@@ -110,6 +110,39 @@ const replyOnly = policy.applyHostedPolicy({
 eq(replyOnly.postsPerHour, 0, 'reply-only bot has no post cadence');
 eq(replyOnly.commentsPerHour * 24, 6, 'reply-only bot uses all opportunities for replies');
 
+const votingOnly = policy.applyHostedPolicy({
+  enabled: true,
+  canReply: false,
+  canStartDiscussions: false,
+  canShareLinks: false,
+  canVote: true,
+  votesPerHour: 1,
+}, {}, startedAt);
+eq(votingOnly.postsPerHour, 0, 'voting-only bot has no text-post cadence');
+eq(votingOnly.articlePostsPerHour, 0, 'voting-only bot has no article cadence');
+eq(votingOnly.commentsPerHour, 0, 'voting-only bot has no reply cadence');
+eq(votingOnly.votesPerHour * 24, 6, 'voting-only bot uses all opportunities for bounded vote slates');
+eq(votingOnly.sched.nextVoteAt, startedAt + 2 * 60 * 1000,
+  'voting-only activation seeds its independent vote timer');
+
+const mixedWithVoting = policy.applyHostedPolicy({
+  enabled: true,
+  canReply: true,
+  canStartDiscussions: true,
+  canShareLinks: false,
+  canVote: true,
+  votesPerHour: 1,
+}, {}, startedAt);
+eq(mixedWithVoting.votesPerHour * 24, 2,
+  'mixed hosted bot reserves one third of its unchanged allowance for voting');
+eq(mixedWithVoting.postsPerHour * 24, 4 / 3,
+  'mixed hosted bot preserves the established post share within non-voting opportunities');
+eq(mixedWithVoting.commentsPerHour * 24, 8 / 3,
+  'mixed hosted bot preserves the established reply share within non-voting opportunities');
+eq(Number((mixedWithVoting.postsPerHour + mixedWithVoting.commentsPerHour +
+  mixedWithVoting.votesPerHour).toFixed(8)), Number((6 / 24).toFixed(8)),
+  'enabling voting redistributes rather than increases the managed total cadence');
+
 const earlierDue = startedAt + 30 * 1000;
 const firstStartWithEarlierSchedule = policy.applyHostedPolicy({ enabled: true }, {
   canReply: true,

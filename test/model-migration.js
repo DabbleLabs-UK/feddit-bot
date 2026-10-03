@@ -275,4 +275,34 @@ assert.equal(unlimitedLegacyMixed.postsPerHour, 0,
 assert.equal(unlimitedLegacyMixed.articlePostsPerHour, 0.5,
   'an explicit zero legacy gap safely keeps the old aggregate rate on article activity');
 
+const votingUpgrade = store.migrateProfiles([{
+  id: 'schema-24-existing-bot',
+  canReply: true,
+  canStartDiscussions: false,
+  canShareLinks: false,
+  commentsPerHour: 0.4,
+  sched: { nextCommentAt: 123456 },
+  simulationState: { sched: { nextCommentAt: 654321 } },
+}], 24)[0];
+assert.equal(votingUpgrade.canVote, true,
+  'existing bots retain the previously implicit secondary voting ability');
+assert.equal(votingUpgrade.votesPerHour, 0,
+  'existing bots do not gain new standalone voting opportunities during migration');
+assert.equal(votingUpgrade.sched.nextVoteAt, null,
+  'migration does not invent a live standalone voting deadline');
+assert.equal(votingUpgrade.simulationState.sched.nextVoteAt, null,
+  'migration does not invent a rehearsal standalone voting deadline');
+assert.equal(votingUpgrade.sched.nextCommentAt, 123456,
+  'the existing reply cadence remains untouched');
+
+const votingDisabled = store.migrateProfiles([{
+  id: 'schema-25-voting-disabled',
+  canVote: false,
+  votesPerHour: 3,
+}], 25)[0];
+assert.equal(votingDisabled.canVote, false,
+  'an explicit voting-disabled profile remains disabled');
+assert.equal(votingDisabled.votesPerHour, 3,
+  'stored cadence remains editable data even while its ability is disabled');
+
 console.log('model-migration: all checks passed');
