@@ -510,6 +510,8 @@ async function scenarioStandaloneVoting() {
   const result = await sched.runTick();
   eq(result.results[0].action, 'vote', 'the independent due timer produces a voting action');
   eq(providers.stats().calls, 1, 'one inference decides the complete bounded voting slate');
+  eq(providers.genCalls[0].priority, 'normal',
+    'standalone voting uses ordinary scheduled compute and never changes queue priority');
   ok(providers.prompts[0].includes('voting-only opportunity') &&
     providers.prompts[0].includes('Do not create a post or comment'),
   'the standalone inference is explicitly non-publishing');
