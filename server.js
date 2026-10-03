@@ -852,12 +852,16 @@ async function handleApi(req, res, urlPath, query) {
         const body = await readBody(req);
         return sendJson(res, 202, { session: cultureImportSessions.create(importOwner, body) });
       }
-      const cultureRoute = urlPath.match(/^\/api\/culture-imports\/([^/]+)(?:\/(analyse|generate|cancel|stage))?$/);
+      const cultureRoute = urlPath.match(/^\/api\/culture-imports\/([^/]+)(?:\/(analyse|generate|cancel|review|stage))?$/);
       if (!cultureRoute) return sendJson(res, 404, { error: 'Unknown culture importer route' });
       const sessionId = decodeURIComponent(cultureRoute[1]);
       const action = cultureRoute[2] || '';
       if (method === 'GET' && !action) {
         return sendJson(res, 200, { session: cultureImportSessions.get(importOwner, sessionId) });
+      }
+      if (method === 'PUT' && action === 'review') {
+        const body = await readBody(req);
+        return sendJson(res, 200, { session: cultureImportSessions.saveReview(importOwner, sessionId, body) });
       }
       if (method !== 'POST' || !action) return sendJson(res, 404, { error: 'Unknown culture importer route' });
       const body = await readBody(req);
