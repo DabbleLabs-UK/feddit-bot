@@ -231,6 +231,26 @@
     };
   }
 
+  function isDefinitiveValidationFailure(error, candidateIds, staging) {
+    const data = error && error.data && typeof error.data === 'object' ? error.data : {};
+    const detail = data.error && typeof data.error === 'object' ? data.error : {};
+    const code = String(error && error.code || detail.code || '').toUpperCase();
+    if (code !== 'EXTERNAL_SEED_VALIDATION_FAILED') return false;
+    const expected = new Set((candidateIds || []).map(String));
+    if (!expected.size) return false;
+    const responseResults = Array.isArray(data.results) ? data.results : [];
+    const persistedResults = staging && Array.isArray(staging.results) ? staging.results : [];
+    const byId = new Map([...persistedResults, ...responseResults]
+      .map((result) => [stagingResultKey(result), result])
+      .filter((entry) => entry[0] && expected.has(entry[0])));
+    if ([...expected].some((candidateId) => !byId.has(candidateId))) return false;
+    return [...expected].every((candidateId) => {
+      const resultCode = String(byId.get(candidateId) && byId.get(candidateId).code || '').toUpperCase();
+      const unsafeCodes = new Set(['STAGED', 'STAGE_FAILED', 'REGISTRATION_UNCERTAIN', 'MISSING_STAGE_RESULT']);
+      return resultCode && !unsafeCodes.has(resultCode) && !/UNCERTAIN|AMBIGUOUS/.test(resultCode);
+    });
+  }
+
   async function runStagingBatches(options = {}) {
     const api = options.api;
     const sessionPath = String(options.sessionPath || '');
@@ -290,11 +310,20 @@
         } catch { /* a failed read must never trigger a registration retry */ }
         const confirmed = confirmedStagingCandidateIds(latestSession && latestSession.staging);
         const remaining = candidateIds.filter((candidateId) => !confirmed.has(candidateId));
+        const validationStoppedBeforeRegistration = isDefinitiveValidationFailure(
+          error,
+          batch,
+          latestSession && latestSession.staging,
+        );
         return emit({
           state: 'attention', completed: confirmed.size, remaining, batch: batchNumber,
-          ambiguousCandidateIds: batch.filter((candidateId) => !confirmed.has(candidateId)),
+          ambiguousCandidateIds: validationStoppedBeforeRegistration
+            ? []
+            : batch.filter((candidateId) => !confirmed.has(candidateId)),
           outcomes: latestSession && latestSession.staging && latestSession.staging.results || [],
-          error: String(error && error.message || 'The staging request did not return a confirmed result.'),
+          error: validationStoppedBeforeRegistration
+            ? 'This batch stopped before registration because one or more candidates failed validation.'
+            : String(error && error.message || 'The staging request did not return a confirmed result.'),
         });
       }
       latestSession = response && response.session || latestSession;
@@ -1342,6 +1371,7 @@
     skippedStagingCandidateIds,
     stagingPlan,
     stagingBatchBody,
+    isDefinitiveValidationFailure,
     runStagingBatches,
     beginExclusiveStaging,
     endExclusiveStaging,

@@ -239,6 +239,100 @@ async function run() {
   eq(new Set(duplicateCalls.slice(2).flat()).size, 18,
     'all eighteen eligible remaining stable candidate IDs are submitted once after the skip');
 
+  const observedSession = {
+    id: 'observed-validation-stop',
+    candidates: items,
+    staging: {
+      selectionCandidateIds: items.map((candidate) => candidate.id),
+      skippedCandidateIds: [items[5].id],
+      results: items.filter((candidate, index) => index < 5 || (index >= 6 && index <= 10)).map((candidate) => {
+        const index = items.indexOf(candidate);
+        return ({
+          importerCandidateId: candidate.id,
+          importerCandidateIndex: index,
+          username: candidate.seed.username,
+          ok: true,
+          code: 'STAGED',
+          message: 'Staged.',
+        });
+      }),
+    },
+  };
+  let observedPostCount = 0;
+  const observedCalls = [];
+  async function observedApi(route, request) {
+    if (!request) return { session: structuredClone(observedSession) };
+    observedPostCount++;
+    observedCalls.push(structuredClone(request.body.selected));
+    const batch = request.body.selected;
+    const results = batch.map((candidateId, index) => {
+      const candidateIndex = items.findIndex((candidate) => candidate.id === candidateId);
+      return {
+        importerCandidateId: candidateId,
+        importerCandidateIndex: candidateIndex,
+        username: items[candidateIndex].seed.username,
+        ok: observedPostCount !== 1,
+        code: observedPostCount === 1 ? (index === 0 ? 'DUPLICATE_SEED' : 'VALID') : 'STAGED',
+        message: observedPostCount === 1
+          ? (index === 0 ? 'Seed is already represented.' : 'Validated, but the atomic batch was not registered.')
+          : 'Staged.',
+      };
+    });
+    for (const result of results) {
+      const resultIndex = observedSession.staging.results.findIndex((item) =>
+        item.importerCandidateId === result.importerCandidateId);
+      if (resultIndex >= 0) observedSession.staging.results[resultIndex] = result;
+      else observedSession.staging.results.push(result);
+    }
+    if (observedPostCount === 1) {
+      const error = new Error('No external seeds were staged because one or more seeds failed validation.');
+      error.code = 'EXTERNAL_SEED_VALIDATION_FAILED';
+      error.data = {
+        ok: false,
+        error: { code: error.code, message: error.message },
+        results: structuredClone(results),
+      };
+      throw error;
+    }
+    return { session: structuredClone(observedSession) };
+  }
+  const observedAttention = await ui.runStagingBatches({
+    api: observedApi,
+    sessionPath: '/api/culture-imports/observed-validation-stop',
+    plan,
+    session: observedSession,
+  });
+  eq(observedAttention.state, 'attention',
+    'a definitive atomic validation failure stops before any later batch');
+  eq(observedAttention.ambiguousCandidateIds, [],
+    'a complete pre-registration validation response is not mislabeled as an uncertain registration');
+  eq(observedAttention.completed, 10,
+    'the observed recovery sequence retains exactly ten confirmed registrations');
+  const observedStatus = ui.stagingStatus(observedSession, draftsFor(items), observedAttention);
+  eq({
+    state: observedStatus.state,
+    total: observedStatus.total,
+    confirmed: observedStatus.confirmed,
+    ready: observedStatus.eligible.length,
+    duplicates: observedStatus.duplicates.length,
+    skipped: observedStatus.skipped,
+  }, {
+    state: 'duplicate', total: 24, confirmed: 10, ready: 12, duplicates: 1, skipped: 1,
+  }, 'all 24 candidates are counted once after the duplicate-stopped batch');
+  observedSession.staging.skippedCandidateIds.push(items[11].id);
+  const observedContinued = await ui.runStagingBatches({
+    api: observedApi,
+    sessionPath: '/api/culture-imports/observed-validation-stop',
+    plan,
+    session: observedSession,
+  });
+  eq(observedContinued.state, 'completed',
+    'explicitly skipping the confirmed duplicate continues every eligible remaining candidate');
+  eq(observedContinued.completed, 22,
+    'the final count includes ten earlier and twelve later confirmed registrations');
+  eq(observedCalls.slice(1).flat(), items.slice(12).map((candidate) => candidate.id),
+    'continuation neither resubmits confirmed bots nor submits either skipped duplicate');
+
   const partialHarness = stagingApi({ failOnPost: 2 });
   const partial = await ui.runStagingBatches({
     api: partialHarness.api,
