@@ -143,10 +143,12 @@
       : (destination === 'hosted' ? String(options.managementLink || '') : '');
     const selected = [];
     const edits = [];
+    const candidates = Array.isArray(options.candidates) ? options.candidates : [];
     for (const [key, draft] of Object.entries(drafts || {})) {
       if (!draft || draft.selected !== true) continue;
       const index = Number(key);
-      selected.push(index);
+      const candidateId = candidates[index] && String(candidates[index].id || '');
+      selected.push(candidateId || index);
       edits.push({ index, seed: compactSeed(draft.seed) });
     }
     return {
@@ -155,6 +157,130 @@
       destination,
       ...(managementLink ? { managementLink: String(managementLink) } : {}),
     };
+  }
+
+  function stagingResultKey(result) {
+    const candidateId = String(result && result.importerCandidateId || '').trim();
+    if (candidateId) return candidateId;
+    const candidateIndex = Number(result && result.importerCandidateIndex);
+    return Number.isInteger(candidateIndex) && candidateIndex >= 0 ? 'index:' + candidateIndex : '';
+  }
+
+  function confirmedStagingCandidateIds(staging) {
+    return new Set((staging && Array.isArray(staging.results) ? staging.results : [])
+      .filter((result) => result && result.ok === true && stagingResultKey(result))
+      .map((result) => stagingResultKey(result)));
+  }
+
+  function stagingPlan(candidates, drafts, options = {}) {
+    const body = stagingBody(drafts, { ...options, candidates });
+    const editsById = {};
+    body.selected.forEach((candidateId, offset) => {
+      const edit = body.edits[offset];
+      if (edit) editsById[String(candidateId)] = edit;
+    });
+    return {
+      candidateIds: body.selected.map(String),
+      editsById,
+      destination: body.destination,
+    };
+  }
+
+  function stagingBatchBody(plan, candidateIds, managementLink) {
+    const selected = candidateIds.map(String);
+    return {
+      selected,
+      edits: selected.map((candidateId) => plan.editsById[candidateId]).filter(Boolean),
+      destination: plan.destination,
+      ...(plan.destination === 'hosted' && managementLink ? { managementLink: String(managementLink) } : {}),
+    };
+  }
+
+  async function runStagingBatches(options = {}) {
+    const api = options.api;
+    const sessionPath = String(options.sessionPath || '');
+    const plan = options.plan || { candidateIds: [], editsById: {}, destination: 'local' };
+    const initialConfirmed = confirmedStagingCandidateIds(options.session && options.session.staging);
+    const candidateIds = [...new Set((plan.candidateIds || []).map(String))]
+      .filter((candidateId) => !initialConfirmed.has(candidateId));
+    const total = candidateIds.length;
+    const batchCount = Math.ceil(total / STAGING_SELECTION_LIMIT);
+    const emit = (progress) => {
+      const value = { total, batchCount, ...progress };
+      if (typeof options.onProgress === 'function') options.onProgress(value);
+      return value;
+    };
+    if (!total) return emit({ state: 'completed', completed: 0, remaining: [], batch: 0, outcomes: [] });
+
+    let latestSession = options.session || null;
+    for (let offset = 0; offset < total; offset += STAGING_SELECTION_LIMIT) {
+      const batch = candidateIds.slice(offset, offset + STAGING_SELECTION_LIMIT);
+      const batchNumber = Math.floor(offset / STAGING_SELECTION_LIMIT) + 1;
+      if (typeof options.shouldCancel === 'function' && options.shouldCancel()) {
+        return emit({
+          state: 'cancelled', completed: offset, remaining: candidateIds.slice(offset),
+          batch: batchNumber, outcomes: latestSession && latestSession.staging && latestSession.staging.results || [],
+        });
+      }
+      emit({
+        state: 'running', completed: offset, remaining: candidateIds.slice(offset), batch: batchNumber,
+        activeCandidateIds: batch, outcomes: latestSession && latestSession.staging && latestSession.staging.results || [],
+      });
+      let response;
+      try {
+        response = await api(sessionPath + '/stage', {
+          method: 'POST',
+          body: stagingBatchBody(plan, batch, options.managementLink),
+        });
+      } catch (error) {
+        try {
+          const refreshed = await api(sessionPath);
+          if (refreshed && refreshed.session) {
+            latestSession = refreshed.session;
+            if (typeof options.onSession === 'function') options.onSession(latestSession);
+          }
+        } catch { /* a failed read must never trigger a registration retry */ }
+        const confirmed = confirmedStagingCandidateIds(latestSession && latestSession.staging);
+        const remaining = candidateIds.filter((candidateId) => !confirmed.has(candidateId));
+        return emit({
+          state: 'attention', completed: total - remaining.length, remaining, batch: batchNumber,
+          ambiguousCandidateIds: batch.filter((candidateId) => !confirmed.has(candidateId)),
+          outcomes: latestSession && latestSession.staging && latestSession.staging.results || [],
+          error: String(error && error.message || 'The staging request did not return a confirmed result.'),
+        });
+      }
+      latestSession = response && response.session || latestSession;
+      if (latestSession && typeof options.onSession === 'function') options.onSession(latestSession);
+      const confirmed = confirmedStagingCandidateIds(latestSession && latestSession.staging);
+      const unresolvedBatch = batch.filter((candidateId) => !confirmed.has(candidateId));
+      const remaining = candidateIds.filter((candidateId) => !confirmed.has(candidateId));
+      if (unresolvedBatch.length) {
+        return emit({
+          state: 'attention', completed: total - remaining.length, remaining, batch: batchNumber,
+          ambiguousCandidateIds: [],
+          outcomes: latestSession && latestSession.staging && latestSession.staging.results || [],
+          error: 'One or more candidates in this batch were not confirmed. No later batch was started.',
+        });
+      }
+      emit({
+        state: 'running', completed: total - remaining.length, remaining, batch: batchNumber,
+        outcomes: latestSession && latestSession.staging && latestSession.staging.results || [],
+      });
+    }
+    return emit({
+      state: 'completed', completed: total, remaining: [], batch: batchCount,
+      outcomes: latestSession && latestSession.staging && latestSession.staging.results || [],
+    });
+  }
+
+  function beginExclusiveStaging(workflow) {
+    if (!workflow || workflow.busy) return false;
+    workflow.busy = true;
+    return true;
+  }
+
+  function endExclusiveStaging(workflow) {
+    if (workflow) workflow.busy = false;
   }
 
   function cultureGroups(analysis) {
@@ -236,6 +362,8 @@
       restored: false,
       savedSessionId: '',
       disclosureState: {},
+      stagingOperation: null,
+      stagingCancelRequested: false,
     };
   }
 
@@ -446,8 +574,9 @@
       const metadata = candidate.importerMetadata || {};
       const abilities = seed.abilities || {};
       const disclosureKey = 'candidate:' + String(candidate.id || index);
+      const staged = confirmedStagingCandidateIds(workflow.session && workflow.session.staging).has(String(candidate.id || ''));
       return '<details class="culture-candidate" data-culture-disclosure="' + esc(disclosureKey) + '"' + disclosureAttribute(disclosureKey, true) + '><summary><label><input type="checkbox" data-candidate-selected="' + index + '"' +
-        (draft.selected ? ' checked' : '') + '> Stage ' + esc(seed.username || 'candidate ' + (index + 1)) + '</label><span>' + esc(seed.biography || '') + '</span></summary>' +
+        (draft.selected && !staged ? ' checked' : '') + (staged ? ' disabled' : '') + '> ' + (staged ? 'Staged ' : 'Stage ') + esc(seed.username || 'candidate ' + (index + 1)) + '</label><span>' + esc(seed.biography || '') + '</span></summary>' +
         '<div class="culture-candidate-body"><div class="grid">' +
         fieldInput(index, seed, 'username', 'Feddit username') +
         fieldInput(index, seed, 'biography', 'Public biography', 'textarea') +
@@ -488,6 +617,31 @@
         '<ul>' + stagingResultRows(staging).map((result) => '<li><b>' + esc(result.label) +
           ':</b> ' + esc(result.code) + ' - ' + esc(result.message) + '</li>').join('') + '</ul>' +
         (staging.ok !== false ? '<p>Created in ' + esc(destinationLabel) + '. Staged candidates remain disabled rehearsal bots. Nothing was activated or published.</p>' : '') + '</div>';
+    }
+
+    function stagingOperationHtml() {
+      const operation = workflow.stagingOperation;
+      if (!operation) return '';
+      const completed = Math.max(0, Number(operation.completed) || 0);
+      const total = Math.max(0, Number(operation.total) || 0);
+      const remaining = Array.isArray(operation.remaining) ? operation.remaining.length : Math.max(0, total - completed);
+      const batch = Math.max(0, Number(operation.batch) || 0);
+      const batchCount = Math.max(0, Number(operation.batchCount) || 0);
+      const state = String(operation.state || 'running');
+      const title = state === 'completed' ? 'Staging completed' :
+        state === 'cancelled' ? 'Staging stopped safely' :
+          state === 'attention' ? 'Staging needs attention' :
+            state === 'stopping' ? 'Stopping after the current batch' : 'Staging selected candidates';
+      const explanation = state === 'attention'
+        ? '<p>' + esc(operation.error || 'A batch was not fully confirmed.') + ' ' + remaining + ' candidate(s) remain selected. Review the outcomes, then use Continue remaining safely to make another explicit attempt.</p>'
+        : state === 'cancelled'
+          ? '<p>' + remaining + ' candidate(s) remain selected. Confirmed successes were saved and will not be repeated.</p>'
+          : state === 'completed'
+            ? '<p>All selected candidates were confirmed. They remain disabled and in rehearsal.</p>'
+            : '<p>Confirmed results are saved after every batch. Stopping waits for the current registration response rather than creating an ambiguous cancellation.</p>';
+      return '<div class="culture-stage-results' + (state === 'attention' ? ' failed' : '') + '" role="status" aria-live="polite"><b>' + esc(title) + '</b>' +
+        '<p>' + completed + ' of ' + total + ' confirmed' + (batchCount ? '; batch ' + Math.min(batch, batchCount) + ' of ' + batchCount : '') + '.</p>' + explanation +
+        (state === 'running' || state === 'stopping' ? '<button type="button" id="cultureCancelStagingBtn"' + (state === 'stopping' ? ' disabled' : '') + '>Stop after current batch</button>' : '') + '</div>';
     }
 
     function candidatesHtml() {
@@ -622,9 +776,10 @@
           '<p class="hint">Selected candidates will be created in this hosted Feddit Bots workspace.</p>') +
         (showHostedLink ? '<div class="field full"><label for="cultureManagementLink">Hosted private management link</label><input id="cultureManagementLink" type="password" autocomplete="off" value="' + esc(workflow.managementLink) + '" placeholder="https://feddit-bots.dabblelabs.uk/#manage=...">' +
           '<div class="hint">This private capability authorizes access to that hosted workspace, which must also be an authorized background-population operator. In the hosted dashboard, open Settings and choose Copy private management link. It is used only for this explicit request and is never saved, logged or sent to an AI model.</div></div>' : '') +
-        '<button type="button" class="primary" id="cultureStageBtn"' + (!candidatesReady || workflow.busy ? ' disabled' : '') + '>Stage selected candidates</button>' +
-        '<p class="hint">Select 1-' + STAGING_SELECTION_LIMIT + ' candidates per explicit staging action. Larger selections are rejected and never split automatically. Staged bots remain disabled and in rehearsal until separately reviewed and activated through normal population controls.</p>' +
-        stagingResultsHtml() + '</div></details></div>';
+        '<button type="button" class="primary" id="cultureStageBtn"' + (!candidatesReady || workflow.busy ? ' disabled' : '') + '>' +
+          (workflow.stagingOperation && ['attention', 'cancelled'].includes(workflow.stagingOperation.state) ? 'Continue remaining safely' : 'Stage selected candidates') + '</button>' +
+        '<p class="hint">One explicit action stages every selected candidate, up to ' + MAX_CANDIDATE_COLLECTION + '. The app uses sequential batches of at most ' + STAGING_SELECTION_LIMIT + ' while preserving validation, capacity and registration safeguards. Staged bots remain disabled and in rehearsal until separately reviewed and activated through normal population controls.</p>' +
+        stagingOperationHtml() + stagingResultsHtml() + '</div></details></div>';
       bind();
       restoreFocus(focus);
       hasRenderedImporter = true;
@@ -695,6 +850,12 @@
       }
       if (session.candidates && session.candidates.length) {
         workflow.candidateDrafts = createCandidateDrafts(session.candidates, sameSession || hadCandidates ? workflow.candidateDrafts : null);
+        const confirmed = confirmedStagingCandidateIds(session.staging);
+        session.candidates.forEach((candidate, index) => {
+          if (confirmed.has(String(candidate.id || '')) && workflow.candidateDrafts[index]) {
+            workflow.candidateDrafts[index].selected = false;
+          }
+        });
       } else if (!hadCandidates) workflow.candidateDrafts = {};
       workflow.staging = clone(session.staging);
       persistClientState();
@@ -822,32 +983,60 @@
         });
       });
       bindProgress();
+      on('#cultureCancelStagingBtn', 'click', () => {
+        if (!workflow.stagingOperation || workflow.stagingOperation.state !== 'running') return;
+        workflow.stagingCancelRequested = true;
+        workflow.stagingOperation = { ...workflow.stagingOperation, state: 'stopping' };
+        render();
+      });
       on('#cultureStageBtn', 'click', async () => {
+        if (workflow.busy) return;
         captureForm();
         const destination = normalizedStagingDestination(getPlacement(), workflow.form.stagingDestination);
-        const body = stagingBody(workflow.candidateDrafts, {
+        const plan = stagingPlan(workflow.session && workflow.session.candidates || [], workflow.candidateDrafts, {
           destination,
-          managementLink: workflow.managementLink,
         });
-        if (!body.selected.length) return toast('Select at least one candidate to stage.', 'err');
-        if (body.selected.length > STAGING_SELECTION_LIMIT) {
-          return toast('Select at most ' + STAGING_SELECTION_LIMIT + ' candidates. Staging is never split automatically.', 'err');
-        }
+        if (!plan.candidateIds.length) return toast('Select at least one unstaged candidate to stage.', 'err');
+        if (plan.candidateIds.length > MAX_CANDIDATE_COLLECTION) return toast('Select at most ' + MAX_CANDIDATE_COLLECTION + ' candidates.', 'err');
         if (showsHostedManagementLink(getPlacement(), destination) && !workflow.managementLink) {
           return toast('Paste the private management link for the hosted workspace first.', 'err');
         }
-        workflow.busy = true;
+        const managementLink = workflow.managementLink;
+        workflow.managementLink = '';
+        workflow.stagingCancelRequested = false;
+        if (!beginExclusiveStaging(workflow)) return;
         render();
         try {
-          const response = await api('/api/culture-imports/' + encodeURIComponent(workflow.session.id) + '/stage', { method: 'POST', body });
-          workflow.staging = response.result;
-          applySession(response.session);
-          toast('Selected candidates were created in ' + (destination === 'local' ? 'this desktop app' : 'the hosted workspace') + ' in rehearsal. Nothing was activated.', 'ok');
+          const result = await runStagingBatches({
+            api,
+            sessionPath: '/api/culture-imports/' + encodeURIComponent(workflow.session.id),
+            plan,
+            managementLink,
+            session: workflow.session,
+            shouldCancel: () => workflow.stagingCancelRequested,
+            onSession: applySession,
+            onProgress(progress) {
+              workflow.stagingOperation = progress;
+              render();
+            },
+          });
+          workflow.stagingOperation = result;
+          if (result.state === 'completed') {
+            toast('All selected candidates were created in ' + (destination === 'local' ? 'this desktop app' : 'the hosted workspace') + ' in rehearsal. Nothing was activated.', 'ok');
+          } else if (result.state === 'cancelled') {
+            toast('Staging stopped between batches. Confirmed successes were saved.', 'ok');
+          } else {
+            toast('Staging stopped safely because a batch needs attention. No later batch was started.', 'err');
+          }
         } catch (error) {
-          workflow.staging = error.data || { ok: false, error: { message: error.message }, results: [] };
+          workflow.stagingOperation = {
+            state: 'attention', total: plan.candidateIds.length, completed: 0,
+            remaining: plan.candidateIds, error: error.message, outcomes: [],
+          };
           toast('Staging failed: ' + error.message, 'err');
         } finally {
-          workflow.busy = false;
+          workflow.stagingCancelRequested = false;
+          endExclusiveStaging(workflow);
           render();
         }
       });
@@ -909,6 +1098,13 @@
     normalizedStagingDestination,
     showsHostedManagementLink,
     stagingBody,
+    stagingResultKey,
+    confirmedStagingCandidateIds,
+    stagingPlan,
+    stagingBatchBody,
+    runStagingBatches,
+    beginExclusiveStaging,
+    endExclusiveStaging,
     cultureGroups,
     progressLabel,
     sessionRenderFingerprint,
