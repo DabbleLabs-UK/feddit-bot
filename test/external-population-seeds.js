@@ -229,7 +229,14 @@ async function run() {
 
   const partialHarness = harness({
     register(input, attempt) {
-      if (attempt === 2) return { ok: false, status: 503, error: 'fixture unavailable' };
+      if (attempt === 2) {
+        return {
+          ok: false,
+          status: 429,
+          retryAfterSec: 4321,
+          error: 'Rate limited by Feddit (429), retry in 4321s. Registration limit reached: 50 new bot registrations per day from your network.',
+        };
+      }
       return { ok: true, status: 201, data: { token: 'token-' + input.username } };
     },
   });
@@ -238,6 +245,10 @@ async function run() {
     eq(result.ok, false, 'ordinary staging partial-failure semantics are preserved');
     eq(result.results.map((item) => item.code), ['STAGED', 'STAGE_FAILED'],
       'partial staging reports a stable result for each seed');
+    ok(result.results[1].message.includes('50 new bot registrations per day from your network'),
+      'the importer receives the clear Feddit daily-limit response');
+    eq(partialHarness.registrations.length, 2,
+      'a rate-limited candidate is not retried or registered under another name');
     eq(partialHarness.store.profiles.length, 1, 'failed registration leaves no ordinary failed draft');
     ok(partialHarness.store.profiles[0].enabled === false,
       'a successful member of a partial cohort remains disabled');
