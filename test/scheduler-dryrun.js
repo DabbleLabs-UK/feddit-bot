@@ -2432,6 +2432,10 @@ async function scenarioShortlistFallback() {
 // time-boxed to a SKIP (not a failure) rather than treated as unreachable.
 // ============================================================================
 async function scenarioRealSmoke() {
+  if (process.env.FEDDIT_TEST_LIVE_SMOKE !== '1') {
+    console.log('\n[12] live smoke excluded (set FEDDIT_TEST_LIVE_SMOKE=1 explicitly)');
+    return;
+  }
   console.log('\n[12] best-effort live smoke (at most ONE real GDELT call + ONE real ollama gen)');
   const providersReal = require('../lib/providers');
   const timeout = (ms) => new Promise((res) => setTimeout(() => res({ __timeout: true }), ms));

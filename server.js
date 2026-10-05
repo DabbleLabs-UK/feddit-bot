@@ -22,6 +22,9 @@ const feddit = require('./lib/feddit');
 const gdelt = require('./lib/gdelt');
 const feeds = require('./lib/feeds');
 const scheduler = require('./lib/scheduler');
+const activityForecast = require('./lib/activity-forecast');
+const importedDefaults = require('./lib/imported-profile-defaults');
+const { createFileCultureWorkspaceStore } = require('./lib/culture-importer/workspace-store');
 const profilePack = require('./lib/profile-pack');
 const { cleanAllocationClass, createQueue } = require('./lib/job-queue');
 const { createTurnStore } = require('./lib/turn-store');
@@ -79,6 +82,11 @@ const populationController = createPopulationController({
   providerStatuses: providers.statuses,
   generateCreator: providers.generate,
   runtimeProvider: PLACEMENT === 'hosted' ? 'dell' : 'ollama',
+  importGroupName(reference) {
+    const session = createFileCultureWorkspaceStore().load().sessions.find((s) =>
+      s.importResult?.provenance?.analysisId === reference);
+    return session?.input?.subreddit ? session.input.subreddit + ' import' : '';
+  },
   activateProfile(profile, mode) {
     const patch = { enabled: true, dryRun: mode !== 'live' };
     applyHostedProfilePolicy(patch, profile);
@@ -361,6 +369,7 @@ function safeProfile(p) {
     simulationVoteConsideredCount: simulationState && simulationState.voteState && Array.isArray(simulationState.voteState.considered)
       ? simulationState.voteState.considered.length : 0,
     nextAction: scheduler.nextAction(p, simulation),
+    hasScheduledCadence: hasScheduledCadence(p, simulation),
     effProvider: scheduler.providerOf(p),
     effModel: scheduler.modelOf(p, store.DEFAULT_MODEL),
     hostedWork: PLACEMENT === 'hosted' ? hostedWorkForProfile(p) : null,
@@ -387,6 +396,25 @@ function normalizeFedditBio(value) {
 function workspaceProfiles(requestOwner) {
   return store.listProfiles().filter((profile) =>
     canManageProfile(profile, requestOwner) && !profile.populationArchivedAt);
+}
+
+function hasScheduledCadence(profile, simulation) {
+  const c = scheduler.caps(profile);
+  const state = simulation ? profile.simulationState?.populationActivity : profile.populationActivity;
+  return [['post', c.canStartDiscussions || (!scheduler.hasIndependentCapabilities(profile) && c.canPost)],
+    ['article', c.canShareLinks], ['comment', c.canComment], ['vote', c.canVote]].some(([kind, can]) =>
+    can && (scheduler.populationRate(profile, kind, state) ?? scheduler.configuredRate(profile, kind)) > 0);
+}
+
+function workspaceGroups(owner) {
+  const groups = store.listGroups({ ownerId: owner?.id });
+  if (isPopulationAdmin(owner)) groups.push(...store.listGroups());
+  return groups.map(({ ownerId, ...group }) => ({ ...group, scope: ownerId ? 'personal' : 'population' }));
+}
+
+function accessibleGroup(id, owner) {
+  const personal = store.listGroups({ ownerId: owner?.id }).find((g) => g.id === id);
+  return personal || (isPopulationAdmin(owner) ? store.listGroups().find((g) => g.id === id) : null);
 }
 
 function communityManagerProfiles(requestOwner) {
@@ -1318,10 +1346,57 @@ async function handleApi(req, res, urlPath, query) {
     return sendJson(res, 200, { feeds: feeds.DEFAULT_FEEDS });
   }
 
+  if (method === 'GET' && urlPath === '/api/activity-forecast') {
+    return sendJson(res, 200, activityForecast.buildActivityForecast({
+      profiles: workspaceProfiles(requestOwner), groups: workspaceGroups(requestOwner),
+      settings: store.getSettings(), placement: PLACEMENT, speedState: speedStateForProfile,
+      ownerActivityAt: (p) => ownerPolicyContext(p).ownerLastActiveAt,
+      filters: Object.fromEntries(query), nowMs: Date.now(),
+    }));
+  }
+
+  if (urlPath === '/api/groups' || urlPath.startsWith('/api/groups/')) {
+    try {
+      if (method === 'GET' && urlPath === '/api/groups') return sendJson(res, 200, { groups: workspaceGroups(requestOwner) });
+      if (method === 'POST' && urlPath === '/api/groups') {
+        const body = await readBody(req);
+        const selected = body.profileId ? store.getProfile(body.profileId) : null;
+        if (body.profileId && !canManageProfile(selected, requestOwner)) return sendJson(res, 404, { error: 'Bot not found' });
+        const group = store.createGroup(body.name, { ownerId: selected ? selected.ownerId : requestOwner?.id });
+        return sendJson(res, 201, { group, groups: workspaceGroups(requestOwner) });
+      }
+      const id = decodeURIComponent(urlPath.slice('/api/groups/'.length));
+      const group = accessibleGroup(id, requestOwner);
+      if (!group) return sendJson(res, 404, { error: 'Group not found' });
+      if (method === 'PUT') store.renameGroup(id, (await readBody(req)).name, { ownerId: group.ownerId });
+      else if (method === 'DELETE') store.deleteGroup(id, { ownerId: group.ownerId });
+      else return sendJson(res, 405, { error: 'Method not allowed' });
+      return sendJson(res, 200, { groups: workspaceGroups(requestOwner) });
+    } catch (error) { return sendJson(res, 400, { error: error.message }); }
+  }
+
+  // Explicit local maintenance only. Reads confirmed importer evidence, snapshots
+  // private data before touching it, and never registers or runs a bot.
+  if (method === 'POST' && urlPath === '/api/importer-profile-repair') {
+    if (PLACEMENT !== 'desktop') return sendJson(res, 404, { error: 'Not found' });
+    const body = await readBody(req);
+    const session = createFileCultureWorkspaceStore().load().sessions.find((s) => s.id === body.sessionId && s.owner === 'desktop');
+    if (!session) return sendJson(res, 404, { error: 'Saved desktop importer workspace not found' });
+    const plan = importedDefaults.repairPlan(store.listProfiles(), session);
+    if (body.apply !== true) return sendJson(res, 200, { plan });
+    const backup = path.join(store.DATA_DIR, 'backups', 'groups-cadence-' + Date.now());
+    fs.mkdirSync(backup, { recursive: true, mode: 0o700 });
+    for (const file of ['profiles.json', 'culture-import-workspaces.json', 'population.json', 'secrets.json']) {
+      const source = path.join(store.DATA_DIR, file);
+      if (fs.existsSync(source)) fs.copyFileSync(source, path.join(backup, file));
+    }
+    return sendJson(res, 200, { repaired: importedDefaults.applyRepair(store, plan), backup });
+  }
+
   // GET /api/profiles - list (tokens redacted).
   if (method === 'GET' && urlPath === '/api/profiles') {
     const profiles = workspaceProfiles(requestOwner).map(safeProfile);
-    return sendJson(res, 200, { profiles });
+    return sendJson(res, 200, { profiles, groups: workspaceGroups(requestOwner) });
   }
 
   // POST /api/profiles - create.
@@ -1335,6 +1410,7 @@ async function handleApi(req, res, urlPath, query) {
       }
     }
     delete body.ownerId;
+    delete body.groupId; // Membership changes use the owner-checked group route.
     delete body.botOrigin;
     delete body.populationSeed;
     delete body.populationProvenance;
@@ -1418,6 +1494,17 @@ async function handleApi(req, res, urlPath, query) {
     const sub = m[2]; // e.g. "/register", "/test-generate", or undefined
     const found = store.getProfile(id);
     const existing = canManageProfile(found, requestOwner) ? found : null;
+
+    if (method === 'PUT' && sub === '/group') {
+      if (!existing) return sendJson(res, 404, { error: 'Bot not found' });
+      const body = await readBody(req);
+      const group = body.groupId ? accessibleGroup(String(body.groupId), requestOwner) : null;
+      if (body.groupId && (!group || (group.ownerId || '') !== (existing.ownerId || ''))) {
+        return sendJson(res, 400, { error: 'Choose a group in this bot workspace.' });
+      }
+      const profile = store.assignProfileGroup(id, body.groupId || '', { ownerId: existing.ownerId });
+      return sendJson(res, 200, { profile: safeProfile(profile), groups: workspaceGroups(requestOwner) });
+    }
 
     // GET /api/profiles/:id - full record for the edit view, but WITHOUT the raw
     // token (the client never reads it - it keys off hasToken) and with the large
@@ -1544,6 +1631,7 @@ async function handleApi(req, res, urlPath, query) {
       delete body.populationProvenance;
       delete body.populationActivity;
       delete body.populationCadenceMode;
+      delete body.groupId; // Do not let an old dirty editor undo a group move.
       delete body.populationArchivedAt;
       delete body.creatorProfile;
       delete body.creatorProvenance;
@@ -1587,6 +1675,7 @@ async function handleApi(req, res, urlPath, query) {
       const effectiveVoteRateChanged = requestedVoteRate &&
         Number(body.votesPerHour) !== Number(existing.votesPerHour);
       if (effectivePostRateChanged || effectiveArticleRateChanged || effectiveReplyRateChanged || effectiveVoteRateChanged) {
+        if (existing.botOrigin === 'system') body.populationCadenceMode = 'custom';
         body.sched = {
           ...(existing.sched || {}),
           ...(effectivePostRateChanged ? { nextPostAt: null } : {}),

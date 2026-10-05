@@ -141,8 +141,8 @@ function fakeStore() {
 }
 
 async function run() {
-  eq(storeModule.DATA_SCHEMA_VERSION, 25,
-    'profile storage schema includes first-class voting cadence state');
+  eq(storeModule.DATA_SCHEMA_VERSION, 26,
+    'profile storage schema includes organizational groups and first-class voting cadence state');
   const migratedProfiles = storeModule.migrateProfiles([
     { id: 'user', botOrigin: 'user', populationArchivedAt: '2026-09-30T00:00:00.000Z', populationSeed: { username: 'forged' }, populationProvenance: { source: 'forged' } },
     { id: 'system', botOrigin: 'system', populationArchivedAt: '2026-09-30T00:00:00.000Z', populationSeed: { username: 'real_system' }, populationProvenance: { source: 'generated' }, creatorProfile: candidate().creatorProfile, communityAffinities: [{ name: 'botlife', state: 'favored', reason: 'Character fit.' }] },

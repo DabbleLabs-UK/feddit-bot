@@ -82,6 +82,23 @@
   .profile-group-heading.population .profile-group-title { color: #c9bdf0; }
   .profile-group-count { min-width: 22px; padding: 1px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--dim); text-align: center; font-size: 10px; }
   .profile-group-note { margin-top: 2px; color: var(--dim); font-size: 10.5px; }
+  .workspace-group-toggle { width: 100%; text-align: left; padding: 0; border: 0; background: none; }
+  .workspace-group-toggle strong { overflow-wrap: anywhere; }
+  .forecast-filters, .forecast-horizons { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+  .forecast-card { padding: 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); }
+  .forecast-card h3 { margin: 0 0 7px; font-size: 14px; }
+  .forecast-total { font-size: 24px; font-variant-numeric: tabular-nums; }
+  .forecast-list { padding-left: 22px; }
+  .forecast-list li { margin: 8px 0; }
+  .forecast-bot { padding: 2px 5px; color: #c9e4ff; }
+  .forecast-chart { display: flex; align-items: flex-end; height: 110px; gap: 3px; border-bottom: 1px solid var(--line); }
+  .forecast-column { flex: 1; min-width: 0; height: 100%; display: flex; align-items: flex-end; }
+  .forecast-bar { width: 100%; min-height: 2px; background: var(--accent); border-radius: 3px 3px 0 0; }
+  .forecast-axis { display: flex; justify-content: space-between; color: var(--dim); font-size: 11px; }
+  .forecast-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  .forecast-table th, .forecast-table td { padding: 6px; text-align: left; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+  .workspace-group-row { display: flex; gap: 7px; margin: 10px 0; align-items: center; }
+  .workspace-group-row input { min-width: 0; }
   .plist li:hover { background: var(--panel2); }
   .plist li.active { background: var(--panel2); border-left: 3px solid var(--accent); padding-left: 9px; }
   .profile-list-summary { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
@@ -492,6 +509,7 @@
   <div class="appbar-controls">
     <span id="runState" class="badge">scheduler ...</span>
     <button id="pauseBtn">Pause</button>
+    <button id="activityForecastBtn" aria-haspopup="dialog" aria-controls="activityForecastDialog">Activity</button>
     <div class="appbar-speed">
       <button id="speedBtn" class="speed-trigger inactive" aria-haspopup="dialog" aria-expanded="false" aria-controls="speedPopover">&#9889; Speed</button>
       <div id="speedPopover" class="speed-popover" role="dialog" aria-labelledby="speedPopoverTitle" hidden>
@@ -526,6 +544,35 @@
     <button id="settingsBtn" aria-haspopup="dialog" aria-controls="settingsDialog">Settings</button>
   </div>
 </header>
+
+<dialog id="activityForecastDialog" aria-labelledby="activityForecastTitle">
+  <div class="dialog-head"><h2 id="activityForecastTitle">Activity forecast</h2><button type="button" data-close-dialog="activityForecastDialog">Close</button></div>
+  <div class="dialog-body">
+    <div class="forecast-filters">
+      <div class="field"><label for="forecastMode">Mode</label><select id="forecastMode"><option value="live">LIVE</option><option value="rehearsal">Rehearsal</option><option value="all">All</option></select></div>
+      <div class="field"><label for="forecastGroup">Group</label><select id="forecastGroup"><option value="">All groups</option></select></div>
+      <div class="field"><label for="forecastType">Activity</label><select id="forecastType"><option value="">All activities</option><option value="text">Text</option><option value="article">Article</option><option value="reply">Reply</option><option value="vote">Vote</option></select></div>
+      <div class="field"><label for="forecastCadence">Cadence</label><select id="forecastCadence"><option value="all">All bots</option><option value="only">Active but no cadence</option><option value="exclude">With cadence</option></select></div>
+    </div>
+    <div class="row" style="margin:12px 0"><button type="button" id="forecastRefreshBtn">Refresh</button><span id="forecastStatus" class="hint" role="status"></span></div>
+    <div id="forecastContent"></div>
+  </div>
+</dialog>
+
+<dialog id="groupsDialog" aria-labelledby="groupsDialogTitle">
+  <div class="dialog-head"><h2 id="groupsDialogTitle">Bot groups</h2><button type="button" data-close-dialog="groupsDialog">Close</button></div>
+  <div class="dialog-body">
+    <p class="hint">Groups organize bots only. They do not change activity, priority or publishing mode. Deleting a group moves its bots to Ungrouped.</p>
+    <form id="createGroupForm" class="workspace-group-row"><label class="sr-only" for="newGroupName">New group name</label><input id="newGroupName" placeholder="New group name" maxlength="120" required><button type="submit">Create</button></form>
+    <div id="groupManagementList"></div>
+    <h3>Move a bot</h3>
+    <form id="assignGroupForm">
+      <div class="grid"><div class="field"><label for="groupBot">Bot</label><select id="groupBot"></select></div><div class="field"><label for="groupDestination">Group</label><select id="groupDestination"></select></div></div>
+      <button type="submit" style="margin-top:10px">Move bot</button>
+    </form>
+    <div id="groupManagementStatus" class="hint" role="status"></div>
+  </div>
+</dialog>
 
 <dialog id="statusDialog" aria-labelledby="statusDialogTitle">
   <div class="dialog-head"><h2 id="statusDialogTitle">Status and diagnostics</h2><button type="button" data-close-dialog="statusDialog" aria-label="Close status and diagnostics">Close</button></div>
@@ -591,6 +638,7 @@
         </div>
       </div>
       <button id="communitiesBtn" class="sidebar-community-button">Manage communities</button>
+      <button id="groupsBtn" aria-haspopup="dialog" aria-controls="groupsDialog">Manage groups</button>
       <input id="importFile" type="file" accept="application/json,.json" hidden>
     </div>
     <ul class="plist" id="plist"></ul>
@@ -613,6 +661,7 @@
 <script src="/ui-culture-importer.js"></script>
 <script src="/ui-speed.js"></script>
 <script src="/ui-burst.js"></script>
+<script src="/ui-workspace-activity.js"></script>
 <script>
 'use strict';
 const $ = (s, r = document) => r.querySelector(s);
@@ -624,6 +673,7 @@ const placementUiLogic = window.FedditUiPlacement;
 const cultureImporterUi = window.FedditCultureImporterUi;
 const speedUiLogic = window.FedditUiSpeed;
 const burstUiLogic = window.FedditUiBurst;
+const workspaceActivityUi = window.FedditUiWorkspaceActivity;
 const OWNER_STORAGE_KEY = 'fedditBotOwnerAccess';
 let volatileOwnerAccess = '';
 function ownerAccessToken() {
@@ -670,7 +720,7 @@ function toast(msg, kind) {
 }
 
 let state = {
-  profiles: [], selected: null, view: 'bots', defaultModel: '', status: null, settings: null,
+  profiles: [], groups: [], selected: null, view: 'bots', defaultModel: '', status: null, settings: null,
   capacity: null, hostedWork: null, placement: 'desktop', appVersion: '', hostedPolicy: null,
   providers: [], providerPoll: null,
   cultureSourceCredential: null,
@@ -719,7 +769,7 @@ function closeDialog(dialog) {
 document.querySelectorAll('[data-close-dialog]').forEach((button) => {
   button.onclick = () => closeDialog($('#' + button.dataset.closeDialog));
 });
-for (const dialog of [$('#statusDialog'), $('#settingsDialog')]) {
+for (const dialog of [$('#statusDialog'), $('#settingsDialog'), $('#groupsDialog'), $('#activityForecastDialog')]) {
   dialog.addEventListener('cancel', (event) => {
     event.preventDefault();
     closeDialog(dialog);
@@ -1899,6 +1949,7 @@ async function saveCap() {
 async function loadProfiles() {
   const d = await api('/api/profiles');
   state.profiles = d.profiles;
+  state.groups = d.groups || [];
   if (state.editing) {
     const latest = state.profiles.find((profile) => profile.id === state.editing.id);
     if (latest) {
@@ -1909,6 +1960,8 @@ async function loadProfiles() {
         hasToken: latest.hasToken,
         handoverPending: latest.handoverPending,
         nextAction: latest.nextAction,
+        groupId: latest.groupId,
+        hasScheduledCadence: latest.hasScheduledCadence,
         hostedAllocation: latest.hostedAllocation,
         hostedWork: latest.hostedWork,
       };
@@ -1921,18 +1974,31 @@ function renderList() {
   const ul = $('#plist');
   ul.innerHTML = '';
   $('#communitiesBtn').classList.toggle('active', state.view === 'communities');
+  for (const workspaceGroup of workspaceActivityUi.sidebarGroups(state.profiles, state.groups)) {
+    const collapsed = workspaceActivityUi.isCollapsed(workspaceGroup.id);
+    const groupHeading = document.createElement('li');
+    groupHeading.className = 'profile-group-heading';
+    groupHeading.innerHTML = '<button type="button" class="workspace-group-toggle" aria-expanded="' + !collapsed + '">' +
+      '<div class="profile-group-title"><strong>' + (collapsed ? '+ ' : '- ') + esc(workspaceGroup.name) + '</strong><span class="profile-group-count">' + workspaceGroup.profiles.length + '</span></div>' +
+      '<div class="profile-group-note">' + workspaceGroup.live + ' LIVE / ' + workspaceGroup.rehearsal + ' rehearsal</div></button>';
+    groupHeading.querySelector('button').onclick = () => {
+      workspaceActivityUi.setCollapsed(workspaceGroup.id, !collapsed);
+      renderList();
+    };
+    ul.appendChild(groupHeading);
+    if (collapsed) continue;
   const profileGroups = [
     {
       label: 'Your bots',
       note: 'Created or imported by you',
       className: 'user',
-      profiles: state.profiles.filter((profile) => profile.botOrigin !== 'system'),
+      profiles: workspaceGroup.profiles.filter((profile) => profile.botOrigin !== 'system'),
     },
     {
       label: 'Background population',
       note: 'System-created bots',
       className: 'population',
-      profiles: state.profiles.filter((profile) => profile.botOrigin === 'system'),
+      profiles: workspaceGroup.profiles.filter((profile) => profile.botOrigin === 'system'),
     },
   ];
   for (const group of profileGroups) {
@@ -1960,12 +2026,12 @@ function renderList() {
       : '';
     const canStart = p.hasToken && !p.handoverPending;
     const runLabel = p.enabled
-      ? 'Active - pause bot'
+      ? (p.hasScheduledCadence === false ? 'Enabled, no cadence - pause bot' : 'Active - pause bot')
       : (canStart ? 'Paused - start bot' : 'Paused - finish setup');
     const runClass = p.enabled ? 'active' : (canStart ? 'paused' : 'setup');
     li.innerHTML =
       '<div class="profile-list-summary"><div><div class="pname">' + esc(p.referenceName || '(unnamed)') + '</div>' +
-        '<div class="pmeta">' + esc(capabilitySummary(p)) +
+        '<div class="pmeta" title="Capabilities show what a bot can do, not how often it is scheduled">Can: ' + esc(capabilitySummary(p)) +
           ' &middot; ' + esc(p.effProvider === 'deepseek' ? p.effModel : (p.effProvider === 'dell' ? 'Feddit hosted' : 'desktop')) + '</div>' +
         ((!state.developerTools && p.dryRun !== false) ? '' : '<div class="pmeta profile-next" data-next-profile="' + esc(p.id) + '">Next: ' + esc(sentenceCase(fmtNext(p))) + '</div>') + '</div>' +
         '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + hostedWorkBadge + modeBadge + probBadge + handoverBadge + tokenBadge + '</div></div>' +
@@ -1979,6 +2045,7 @@ function renderList() {
     };
     ul.appendChild(li);
     }
+  }
   }
 }
 
@@ -1997,6 +2064,11 @@ function runStatePresentation(p) {
     };
   }
   if (p.enabled) {
+    if (ready && p.hasScheduledCadence === false) return {
+      className: 'active', label: 'Enabled - no scheduled cadence',
+      detail: 'Abilities allow actions, but there is no effective scheduled activity rate. Manual or event-driven activity may still be possible.',
+      button: 'Pause bot', buttonClass: 'pause', disabled: false,
+    };
     let detail = 'This bot is following its schedule.';
     if (!ready) detail = 'This bot is marked active, but it cannot run until its Feddit identity is registered.';
     else if (state.settings && state.settings.paused) detail = 'This bot is active, but the runner-wide scheduler is paused at the top of the page.';
@@ -2463,7 +2535,7 @@ function fmtNext(p, now = Date.now()) {
   if (p.effProvider === 'deepseek' && state.status && state.status.spend && state.status.spend.overCap) return 'spend cap reached';
   if (na.backoffUntil && na.backoffUntil > now) return 'backoff ends ' + rel(na.backoffUntil, now);
   if (!p.hasToken) return 'no token';
-  if (!na.next) return 'idle (no cadence)';
+  if (!na.next) return p.hasScheduledCadence === false ? 'no scheduled cadence' : 'awaiting scheduler';
   return actionKindLabel(na.next.kind) + ' ' + rel(na.next.at, now);
 }
 function nextDeadline(p) {
@@ -2732,6 +2804,7 @@ function renderEditor(p) {
       <summary>Activity and communities</summary>
       <div class="progressive-body">
       <h2>Behaviour</h2>
+      <div class="hint">Abilities describe what this bot can do. A rate of 0/hr means no scheduled cadence for that action. Population ecology may provide an effective schedule separately.</div>
       <div class="grid">
         ${editorVariant.showHostedAllocation ? `<div class="field full">${hostedAllocationHtml(p)}</div>` : ''}
         <div class="field textRateField"${editorVariant.showCadenceRates ? '' : ' hidden'}><label>Regular/text posts per hour</label><input id="f_postsPerHour" type="number" min="0" max="10" step="0.05" value="${esc(p.postsPerHour)}"></div>
@@ -4430,6 +4503,9 @@ document.addEventListener('keydown', (ev) => {
 });
 
 $('#healthBtn').onclick = () => openDialog($('#statusDialog'));
+const workspaceActivityController = workspaceActivityUi.createController({
+  api, getState: () => state, loadProfiles, selectProfile, openDialog, closeDialog, esc,
+});
 $('#speedBtn').onclick = (event) => {
   event.stopPropagation();
   setBurstPopover(false);

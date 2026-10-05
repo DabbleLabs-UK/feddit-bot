@@ -210,6 +210,16 @@ async function main() {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'feddit-packaged-importer-runtime-'));
   const profileDir = path.join(work, 'browser-profile');
   const dataDir = path.join(work, 'data');
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'profiles.json'), JSON.stringify({
+    schemaVersion: 26, settings: { paused: true },
+    groups: [{ id: 'fixture-group', name: 'Fixture import', ownerId: null, createdAt: new Date().toISOString() }],
+    profiles: [{ id: 'forecast-fixture', fedditUsername: 'forecast_fixture', groupId: 'fixture-group',
+      token: 'fixture-token-not-real', botOrigin: 'user', enabled: true, dryRun: false,
+      canReply: true, canStartDiscussions: true, canShareLinks: false, canVote: false,
+      postsPerHour: 0.1, commentsPerHour: 0.2, articlePostsPerHour: 0, votesPerHour: 0,
+      sched: { nextPostAt: Date.now() + 3600000, nextCommentAt: Date.now() + 7200000 } }],
+  }));
   const fetchLayerKey = 'fetchlayer-packaged-fixture-secret';
   const fetchLayerPreload = path.join(work, 'fetchlayer-fixture-preload.cjs');
   fs.mkdirSync(profileDir, { recursive: true });
@@ -338,6 +348,30 @@ globalThis.fetch = async (input, options = {}) => {
       Boolean,
       'packaged importer and Burst assets');
     trace('packaged importer and Burst assets loaded with Developer tools enabled');
+
+    await waitForValue(cdp, "document.querySelector('.workspace-group-toggle')?.textContent || ''",
+      (v) => v.includes('Fixture import'), 'packaged group sidebar');
+    await evaluate(cdp, "document.querySelector('.workspace-group-toggle').click(); true");
+    const collapsed = await evaluate(cdp, "document.querySelector('.workspace-group-toggle').getAttribute('aria-expanded') === 'false'");
+    if (!collapsed) throw new Error('Packaged group did not collapse');
+    await evaluate(cdp, "document.querySelector('.workspace-group-toggle').click(); document.getElementById('activityForecastBtn').click(); true");
+    await waitForValue(cdp, "document.getElementById('forecastContent')?.innerText || ''",
+      (v) => v.includes('forecast_fixture') && v.includes('Projected opportunities'), 'packaged activity forecast');
+    const forecastCheck = await evaluate(cdp, `(async () => {
+      const f = await fetch('/api/activity-forecast').then(r => r.json());
+      return { open: document.getElementById('activityForecastDialog').open,
+        live: document.getElementById('forecastMode').value === 'live',
+        hours: f.hourlyBuckets.length, days: f.dailyBuckets.length,
+        total: f.projections['24h'].total, next: f.upcoming[0].profileId,
+        paused: f.paused, group: f.groups[0].name };
+    })()`);
+    if (!forecastCheck.open || !forecastCheck.live || !forecastCheck.paused || forecastCheck.hours !== 24 ||
+        forecastCheck.days !== 7 || forecastCheck.next !== 'forecast-fixture' ||
+        forecastCheck.group !== 'Fixture import' || Math.abs(forecastCheck.total - 7.2) > 0.0001) {
+      throw new Error('Packaged forecast contract failed: ' + JSON.stringify(forecastCheck));
+    }
+    await evaluate(cdp, "document.getElementById('activityForecastDialog').close(); true");
+    trace('packaged groups and Activity forecast: 9 checks passed, fixture scheduler paused');
 
     await evaluate(cdp, "document.getElementById('burstBtn').click(); true");
     const burst = await waitForValue(cdp, `(() => {
@@ -613,7 +647,7 @@ globalThis.fetch = async (input, options = {}) => {
     });
     if (shippedSecret) throw new Error('Packaged application assets contained the FetchLayer key');
 
-    console.log('packaged desktop FetchLayer importer and Burst runtime: 46 checks passed');
+    console.log('packaged desktop importer, Burst, groups and forecast runtime: 55 checks passed');
     console.log(JSON.stringify({ burst, visible, opened, boundedStaging, nextStep, missingKey, configuredState, connectionTest, browserExposure, retrieved }));
   } catch (error) {
     if (serverOutput.length) console.error('Packaged server output:\n' + serverOutput.join(''));
