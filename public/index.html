@@ -101,17 +101,25 @@
   .workspace-group-row input { min-width: 0; }
   .plist li:hover { background: var(--panel2); }
   .plist li.active { background: var(--panel2); border-left: 3px solid var(--accent); padding-left: 9px; }
-  .plist li.workspace-group-child { position: relative; padding-left: 34px; }
-  .plist li.workspace-group-child.active { padding-left: 31px; }
-  .workspace-group-child::before, .workspace-group-bot::after {
-    content: ''; position: absolute; left: 20px; pointer-events: none;
+  .plist li.workspace-group-region { margin: 0 8px 0 12px; padding: 0; border: 0; background: var(--bg); cursor: default; }
+  .workspace-tree { list-style: none; margin: 0; padding: 0; }
+  .workspace-subgroup > .workspace-tree { margin-left: 12px; }
+  .plist li.workspace-group-child { position: relative; margin-left: 10px; }
+  .plist li.workspace-subgroup { padding: 0; border: 0; background: transparent; cursor: default; }
+  .workspace-subgroup > .profile-group-heading { padding: 9px 12px 8px; border-bottom: 1px solid var(--line); }
+  .workspace-group-child::before, .workspace-group-child::after {
+    content: ''; position: absolute; left: -10px; pointer-events: none;
     border-color: var(--dim); border-style: solid; opacity: .65;
   }
   .workspace-group-child::before { top: 0; bottom: -1px; border-width: 0 0 0 1px; }
-  .workspace-group-bot::after { top: 19px; width: 9px; border-width: 1px 0 0; }
-  .workspace-group-child.active::before, .workspace-group-bot.active::after { left: 17px; }
-  .workspace-group-last::before { bottom: auto; height: 19px; }
-  .workspace-group-child .profile-list-summary > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+  .workspace-group-child::after { top: 19px; width: 10px; border-width: 1px 0 0; }
+  .workspace-group-child.active::before, .workspace-group-child.active::after { left: -13px; }
+  .workspace-group-child:last-child::before { bottom: auto; height: 19px; }
+  .profile-list-summary > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+  .profile-list-badges { display: flex; gap: 5px; flex-direction: column; align-items: flex-end; flex-shrink: 0; }
+  .profile-group-title > strong { min-width: 0; }
+  .profile-group-working { display: inline-block; margin-top: 4px; }
+  @media (prefers-reduced-motion: reduce) { .badge.working { animation: none !important; } }
   .profile-list-summary { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
   .profile-run-button { width: 100%; margin-top: 8px; padding: 6px 9px; font-size: 12px; font-weight: 700; }
   .profile-run-button.active { border-color: var(--good); color: #8ee493; }
@@ -1189,7 +1197,8 @@ function renderLocalModelActivity() {
 
   if (active) {
     const elapsed = Date.now() - Number(active.startedAt || Date.now());
-    headline = 'Local model working for ' + esc(active.botName || 'unknown bot');
+    const work = workspaceActivityUi.localWork(snapshot, state.profiles);
+    headline = work ? esc(work.label) : 'Local model activity unavailable';
     detail = activityDescription(active) + ' &middot; ' + activityDuration(elapsed) +
       (active.model ? ' &middot; model ' + esc(active.model) : '') +
       '. High CPU use is expected while this is shown.';
@@ -1238,6 +1247,7 @@ function renderLocalModelActivity() {
   }
   state.localModelActivityInitialized = true;
   renderHealthSummary();
+  renderLocalWorkingIndicators();
 }
 
 async function loadLocalModelActivity() {
@@ -1248,6 +1258,9 @@ async function loadLocalModelActivity() {
     renderLocalModelActivity();
   } catch {
     // The runner can briefly disappear while an automatic update switches it.
+    state.localModelActivity = null;
+    renderLocalWorkingIndicators();
+    renderHealthSummary('Local work status unavailable');
   } finally {
     state.localModelActivityLoading = false;
   }
@@ -1878,7 +1891,8 @@ function healthState() {
     return { level: 'good', label: 'Healthy' };
   }
   const activity = state.localModelActivity || {};
-  if (activity.active) return { level: 'warn', label: 'Local model working' };
+  const work = workspaceActivityUi.localWork(activity, state.profiles);
+  if (work) return { level: 'warn', label: work.label };
   const recent = Array.isArray(activity.recent) ? activity.recent : [];
   if (recent.length && recent[0].status === 'failed') return { level: 'bad', label: 'Recent local model failure' };
   if (status.ollama && status.ollama.up === false) return { level: 'bad', label: 'Local model unavailable' };
@@ -1895,6 +1909,22 @@ function renderHealthSummary(overrideLabel) {
   dot.className = 'dot ' + (overrideLabel ? 'bad' : health.level);
   label.textContent = overrideLabel || health.label;
   $('#healthBtn').setAttribute('aria-label', 'System status: ' + label.textContent + '. Open diagnostics.');
+  $('#healthBtn').title = label.textContent + '. Open diagnostics.';
+}
+
+function renderLocalWorkingIndicators() {
+  const work = state.placement === 'hosted' ? null : workspaceActivityUi.localWork(state.localModelActivity, state.profiles);
+  for (const badge of document.querySelectorAll('[data-local-working-profile]')) {
+    const working = !!work && work.profileId === badge.dataset.localWorkingProfile;
+    badge.hidden = !working;
+    badge.title = working ? work.label : '';
+  }
+  for (const badge of document.querySelectorAll('[data-local-working-group]')) {
+    const group = workspaceActivityUi.sidebarGroups(state.profiles, state.groups).find((item) => item.id === badge.dataset.localWorkingGroup);
+    const working = !!work && !!group && group.profiles.some((profile) => profile.id === work.profileId);
+    badge.hidden = !working;
+    badge.title = working ? work.label : '';
+  }
 }
 
 // Runner-wide controls: deepseek key state, monthly cap, spend + the loud
@@ -1991,13 +2021,24 @@ function renderList() {
     groupHeading.className = 'profile-group-heading';
     groupHeading.innerHTML = '<button type="button" class="workspace-group-toggle" aria-expanded="' + !collapsed + '">' +
       '<div class="profile-group-title"><strong>' + (collapsed ? '+ ' : '- ') + esc(workspaceGroup.name) + '</strong><span class="profile-group-count">' + workspaceGroup.profiles.length + '</span></div>' +
-      '<div class="profile-group-note">' + workspaceGroup.live + ' LIVE / ' + workspaceGroup.rehearsal + ' rehearsal</div></button>';
+      '<div class="profile-group-note">' + workspaceGroup.live + ' LIVE / ' + workspaceGroup.rehearsal + ' rehearsal</div>' +
+      '<span class="badge working profile-group-working" data-local-working-group="' + esc(workspaceGroup.id) + '" hidden>1 working</span></button>';
     groupHeading.querySelector('button').onclick = () => {
       workspaceActivityUi.setCollapsed(workspaceGroup.id, !collapsed);
       renderList();
     };
     ul.appendChild(groupHeading);
     if (collapsed) continue;
+    let descendants = ul;
+    if (workspaceGroup.id) {
+      const region = document.createElement('li');
+      region.className = 'workspace-group-region';
+      descendants = document.createElement('ul');
+      descendants.className = 'workspace-tree';
+      descendants.setAttribute('aria-label', workspaceGroup.name + ' children');
+      region.appendChild(descendants);
+      ul.appendChild(region);
+    }
   const profileGroups = [
     {
       label: 'Your bots',
@@ -2012,23 +2053,29 @@ function renderList() {
       profiles: workspaceGroup.profiles.filter((profile) => profile.botOrigin === 'system'),
     },
   ];
-  const groupedProfiles = profileGroups.flatMap((group) => group.profiles);
-  const lastGroupedProfile = groupedProfiles[groupedProfiles.length - 1];
   for (const group of profileGroups) {
     if (!group.profiles.length) continue;
-    const heading = document.createElement('li');
+    let botRows = ul;
+    const heading = document.createElement(workspaceGroup.id ? 'div' : 'li');
     heading.className = 'profile-group-heading ' + group.className;
-    if (workspaceGroup.id) heading.classList.add('workspace-group-child');
     heading.innerHTML =
       '<div class="profile-group-title"><span>' + esc(group.label) + '</span><span class="profile-group-count">' + group.profiles.length + '</span></div>' +
       '<div class="profile-group-note">' + esc(group.note) + '</div>';
-    ul.appendChild(heading);
+    if (workspaceGroup.id) {
+      const subsection = document.createElement('li');
+      subsection.className = 'workspace-subgroup workspace-group-child';
+      subsection.appendChild(heading);
+      botRows = document.createElement('ul');
+      botRows.className = 'workspace-tree';
+      botRows.setAttribute('aria-label', group.label);
+      subsection.appendChild(botRows);
+      descendants.appendChild(subsection);
+    } else ul.appendChild(heading);
     for (const p of group.profiles) {
     const li = document.createElement('li');
     if (state.selected === p.id) li.className = 'active';
     if (workspaceGroup.id) {
       li.classList.add('workspace-group-child', 'workspace-group-bot');
-      if (p === lastGroupedProfile) li.classList.add('workspace-group-last');
     }
     const tokenBadge = p.hasToken ? '' : '<span class="badge notoken">no token</span>';
     const handoverBadge = p.handoverPending ? '<span class="badge notoken">handover</span>' : '';
@@ -2052,7 +2099,7 @@ function renderList() {
         '<div class="pmeta" title="Capabilities show what a bot can do, not how often it is scheduled">Can: ' + esc(capabilitySummary(p)) +
           ' &middot; ' + esc(p.effProvider === 'deepseek' ? p.effModel : (p.effProvider === 'dell' ? 'Feddit hosted' : 'desktop')) + '</div>' +
         ((!state.developerTools && p.dryRun !== false) ? '' : '<div class="pmeta profile-next" data-next-profile="' + esc(p.id) + '">Next: ' + esc(sentenceCase(fmtNext(p))) + '</div>') + '</div>' +
-        '<div style="display:flex;gap:5px;flex-direction:column;align-items:flex-end">' + hostedWorkBadge + modeBadge + probBadge + handoverBadge + tokenBadge + '</div></div>' +
+        '<div class="profile-list-badges"><span class="badge working" data-local-working-profile="' + esc(p.id) + '" hidden>Working</span>' + hostedWorkBadge + modeBadge + probBadge + handoverBadge + tokenBadge + '</div></div>' +
       '<button type="button" class="profile-run-button ' + runClass + '"' + ((!p.enabled && !canStart) ? ' disabled' : '') +
         ' aria-label="' + esc(runLabel + ' ' + (p.referenceName || 'bot')) + '">' + esc(runLabel) + '</button>';
     li.onclick = () => selectProfile(p.id);
@@ -2061,10 +2108,11 @@ function renderList() {
       event.stopPropagation();
       setProfileRunState(p.id, !p.enabled);
     };
-    ul.appendChild(li);
+    botRows.appendChild(li);
     }
   }
   }
+  renderLocalWorkingIndicators();
 }
 
 function runStatePresentation(p) {

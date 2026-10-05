@@ -192,6 +192,9 @@ async function run() {
   eq(providerCalls.map((call) => call.providerOverride), ['deepseek', 'deepseek'], 'caller provider override reaches every generation');
   eq(providerCalls.map((call) => call.model), ['selected-model', 'selected-model'], 'caller model reaches every generation');
   ok(providerCalls.every((call) => call.structuredOutput === true), 'all provider calls request structured output');
+  eq(providerCalls.map((call) => call.kind), ['culture-analyse', 'culture-generate'], 'existing provider activity identifies the non-bot importer context');
+  ok(providerCalls.every((call) => !call.profileId && !call.botName), 'importer diagnostics do not attribute work to an existing bot');
+  eq(providerCalls[0].activityAction, 'analysing community culture', 'analysis context contains no corpus content');
   ok(providerCalls.every((call) => call.signal === runController.signal), 'the caller cancellation signal reaches every provider request');
   eq(result.populationSeeds.length, 2, 'requested population-compatible seeds are returned');
   eq(result.complete, true, 'a full distinct batch is identified as complete');

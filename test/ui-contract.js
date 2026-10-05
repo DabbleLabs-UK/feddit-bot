@@ -373,7 +373,7 @@ assert.match(html, /editorVariant\.showCadenceRates \? '' : ' hidden'/,
   'placement-driven activity visibility is shared with desktop and hosted variants');
 assert.match(html, /You can replace it with separate text-post, article-link and reply frequencies below/);
 assert.match(html, /These are target frequencies for this population bot/);
-assert.match(html, /Local model working for/);
+assert.match(html, /workspaceActivityUi\.localWork\(snapshot, state.profiles\)/);
 assert.match(html, /High CPU use is expected while this is shown/);
 assert.match(html, /Recent local model generations/);
 assert.match(html, /\/api\/local-model-activity/);

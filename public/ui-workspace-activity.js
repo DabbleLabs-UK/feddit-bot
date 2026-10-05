@@ -40,6 +40,27 @@
     }).filter((group) => group.id || group.profiles.length);
   }
 
+  // A pure view of the provider's live record, never a second busy tracker.
+  function localWork(snapshot, profiles) {
+    const active = snapshot && snapshot.active;
+    if (!active || active.status !== 'running') return null;
+    const kind = String(active.kind || '');
+    const botWork = /^(scheduled-|simulation-now|burst-session)/.test(kind);
+    const profile = botWork && profiles.find((item) => item.id === active.profileId);
+    const contexts = {
+      preview: 'Manual preview',
+      'population-seed': 'Character creation',
+      'population-community-discovery': 'Character community discovery',
+      'culture-analyse': 'Importer culture analysis',
+      'culture-generate': 'Importer character generation',
+    };
+    const name = profile ? (profile.referenceName || profile.fedditUsername || active.botName || 'Bot')
+      : (contexts[kind] || (botWork ? 'Bot work (profile unavailable)' : 'Non-bot generation'));
+    const action = String(active.action || '').slice(0, 120);
+    return { profileId: profile ? profile.id : null, name, action,
+      label: 'Local model working - ' + name + (action && action !== 'writing bot output' ? ' - ' + action : '') };
+  }
+
   function forecastPath(filters) {
     const query = new URLSearchParams({ mode: filters.mode || 'live', zeroCadence: filters.zeroCadence || 'all' });
     if (filters.groupId !== null && filters.groupId !== undefined) query.set('groupId', filters.groupId);
@@ -238,5 +259,5 @@
     return { refreshForecast, renderGroups };
   }
 
-  return { sidebarGroups, isCollapsed, setCollapsed, forecastPath, dueLabel, forecastHtml, createController };
+  return { sidebarGroups, localWork, isCollapsed, setCollapsed, forecastPath, dueLabel, forecastHtml, createController };
 });

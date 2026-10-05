@@ -243,6 +243,50 @@ async function run() {
   assert.equal(finished.recent[0].schedulingContinues, true);
   assert.ok(finished.recent[0].durationMs >= 0);
 
+  let loseLease;
+  let cancelledLeaseReleases = 0;
+  const cancelled = ollama.generate({
+    profileId: 'profile-cancelled', kind: 'scheduled-reply',
+    leaseClient: {
+      acquire: async ({ onLost }) => {
+        loseLease = onLost;
+        return { profile: {}, waitMs: 0, release: async () => { cancelledLeaseReleases++; } };
+      },
+    },
+    chatTransport: async (_, { signal }) => new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => {
+        const error = new Error('Generation cancelled after lease loss');
+        error.code = 'OLLAMA_ABORTED';
+        error.failureClass = 'cancelled';
+        reject(error);
+      }, { once: true });
+    }),
+  });
+  await Promise.resolve();
+  assert.equal(ollama.generationActivity().active.profileId, 'profile-cancelled');
+  const cancellationResult = assert.rejects(cancelled, (error) => error.code === 'OLLAMA_ABORTED');
+  loseLease();
+  await cancellationResult;
+  assert.equal(ollama.generationActivity().active, null, 'cancellation clears current work');
+  assert.equal(ollama.generationActivity().recent[0].failureClass, 'cancelled');
+  assert.equal(ollama.isBusy(), false);
+  assert.equal(cancelledLeaseReleases, 1);
+
+  await ollama.generate({
+    profileId: 'profile-recovered', kind: 'scheduled-reply', leaseClient: null,
+    chatTransport: async () => {
+      assert.equal(ollama.generationActivity().active.profileId, 'profile-recovered', 'recovery replaces cancelled attribution');
+      return { message: { content: 'Recovered reply.' }, done: true };
+    },
+  });
+  assert.equal(ollama.generationActivity().active, null, 'successful recovery returns to idle');
+  assert.equal(ollama.generationActivity().recent[0].status, 'completed');
+  delete require.cache[require.resolve('../lib/providers/ollama')];
+  const restarted = require('../lib/providers/ollama');
+  assert.equal(restarted.generationActivity().active, null, 'restart never restores historical work as active');
+  assert.equal(restarted.isBusy(), false);
+  assert.ok(restarted.generationActivity().recent.some((item) => item.profileId === 'profile-cancelled'));
+
   await assert.rejects(
     ollama.generate({
       model: 'tracked-model',

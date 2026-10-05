@@ -354,29 +354,61 @@ globalThis.fetch = async (input, options = {}) => {
     const hierarchy = await evaluate(cdp, `(() => {
       const row = document.querySelector('.workspace-group-bot');
       const header = document.querySelector('.workspace-group-toggle').parentElement;
+      const origin = document.querySelector('.workspace-subgroup > .profile-group-heading');
       const style = getComputedStyle(row);
       const guide = getComputedStyle(row, '::before');
       const branch = getComputedStyle(row, '::after');
-      const indent = parseFloat(style.paddingLeft) - parseFloat(getComputedStyle(header).paddingLeft);
+      const contentLeft = element => element.getBoundingClientRect().left + parseFloat(getComputedStyle(element).paddingLeft);
+      const indent = contentLeft(origin) - contentLeft(header);
+      const botIndent = contentLeft(row) - contentLeft(origin);
       row.classList.add('active');
       const selected = getComputedStyle(row);
-      const aligned = parseFloat(selected.paddingLeft) + parseFloat(selected.borderLeftWidth) === 34;
+      const aligned = parseFloat(selected.paddingLeft) + parseFloat(selected.borderLeftWidth) === 12;
       const name = row.querySelector('.pname');
       const original = name.textContent;
       name.textContent = 'very_long_bot_name_'.repeat(8);
       const bounds = name.getBoundingClientRect();
       const rowBounds = row.getBoundingClientRect();
-      const fits = bounds.left >= rowBounds.left + 34 && bounds.right <= rowBounds.right;
+      const fits = bounds.left >= rowBounds.left + 12 && bounds.right <= rowBounds.right;
       name.textContent = original;
       row.classList.remove('active');
-      return { indent, aligned, fits, root: !header.classList.contains('workspace-group-child'),
+      return { indent, botIndent, aligned, fits, root: !header.classList.contains('workspace-group-child'),
         guide: guide.borderLeftWidth, branch: branch.borderTopWidth,
-        last: row.classList.contains('workspace-group-last') && guide.height === '19px' };
+        last: row.matches(':last-child') && guide.height === '19px' };
     })()`);
-    if (hierarchy.indent !== 22 || !hierarchy.aligned || !hierarchy.fits || !hierarchy.root ||
+    if (hierarchy.indent !== 22 || hierarchy.botIndent !== 22 || !hierarchy.aligned || !hierarchy.fits || !hierarchy.root ||
         hierarchy.guide !== '1px' || hierarchy.branch !== '1px' || !hierarchy.last) {
       throw new Error('Packaged child hierarchy failed: ' + JSON.stringify(hierarchy));
     }
+    const workingChecks = await evaluate(cdp, `(() => {
+      const before = state.localModelActivity;
+      const checks = [];
+      const activity = { status: 'running', profileId: 'forecast-fixture', kind: 'scheduled-generation', action: 'writing a comment' };
+      state.localModelActivity = { active: activity, recent: [] };
+      renderLocalWorkingIndicators(); renderHealthSummary();
+      checks.push(!document.querySelector('[data-local-working-profile]').hidden);
+      checks.push(!document.querySelector('[data-local-working-group]').hidden);
+      checks.push(document.getElementById('healthLabel').textContent.includes('forecast_fixture'));
+      checks.push(document.getElementById('healthLabel').textContent.includes('writing a comment'));
+      document.querySelector('.workspace-group-toggle').click();
+      checks.push(!document.querySelector('[data-local-working-group]').hidden);
+      checks.push(!document.querySelector('.workspace-group-region'));
+      document.querySelector('.workspace-group-toggle').click();
+      for (const status of ['completed', 'failed', 'cancelled']) {
+        state.localModelActivity = { active: null, recent: [{ ...activity, status }] };
+        renderLocalWorkingIndicators();
+        checks.push(document.querySelector('[data-local-working-profile]').hidden && document.querySelector('[data-local-working-group]').hidden);
+      }
+      state.localModelActivity = { active: { ...activity, kind: 'culture-analyse' }, recent: [] };
+      renderLocalWorkingIndicators(); renderHealthSummary();
+      checks.push(document.querySelector('[data-local-working-profile]').hidden);
+      checks.push(document.getElementById('healthLabel').textContent.includes('Importer culture analysis'));
+      state.localModelActivity = null; renderLocalWorkingIndicators();
+      checks.push(document.querySelector('[data-local-working-group]').hidden);
+      state.localModelActivity = before; renderLocalWorkingIndicators(); renderHealthSummary();
+      return checks;
+    })()`);
+    if (workingChecks.length !== 12 || workingChecks.some(value => !value)) throw new Error('Packaged Working indicators failed: ' + JSON.stringify(workingChecks));
     await evaluate(cdp, "document.querySelector('.workspace-group-toggle').click(); true");
     if (await evaluate(cdp, "document.querySelectorAll('.workspace-group-child').length")) {
       throw new Error('Collapsed group retained child rows or guides');
@@ -676,7 +708,7 @@ globalThis.fetch = async (input, options = {}) => {
     });
     if (shippedSecret) throw new Error('Packaged application assets contained the FetchLayer key');
 
-    console.log('packaged desktop importer, Burst, groups and forecast runtime: 63 checks passed');
+    console.log('packaged desktop importer, Burst, groups and forecast runtime: 76 checks passed');
     console.log(JSON.stringify({ burst, visible, opened, boundedStaging, nextStep, missingKey, configuredState, connectionTest, browserExposure, retrieved }));
   } catch (error) {
     if (serverOutput.length) console.error('Packaged server output:\n' + serverOutput.join(''));
