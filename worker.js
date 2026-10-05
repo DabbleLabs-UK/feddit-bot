@@ -116,6 +116,9 @@ function createWorker(options = {}) {
     let renewTimer = null;
     try {
       const payload = cleanPayload(job.payload, models);
+      // Hosted jobs keep the existing absolute/stream-idle contract. The new
+      // first-output/progress policy is for desktop/self-hosted local requests.
+      payload.legacyTimeouts = true;
       payload.priorityClass = sharedPriority(job);
       renewTimer = setInterval(() => {
         request('api/worker/jobs/' + encodeURIComponent(job.id) + '/renew', workerDetails(true))

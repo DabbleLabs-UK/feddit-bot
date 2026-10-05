@@ -139,7 +139,7 @@ async function run() {
       ollama._test.ollamaChatStream({ model: 'stalled', messages: [] }, {
         base, timeoutMs: 250, idleTimeoutMs: 30,
       }),
-      (error) => error.code === 'OLLAMA_STALLED' && error.failureClass === 'stalled-stream' && error.streamStarted,
+      (error) => error.code === 'OLLAMA_STALLED' && error.failureClass === 'no-generation-progress-timeout' && error.streamStarted,
     );
   });
 
@@ -199,7 +199,7 @@ async function run() {
       ollama._test.ollamaChatStream({ model: 'slow-model', messages: [] }, {
         base, timeoutMs: 30, idleTimeoutMs: 100,
       }),
-      (error) => error.code === 'OLLAMA_TIMEOUT' && error.failureClass === 'total-timeout' &&
+      (error) => error.code === 'OLLAMA_TIMEOUT' && error.failureClass === 'emergency-hard-timeout' &&
         /did not finish within 30ms/i.test(error.message),
     );
   });

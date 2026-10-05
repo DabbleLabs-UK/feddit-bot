@@ -97,6 +97,8 @@ async function run() {
   eq(calls[1].body.result.text, 'Hi.', 'generated result returned to public runner');
   eq(calls[1].body.workerId, 'dell-test', 'completion identifies lease holder');
   eq(generated[0].priorityClass, 'synthetic', 'background system work yields in the shared Ollama queue');
+  eq(generated[0].legacyTimeouts, true, 'hosted work retains the previous absolute/stream-idle policy');
+  eq(generated[0].timeoutMs, 5 * 60 * 1000, 'hosted default deadline remains five minutes');
   eq(sharedPriority({ priority: 'interactive', allocationClass: 'user' }), 'interactive', 'interactive work keeps first priority');
   ok(logs.some((message) => message.includes('Completed')), 'completion logged without secret');
   ok(logs.every((message) => !message.includes('worker-secret')), 'worker key never logged');
