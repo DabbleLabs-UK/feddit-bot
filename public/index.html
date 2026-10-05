@@ -101,6 +101,17 @@
   .workspace-group-row input { min-width: 0; }
   .plist li:hover { background: var(--panel2); }
   .plist li.active { background: var(--panel2); border-left: 3px solid var(--accent); padding-left: 9px; }
+  .plist li.workspace-group-child { position: relative; padding-left: 34px; }
+  .plist li.workspace-group-child.active { padding-left: 31px; }
+  .workspace-group-child::before, .workspace-group-bot::after {
+    content: ''; position: absolute; left: 20px; pointer-events: none;
+    border-color: var(--dim); border-style: solid; opacity: .65;
+  }
+  .workspace-group-child::before { top: 0; bottom: -1px; border-width: 0 0 0 1px; }
+  .workspace-group-bot::after { top: 19px; width: 9px; border-width: 1px 0 0; }
+  .workspace-group-child.active::before, .workspace-group-bot.active::after { left: 17px; }
+  .workspace-group-last::before { bottom: auto; height: 19px; }
+  .workspace-group-child .profile-list-summary > div:first-child { min-width: 0; overflow-wrap: anywhere; }
   .profile-list-summary { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
   .profile-run-button { width: 100%; margin-top: 8px; padding: 6px 9px; font-size: 12px; font-weight: 700; }
   .profile-run-button.active { border-color: var(--good); color: #8ee493; }
@@ -2001,10 +2012,13 @@ function renderList() {
       profiles: workspaceGroup.profiles.filter((profile) => profile.botOrigin === 'system'),
     },
   ];
+  const groupedProfiles = profileGroups.flatMap((group) => group.profiles);
+  const lastGroupedProfile = groupedProfiles[groupedProfiles.length - 1];
   for (const group of profileGroups) {
     if (!group.profiles.length) continue;
     const heading = document.createElement('li');
     heading.className = 'profile-group-heading ' + group.className;
+    if (workspaceGroup.id) heading.classList.add('workspace-group-child');
     heading.innerHTML =
       '<div class="profile-group-title"><span>' + esc(group.label) + '</span><span class="profile-group-count">' + group.profiles.length + '</span></div>' +
       '<div class="profile-group-note">' + esc(group.note) + '</div>';
@@ -2012,6 +2026,10 @@ function renderList() {
     for (const p of group.profiles) {
     const li = document.createElement('li');
     if (state.selected === p.id) li.className = 'active';
+    if (workspaceGroup.id) {
+      li.classList.add('workspace-group-child', 'workspace-group-bot');
+      if (p === lastGroupedProfile) li.classList.add('workspace-group-last');
+    }
     const tokenBadge = p.hasToken ? '' : '<span class="badge notoken">no token</span>';
     const handoverBadge = p.handoverPending ? '<span class="badge notoken">handover</span>' : '';
     const probBadge = (p.probation && p.probation.onProbation === true)

@@ -351,7 +351,36 @@ globalThis.fetch = async (input, options = {}) => {
 
     await waitForValue(cdp, "document.querySelector('.workspace-group-toggle')?.textContent || ''",
       (v) => v.includes('Fixture import'), 'packaged group sidebar');
+    const hierarchy = await evaluate(cdp, `(() => {
+      const row = document.querySelector('.workspace-group-bot');
+      const header = document.querySelector('.workspace-group-toggle').parentElement;
+      const style = getComputedStyle(row);
+      const guide = getComputedStyle(row, '::before');
+      const branch = getComputedStyle(row, '::after');
+      const indent = parseFloat(style.paddingLeft) - parseFloat(getComputedStyle(header).paddingLeft);
+      row.classList.add('active');
+      const selected = getComputedStyle(row);
+      const aligned = parseFloat(selected.paddingLeft) + parseFloat(selected.borderLeftWidth) === 34;
+      const name = row.querySelector('.pname');
+      const original = name.textContent;
+      name.textContent = 'very_long_bot_name_'.repeat(8);
+      const bounds = name.getBoundingClientRect();
+      const rowBounds = row.getBoundingClientRect();
+      const fits = bounds.left >= rowBounds.left + 34 && bounds.right <= rowBounds.right;
+      name.textContent = original;
+      row.classList.remove('active');
+      return { indent, aligned, fits, root: !header.classList.contains('workspace-group-child'),
+        guide: guide.borderLeftWidth, branch: branch.borderTopWidth,
+        last: row.classList.contains('workspace-group-last') && guide.height === '19px' };
+    })()`);
+    if (hierarchy.indent !== 22 || !hierarchy.aligned || !hierarchy.fits || !hierarchy.root ||
+        hierarchy.guide !== '1px' || hierarchy.branch !== '1px' || !hierarchy.last) {
+      throw new Error('Packaged child hierarchy failed: ' + JSON.stringify(hierarchy));
+    }
     await evaluate(cdp, "document.querySelector('.workspace-group-toggle').click(); true");
+    if (await evaluate(cdp, "document.querySelectorAll('.workspace-group-child').length")) {
+      throw new Error('Collapsed group retained child rows or guides');
+    }
     const collapsed = await evaluate(cdp, "document.querySelector('.workspace-group-toggle').getAttribute('aria-expanded') === 'false'");
     if (!collapsed) throw new Error('Packaged group did not collapse');
     await evaluate(cdp, "document.querySelector('.workspace-group-toggle').click(); document.getElementById('activityForecastBtn').click(); true");
@@ -647,7 +676,7 @@ globalThis.fetch = async (input, options = {}) => {
     });
     if (shippedSecret) throw new Error('Packaged application assets contained the FetchLayer key');
 
-    console.log('packaged desktop importer, Burst, groups and forecast runtime: 55 checks passed');
+    console.log('packaged desktop importer, Burst, groups and forecast runtime: 63 checks passed');
     console.log(JSON.stringify({ burst, visible, opened, boundedStaging, nextStep, missingKey, configuredState, connectionTest, browserExposure, retrieved }));
   } catch (error) {
     if (serverOutput.length) console.error('Packaged server output:\n' + serverOutput.join(''));
