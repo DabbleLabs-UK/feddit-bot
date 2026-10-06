@@ -382,6 +382,9 @@ globalThis.fetch = async (input, options = {}) => {
     }
     const workingChecks = await evaluate(cdp, `(() => {
       const before = state.localModelActivity;
+      const statusBefore = state.status;
+      // Working presentation must not depend on live Feddit reachability.
+      state.status = { ...state.status, feddit: { up: true } };
       const checks = [];
       const activity = { status: 'running', profileId: 'forecast-fixture', kind: 'scheduled-generation', action: 'writing a comment' };
       state.localModelActivity = { active: activity, recent: [] };
@@ -405,10 +408,57 @@ globalThis.fetch = async (input, options = {}) => {
       checks.push(document.getElementById('healthLabel').textContent.includes('Importer culture analysis'));
       state.localModelActivity = null; renderLocalWorkingIndicators();
       checks.push(document.querySelector('[data-local-working-group]').hidden);
+      state.status = { ...state.status, feddit: { up: false } };
+      state.localModelActivity = { active: activity }; renderHealthSummary();
+      checks.push(document.getElementById('healthLabel').textContent === 'Feddit unreachable');
+      state.status = statusBefore;
       state.localModelActivity = before; renderLocalWorkingIndicators(); renderHealthSummary();
       return checks;
     })()`);
-    if (workingChecks.length !== 12 || workingChecks.some(value => !value)) throw new Error('Packaged Working indicators failed: ' + JSON.stringify(workingChecks));
+    if (workingChecks.length !== 13 || workingChecks.some(value => !value)) throw new Error('Packaged Working indicators failed: ' + JSON.stringify(workingChecks));
+    // Exercise the same packaged renderer with a genuinely ungrouped fixture.
+    // Only browser fixture state changes; no profile save or live work is invoked.
+    const ungroupedChecks = await evaluate(cdp, `(() => {
+      const profilesBefore = state.profiles;
+      const selectedBefore = state.selected;
+      const activityBefore = state.localModelActivity;
+      const membershipBefore = JSON.stringify(state.profiles.map(p => [p.id, p.groupId]));
+      const checks = [];
+      try {
+        state.profiles = state.profiles.map(p => ({ ...p, groupId: '', botOrigin: 'user' }));
+        state.selected = state.profiles[0].id;
+        state.localModelActivity = { active: { status: 'running', kind: 'scheduled-reply', profileId: state.selected } };
+        renderList();
+        const header = [...document.querySelectorAll('.workspace-group-toggle')].find(e => e.textContent.includes('Ungrouped')).parentElement;
+        const region = header.nextElementSibling;
+        const origin = region.querySelector('.workspace-subgroup > .profile-group-heading');
+        const row = region.querySelector('.workspace-group-bot');
+        const contentLeft = e => e.getBoundingClientRect().left + parseFloat(getComputedStyle(e).paddingLeft) + parseFloat(getComputedStyle(e).borderLeftWidth);
+        checks.push(header.dataset.depth === '0' && !header.classList.contains('workspace-group-child'));
+        checks.push(region.classList.contains('workspace-group-region') && origin.textContent.includes('Your bots'));
+        checks.push(contentLeft(origin) - contentLeft(header) === 22);
+        checks.push(contentLeft(row) - contentLeft(origin) === 22);
+        checks.push(origin.parentElement.dataset.depth === '1' && row.dataset.depth === '2');
+        checks.push(getComputedStyle(row, '::before').borderLeftWidth === '1px' && getComputedStyle(row, '::after').borderTopWidth === '1px');
+        checks.push(row.matches(':last-child') && getComputedStyle(row, '::before').height === '19px');
+        checks.push(row.classList.contains('active') && !row.querySelector('[data-local-working-profile]').hidden);
+        region.style.width = '210px';
+        row.querySelector('.pname').textContent = 'very_long_ungrouped_bot_name_'.repeat(8);
+        const nameBounds = row.querySelector('.pname').getBoundingClientRect();
+        const badgeBounds = row.querySelector('.profile-list-badges').getBoundingClientRect();
+        checks.push(nameBounds.left >= row.getBoundingClientRect().left + 12 && nameBounds.right <= badgeBounds.left);
+        header.querySelector('button').click();
+        checks.push(![...document.querySelectorAll('.workspace-tree')].some(e => e.getAttribute('aria-label') === 'Ungrouped children'));
+        checks.push(!document.querySelector('[data-local-working-group=""]').hidden);
+        [...document.querySelectorAll('.workspace-group-toggle')].find(e => e.textContent.includes('Ungrouped')).click();
+        checks.push(document.querySelector('[aria-label="Ungrouped children"]') !== null);
+      } finally {
+        state.profiles = profilesBefore; state.selected = selectedBefore; state.localModelActivity = activityBefore; renderList();
+      }
+      checks.push(JSON.stringify(state.profiles.map(p => [p.id, p.groupId])) === membershipBefore);
+      return checks;
+    })()`);
+    if (ungroupedChecks.length !== 13 || ungroupedChecks.some(value => !value)) throw new Error('Packaged Ungrouped hierarchy failed: ' + JSON.stringify(ungroupedChecks));
     await evaluate(cdp, "document.querySelector('.workspace-group-toggle').click(); true");
     if (await evaluate(cdp, "document.querySelectorAll('.workspace-group-child').length")) {
       throw new Error('Collapsed group retained child rows or guides');
@@ -708,7 +758,7 @@ globalThis.fetch = async (input, options = {}) => {
     });
     if (shippedSecret) throw new Error('Packaged application assets contained the FetchLayer key');
 
-    console.log('packaged desktop importer, Burst, groups and forecast runtime: 76 checks passed');
+    console.log('packaged desktop importer, Burst, groups and forecast runtime: 90 checks passed');
     console.log(JSON.stringify({ burst, visible, opened, boundedStaging, nextStep, missingKey, configuredState, connectionTest, browserExposure, retrieved }));
   } catch (error) {
     if (serverOutput.length) console.error('Packaged server output:\n' + serverOutput.join(''));

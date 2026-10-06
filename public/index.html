@@ -2019,6 +2019,7 @@ function renderList() {
     const collapsed = workspaceActivityUi.isCollapsed(workspaceGroup.id);
     const groupHeading = document.createElement('li');
     groupHeading.className = 'profile-group-heading';
+    groupHeading.dataset.depth = '0';
     groupHeading.innerHTML = '<button type="button" class="workspace-group-toggle" aria-expanded="' + !collapsed + '">' +
       '<div class="profile-group-title"><strong>' + (collapsed ? '+ ' : '- ') + esc(workspaceGroup.name) + '</strong><span class="profile-group-count">' + workspaceGroup.profiles.length + '</span></div>' +
       '<div class="profile-group-note">' + workspaceGroup.live + ' LIVE / ' + workspaceGroup.rehearsal + ' rehearsal</div>' +
@@ -2029,16 +2030,14 @@ function renderList() {
     };
     ul.appendChild(groupHeading);
     if (collapsed) continue;
-    let descendants = ul;
-    if (workspaceGroup.id) {
-      const region = document.createElement('li');
-      region.className = 'workspace-group-region';
-      descendants = document.createElement('ul');
-      descendants.className = 'workspace-tree';
-      descendants.setAttribute('aria-label', workspaceGroup.name + ' children');
-      region.appendChild(descendants);
-      ul.appendChild(region);
-    }
+    // Every displayed root, including Ungrouped, has the same descendant tree.
+    const region = document.createElement('li');
+    region.className = 'workspace-group-region';
+    const descendants = document.createElement('ul');
+    descendants.className = 'workspace-tree';
+    descendants.setAttribute('aria-label', workspaceGroup.name + ' children');
+    region.appendChild(descendants);
+    ul.appendChild(region);
   const profileGroups = [
     {
       label: 'Your bots',
@@ -2055,28 +2054,25 @@ function renderList() {
   ];
   for (const group of profileGroups) {
     if (!group.profiles.length) continue;
-    let botRows = ul;
-    const heading = document.createElement(workspaceGroup.id ? 'div' : 'li');
+    const heading = document.createElement('div');
     heading.className = 'profile-group-heading ' + group.className;
     heading.innerHTML =
       '<div class="profile-group-title"><span>' + esc(group.label) + '</span><span class="profile-group-count">' + group.profiles.length + '</span></div>' +
       '<div class="profile-group-note">' + esc(group.note) + '</div>';
-    if (workspaceGroup.id) {
-      const subsection = document.createElement('li');
-      subsection.className = 'workspace-subgroup workspace-group-child';
-      subsection.appendChild(heading);
-      botRows = document.createElement('ul');
-      botRows.className = 'workspace-tree';
-      botRows.setAttribute('aria-label', group.label);
-      subsection.appendChild(botRows);
-      descendants.appendChild(subsection);
-    } else ul.appendChild(heading);
+    const subsection = document.createElement('li');
+    subsection.className = 'workspace-subgroup workspace-group-child';
+    subsection.dataset.depth = '1';
+    subsection.appendChild(heading);
+    const botRows = document.createElement('ul');
+    botRows.className = 'workspace-tree';
+    botRows.setAttribute('aria-label', group.label);
+    subsection.appendChild(botRows);
+    descendants.appendChild(subsection);
     for (const p of group.profiles) {
     const li = document.createElement('li');
     if (state.selected === p.id) li.className = 'active';
-    if (workspaceGroup.id) {
-      li.classList.add('workspace-group-child', 'workspace-group-bot');
-    }
+    li.classList.add('workspace-group-child', 'workspace-group-bot');
+    li.dataset.depth = '2';
     const tokenBadge = p.hasToken ? '' : '<span class="badge notoken">no token</span>';
     const handoverBadge = p.handoverPending ? '<span class="badge notoken">handover</span>' : '';
     const probBadge = (p.probation && p.probation.onProbation === true)

@@ -45,7 +45,9 @@ const profiles = [
   { id: 'a', groupId: 'named', botOrigin: 'user', referenceName: 'Same name' },
   { id: 'b', groupId: 'named', botOrigin: 'system', referenceName: 'Same name' },
   { id: 'root', groupId: 'deleted', referenceName: 'Root bot' },
+  { id: 'unassigned', groupId: '', referenceName: 'Ungrouped bot' },
 ];
+const originalProfiles = JSON.stringify(profiles);
 const state = { profiles, groups: [{ id: 'named', name: 'Named' }], selected: 'b',
   localModelActivity: { active: { status: 'running', kind: 'scheduled-reply', profileId: 'b' } } };
 const selected = [];
@@ -59,7 +61,7 @@ const sandbox = {
 };
 vm.createContext(sandbox);
 vm.runInContext(indicators + '\n' + render + '\nrenderList();', sandbox);
-assert.equal(list.children.length, 5, 'named header/region plus root ungrouped header/origin/bot');
+assert.equal(list.children.length, 4, 'each root has a header and the same descendant region');
 const region = list.children[1];
 assert.ok(has(region, 'workspace-group-region'));
 const tree = region.children[0];
@@ -84,19 +86,34 @@ let stopped = false;
 selectedRow.querySelector('.profile-run-button').onclick({ stopPropagation() { stopped = true; } });
 assert.equal(stopped, true);
 assert.deepEqual(runChanges, [['b', true]]);
-assert.ok(list.children.slice(2).every((row) => !has(row, 'workspace-group-child')), 'ungrouped stays at root');
+const ungroupedRegion = list.children[3];
+assert.equal(list.children[2].dataset.depth, '0');
+assert.ok(has(ungroupedRegion, 'workspace-group-region'));
+const ungroupedTree = ungroupedRegion.children[0];
+assert.equal(ungroupedTree.attributes['aria-label'], 'Ungrouped children');
+const userSubsection = ungroupedTree.children[0];
+assert.equal(userSubsection.className, tree.children[0].className, 'same structural class for both roots');
+assert.equal(userSubsection.dataset.depth, '1');
+assert.equal(userSubsection.children[1].attributes['aria-label'], 'Your bots');
+assert.equal(userSubsection.children[1].children.length, 2);
+for (const row of userSubsection.children[1].children) {
+  assert.equal(row.dataset.depth, '2');
+  assert.ok(has(row, 'workspace-group-child'));
+  assert.ok(has(row, 'workspace-group-bot'));
+}
 assert.equal(list.querySelectorAll('[data-local-working-profile]').filter((badge) => !badge.hidden)[0].dataset.localWorkingProfile, 'b');
 assert.equal(list.querySelectorAll('[data-local-working-group]').filter((badge) => !badge.hidden)[0].dataset.localWorkingGroup, 'named');
 list.children[0].querySelector('button').onclick();
 assert.equal(ui.isCollapsed('named', storage), true);
-assert.equal(list.children.length, 4, 'collapse removes the entire named subtree');
-assert.ok(list.children.every((row) => !has(row, 'workspace-group-region')));
+assert.equal(list.children.length, 3, 'collapse removes only the named subtree');
+assert.equal(list.querySelectorAll('.workspace-group-region').length, 1);
 assert.match(list.children[0].innerHTML, /aria-expanded="false"/);
-assert.equal(list.querySelectorAll('[data-local-working-profile]').length, 1);
+assert.equal(list.querySelectorAll('[data-local-working-profile]').length, 2);
 assert.equal(list.querySelectorAll('[data-local-working-group]')[0].hidden, false, 'collapsed group still shows active work');
 assert.equal(state.selected, 'b');
 list.children[1].querySelector('button').onclick();
 assert.equal(list.children.length, 2, 'ungrouped also collapses');
+assert.equal(list.querySelectorAll('.workspace-group-child').length, 0, 'collapsed roots have no rails or elbows');
 list.children[0].querySelector('button').onclick();
 assert.equal(list.children.length, 3);
 assert.ok(has(list.children[1].children[0].children[1].children[1].children[0], 'active'), 'expansion restores selected styling');
@@ -104,4 +121,6 @@ state.localModelActivity = null;
 vm.runInContext('renderLocalWorkingIndicators()', sandbox);
 assert.ok(list.querySelectorAll('[data-local-working-group]').every((badge) => badge.hidden));
 assert.ok(list.querySelectorAll('[data-local-working-profile]').every((badge) => badge.hidden));
+assert.equal(JSON.stringify(profiles), originalProfiles, 'rendering/collapse never changes stored membership');
+assert.deepEqual(state.groups, [{ id: 'named', name: 'Named' }], 'no persistent Ungrouped group is introduced');
 console.log('ui-group-hierarchy: all checks passed');
