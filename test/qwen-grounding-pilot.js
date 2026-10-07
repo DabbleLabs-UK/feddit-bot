@@ -2,7 +2,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { prompts, freeze, guardedTransport, nextNaturalAt } = require('../scripts/qwen-grounding-pilot');
+const { prompts, freeze, guardedTransport, nextNaturalAt, exclusiveRunLock } = require('../scripts/qwen-grounding-pilot');
 const actions = require('../lib/action-candidates');
 async function main() {
   const snapshot = freeze({ candidates: [], voteAllowance: { remaining: 12 }, voteCandidates: [
@@ -19,6 +19,14 @@ async function main() {
   let calls = 0;
   await assert.rejects(guardedTransport(async () => { calls++; }, {}, { signal: new AbortController().signal }, async () => ({ busy: true })), { code: 'PILOT_YIELD' });
   assert.equal(calls, 0);
+  await assert.rejects(guardedTransport(async () => { calls++; }, {}, { signal: AbortSignal.abort() }, async () => ({ busy: false })), { name: 'AbortError' });
+  assert.equal(calls, 0);
+  const temporary = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'qwen-pilot-lock-'));
+  const release = exclusiveRunLock(temporary);
+  assert.throws(() => exclusiveRunLock(temporary), { code: 'EEXIST' });
+  release();
+  assert(!fs.existsSync(path.join(temporary, 'run.lock')));
+  fs.rmdirSync(temporary);
   let probes = 0;
   await assert.rejects(guardedTransport(async (body, opts) => {
     calls++;
@@ -35,6 +43,6 @@ async function main() {
   assert(source.includes('ledger.calls.length < 4'));
   assert(source.includes('Prior ambiguous/failed call: stop, never retry.'));
   assert(!/store\.(?:update|record|save)|feddit\.(?:vote|submit|register|comment)\(/.test(source));
-  console.log('Qwen pilot: 16 checks passed; mocked transport only, zero model calls.');
+  console.log('Qwen pilot: 20 checks passed; mocked transport only, zero model calls.');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

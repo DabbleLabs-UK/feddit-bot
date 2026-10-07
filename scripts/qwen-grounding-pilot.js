@@ -142,6 +142,7 @@ async function idleWindow() {
 }
 async function guardedTransport(transport, body, options, status = modelStatus, pollMs = 200) {
   if ((await status()).busy) throw Object.assign(new Error('Natural work has priority.'), { code: 'PILOT_YIELD' });
+  options.signal.throwIfAborted();
   const abort = new AbortController();
   let checking = false;
   let yielded = false;
@@ -158,7 +159,18 @@ async function guardedTransport(transport, body, options, status = modelStatus, 
   catch (error) { if (yielded) error.code = 'PILOT_YIELD'; throw error; }
   finally { clearInterval(timer); options.signal.removeEventListener('abort', cancel); }
 }
+function exclusiveRunLock(directory) {
+  const file = path.join(directory, 'run.lock');
+  const fd = fs.openSync(file, 'wx');
+  fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, at: Date.now() }));
+  fs.closeSync(fd);
+  return () => fs.unlinkSync(file);
+}
 async function run() {
+  const release = exclusiveRunLock(output);
+  try { await runLocked(); } finally { release(); }
+}
+async function runLocked() {
   const { cases } = read(path.join(output, 'cases.json'));
   assert.equal(cases.length, 2);
   const ledgerFile = path.join(output, 'results.json');
@@ -196,7 +208,7 @@ async function run() {
   }
 }
 
-module.exports = { prompts, snapshotScheduler, nextNaturalAt, guardedTransport, freeze };
+module.exports = { prompts, snapshotScheduler, nextNaturalAt, guardedTransport, freeze, exclusiveRunLock };
 if (require.main === module) {
   const command = process.argv[2];
   Promise.resolve().then(() => {

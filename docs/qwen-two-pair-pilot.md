@@ -37,7 +37,9 @@ Private evidence lives only under ignored `artifacts/qwen-two-pair/`, including
 separate provider telemetry. No evidence is appended to live Naturalness. Raw
 thinking and credentials are not retained. A started ledger entry is persisted
 before invoking the provider, so an interrupted run cannot replay an ambiguous
-call. Reports exclude persona and private memory text. No extra evaluator model
+call. An exclusive run lock blocks concurrent processes; a crash leaves the
+lock for explicit inspection rather than blindly restarting. Reports exclude
+persona and private memory text. No extra evaluator model
 calls are made. No application files, release version, or installed build change.
 
 This tiny, unseeded pilot can detect only an obvious effect. It cannot estimate
