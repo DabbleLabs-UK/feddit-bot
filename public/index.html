@@ -616,6 +616,7 @@
       <button id="manageLinkBtn" style="display:none">Copy private management link</button>
       <a id="populationBtn" class="button-link" style="display:none" href="/population.html">Manage background population</a>
       <button id="cultureImporterBtn" style="display:none">Import subreddit culture</button>
+      <button id="naturalnessBtn" style="display:none">Naturalness</button>
     </div>
     <section class="provider-settings" id="cultureSourceSettings" aria-labelledby="cultureSourceSettingsTitle" style="display:none">
       <h3 id="cultureSourceSettingsTitle">Culture importer source</h3>
@@ -681,6 +682,7 @@
 <script src="/ui-speed.js"></script>
 <script src="/ui-burst.js"></script>
 <script src="/ui-workspace-activity.js"></script>
+<script src="/ui-naturalness.js"></script>
 <script>
 'use strict';
 const $ = (s, r = document) => r.querySelector(s);
@@ -750,6 +752,12 @@ let state = {
   editing: null, editorBaseline: null, editorRevision: 0, dirty: false, savePhase: 'clean',
   saveSequence: 0, saveInFlight: null, navigationSequence: 0, dialogReturnFocus: null,
 };
+const naturalnessController = typeof FedditUiNaturalness !== 'undefined' ? FedditUiNaturalness.create({
+  document, api, toast,
+  getDeveloperTools: () => state.developerTools,
+  getPlacement: () => state.placement,
+  getPopulationAdmin: () => state.populationAdmin,
+}) : null;
 const cultureImporterController = cultureImporterUi.createController({
   api,
   toast,
@@ -1011,6 +1019,12 @@ function cadenceLimitsHelp(profile) {
 
 function applyPlacementChrome() {
   const hosted = state.placement === 'hosted';
+  $('#naturalnessBtn').style.display = naturalnessController && state.developerTools && (!hosted || state.populationAdmin) ? '' : 'none';
+  if (!state.developerTools && naturalnessController) naturalnessController.close();
+  $('#naturalnessBtn').onclick = () => {
+    closeDialog($('#settingsDialog'));
+    if (naturalnessController) naturalnessController.open($('#settingsBtn'));
+  };
   $('#runState').style.display = hosted ? 'none' : '';
   $('#pauseBtn').style.display = hosted ? 'none' : '';
   $('#localModelActivity').style.display = hosted ? 'none' : '';

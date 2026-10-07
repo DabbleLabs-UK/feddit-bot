@@ -23,6 +23,9 @@ const gdelt = require('./lib/gdelt');
 const feeds = require('./lib/feeds');
 const scheduler = require('./lib/scheduler');
 const activityForecast = require('./lib/activity-forecast');
+const { createEvidenceStore } = require('./lib/naturalness-evidence');
+const naturalnessMetrics = require('./lib/naturalness-metrics');
+const naturalnessObserver = require('./lib/naturalness-observer');
 const importedDefaults = require('./lib/imported-profile-defaults');
 const { createFileCultureWorkspaceStore } = require('./lib/culture-importer/workspace-store');
 const profilePack = require('./lib/profile-pack');
@@ -56,6 +59,11 @@ const jobQueue = createQueue({
   maxActivePerProfile: PLACEMENT === 'hosted' ? hostedPolicy.MAX_ACTIVE_JOBS_PER_BOT : 0,
 });
 const turnStore = createTurnStore({ file: path.join(store.DATA_DIR, 'turns.json') });
+const evidenceStore = createEvidenceStore({ file: path.join(store.DATA_DIR, 'naturalness-evidence.json') });
+const naturalness = naturalnessObserver.createObserver({
+  dataDir: store.DATA_DIR, request: feddit.request, evidenceStore,
+  buildSnapshot: naturalnessMetrics.buildSnapshot,
+});
 providers.configureDellQueue(jobQueue);
 providers.configureRuntime({ secrets, placement: PLACEMENT });
 const hostedPreviewTasks = new Map();
@@ -838,6 +846,19 @@ async function handleApi(req, res, urlPath, query) {
         dormantAfterHours: hostedPolicy.OWNER_ACTIVITY_BOOST_MS / (60 * 60 * 1000),
       });
     }
+  }
+
+  // Developer visibility is not authorization. Hosted diagnostics additionally
+  // require the existing population operator and never expose other owners.
+  if (urlPath === '/api/naturalness') {
+    if (method !== 'GET' || !naturalnessObserver.authorised(PLACEMENT, isPopulationAdmin(requestOwner))) {
+      return sendJson(res, 404, { error: 'Not found' });
+    }
+    const query = new URL(req.url, 'http://localhost').searchParams;
+    return sendJson(res, 200, await naturalness.snapshot({
+      hours: query.get('hours'),
+      profiles: store.listProfiles().filter((profile) => canManageProfile(profile, requestOwner)),
+    }));
   }
 
   // The private culture importer runs in the desktop Developer-tools surface,
@@ -2176,6 +2197,7 @@ function activeSyntheticTurnCount() {
 }
 reconcileHostedProfiles();
 const schedulerHandle = scheduler.start({
+  evidenceStore,
   store,
   providers,
   jobQueue,

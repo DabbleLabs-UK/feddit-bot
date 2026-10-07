@@ -203,7 +203,8 @@ async function main() {
   const publicIndex = path.join(appRoot, 'public', 'index.html');
   const importerFile = path.join(appRoot, 'public', 'ui-culture-importer.js');
   const burstFile = path.join(appRoot, 'public', 'ui-burst.js');
-  for (const file of [serverFile, publicIndex, importerFile, burstFile, browserExe]) {
+  const naturalnessFile = path.join(appRoot, 'public', 'ui-naturalness.js');
+  for (const file of [serverFile, publicIndex, importerFile, burstFile, naturalnessFile, browserExe]) {
     if (!fs.existsSync(file)) throw new Error('Required packaged-runtime file is missing: ' + file);
   }
 
@@ -228,6 +229,24 @@ async function main() {
 const originalFetch = globalThis.fetch.bind(globalThis);
 globalThis.fetch = async (input, options = {}) => {
   const url = String(input && input.url || input);
+  if (url.startsWith('http://127.0.0.1:1/api/v1/evidence.json?')) {
+    const hours = Number(new URL(url).searchParams.get('window_hours'));
+    const until = new Date().toISOString();
+    console.log('[naturalness-fixture] ' + (options.method || 'GET') + ' ' + hours);
+    return new Response(JSON.stringify({ schemaVersion: 1, source: 'feddit-current-votes', generatedAt: until,
+      window: { hours, since: new Date(Date.now() - hours * 3600000).toISOString(), until },
+      coverage: { warnings: ['Packaged isolated fixture; current surviving votes only.'], itemLimit: 100 },
+      items: [{ key: 'post:91', targetType: 'post', targetId: 91, postId: 91, community: 'fixture', author: 'fixture_author',
+        createdAt: new Date(Date.now() - 7200000).toISOString(), title: 'Naturalness packaged fixture <script>unsafe()</script>', excerpt: 'Public bounded fixture.',
+        score: 1, up: 3, down: 3, total: 6, uniqueVotingBots: 6, trailTruncated: true,
+        votes: [{ bot: 'fixture_voter', actorType: 'bot', direction: 'up', at: until, reason: 'Public reason token=naturalness-private-fixture', privateField: 'PRIVATE_NATURALNESS_FIELD' }],
+        rawPrompt: 'PRIVATE_NATURALNESS_PROMPT' }]
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+  const fixtureHost = new URL(url).hostname;
+  if (!url.startsWith('https://api.fetchlayer.dev/reddit/') && fixtureHost !== '127.0.0.1' && fixtureHost !== 'localhost') {
+    return new Response(JSON.stringify({ error: 'Public network disabled in packaged fixture' }), { status: 503 });
+  }
   if (!url.startsWith('https://api.fetchlayer.dev/reddit/')) return originalFetch(input, options);
   if (!options.headers || options.headers.Authorization !== 'Bearer ${fetchLayerKey}') {
     return new Response(JSON.stringify({ error: 'fixture authorization failed' }), { status: 401 });
@@ -285,6 +304,7 @@ globalThis.fetch = async (input, options = {}) => {
         FEDDIT_BOT_HOST: '127.0.0.1',
         FEDDIT_BOT_PORT: String(port),
         FEDDIT_BOT_PLACEMENT: 'desktop',
+        FEDDIT_SITE_BASE: 'http://127.0.0.1:1',
         FEDDIT_APP_VERSION: 'packaged-importer-runtime-test',
         FETCHLAYER_API_KEY: '',
       },
@@ -332,6 +352,7 @@ globalThis.fetch = async (input, options = {}) => {
     trace('connected to the browser debugging protocol');
     await cdp.send('Page.enable');
     await cdp.send('Runtime.enable');
+    await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: path.join(work, 'downloads') });
     console.log('[packaged-runtime] browser ready');
 
     let loaded = cdp.waitForEvent('Page.loadEventFired');
@@ -339,6 +360,11 @@ globalThis.fetch = async (input, options = {}) => {
     await loaded;
     await waitForValue(cdp, 'document.readyState', (value) => value === 'complete', 'initial page load');
     trace('packaged desktop page loaded');
+    const naturalnessHidden = await evaluate(cdp, `(() => {
+      const button = document.getElementById('naturalnessBtn');
+      return Boolean(button && getComputedStyle(button).display === 'none' && window.FedditUiNaturalness);
+    })()`);
+    if (!naturalnessHidden) throw new Error('Packaged Naturalness entry must load but remain hidden with Developer tools off');
 
     loaded = cdp.waitForEvent('Page.loadEventFired');
     await evaluate(cdp, "localStorage.setItem('fedditBotsDeveloperTools', '1'); location.reload(); true");
@@ -348,6 +374,97 @@ globalThis.fetch = async (input, options = {}) => {
       Boolean,
       'packaged importer and Burst assets');
     trace('packaged importer and Burst assets loaded with Developer tools enabled');
+
+    await evaluate(cdp, "document.getElementById('settingsBtn').click(); true");
+    await waitForValue(cdp, `(() => {
+      const button = document.getElementById('naturalnessBtn');
+      return Boolean(document.getElementById('settingsDialog').open && button && getComputedStyle(button).display !== 'none' && button.getClientRects().length);
+    })()`, Boolean, 'packaged Naturalness settings entry');
+    await evaluate(cdp, `(() => {
+      window.__naturalnessRequests = [];
+      window.__naturalnessOriginalFetch = window.fetch;
+      window.fetch = function(input, options = {}) {
+        window.__naturalnessRequests.push({ url: String(input && input.url || input), method: options.method || 'GET' });
+        return window.__naturalnessOriginalFetch.apply(this, arguments);
+      };
+      window.__naturalnessDownloads = 0;
+      window.__naturalnessExport = null;
+      window.__naturalnessOriginalCreateUrl = URL.createObjectURL;
+      URL.createObjectURL = function(blob) {
+        window.__naturalnessDownloads++;
+        window.__naturalnessExport = blob.text();
+        return window.__naturalnessOriginalCreateUrl.call(this, blob);
+      };
+      document.getElementById('naturalnessBtn').click();
+      return true;
+    })()`);
+    await waitForValue(cdp, "document.querySelector('.naturalness-dialog [role=status]')?.textContent || ''",
+      value => value.includes('Snapshot loaded'), 'packaged Naturalness snapshot');
+    const naturalnessOpened = await evaluate(cdp, `(() => {
+      const dialog = document.querySelector('.naturalness-dialog');
+      return { open: dialog.open, settingsClosed: !document.getElementById('settingsDialog').open,
+        warnings: dialog.textContent.includes('CURRENT surviving'), score: dialog.textContent.includes('Visible current score: 1'),
+        split: dialog.textContent.includes('up 3, down 3'), age: dialog.textContent.includes('Item age (hours)'),
+        byCommunity: dialog.textContent.includes('Distributions by community'), byContent: dialog.textContent.includes('Distributions by content type'),
+        scriptSafe: !dialog.querySelector('script'), downloads: window.__naturalnessDownloads,
+        secretSafe: !dialog.textContent.includes('naturalness-private-fixture') && !dialog.textContent.includes('PRIVATE_NATURALNESS') };
+    })()`);
+    if (!naturalnessOpened.open || !naturalnessOpened.settingsClosed || !naturalnessOpened.warnings || !naturalnessOpened.score ||
+        !naturalnessOpened.split || !naturalnessOpened.age || !naturalnessOpened.byCommunity || !naturalnessOpened.byContent ||
+        !naturalnessOpened.scriptSafe || !naturalnessOpened.secretSafe || naturalnessOpened.downloads !== 0) {
+      throw new Error('Packaged Naturalness snapshot rendering failed: ' + JSON.stringify(naturalnessOpened));
+    }
+    for (const hours of [168, 720]) {
+      await evaluate(cdp, `(() => {
+        const select = document.querySelector('.naturalness-dialog select[aria-label="Observation window"]');
+        select.value = '${hours}'; select.dispatchEvent(new Event('change', { bubbles: true })); return true;
+      })()`);
+      await waitForValue(cdp, "document.querySelector('.naturalness-dialog [role=status]')?.textContent || ''",
+        value => value.includes('Snapshot loaded'), 'packaged Naturalness window ' + hours);
+    }
+    await evaluate(cdp, `(() => {
+      [...document.querySelectorAll('.naturalness-dialog button')].find(button => button.textContent === 'Download JSON').click(); return true;
+    })()`);
+    const naturalnessExport = await evaluate(cdp, 'window.__naturalnessExport.then(text => JSON.parse(text))');
+    if (naturalnessExport.window.hours !== 720 || naturalnessExport.items[0].total !== 6 || naturalnessExport.items[0].score !== 1 ||
+        JSON.stringify(naturalnessExport).includes('PRIVATE_NATURALNESS') || JSON.stringify(naturalnessExport).includes('naturalness-private-fixture')) {
+      throw new Error('Packaged Naturalness explicit export is not the bounded safe snapshot');
+    }
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    const naturalnessClosed = await waitForValue(cdp, `(() => ({
+      closed: !document.querySelector('.naturalness-dialog').open,
+      focused: document.activeElement === document.getElementById('settingsBtn')
+    }))()`, value => value && value.closed && value.focused, 'packaged Naturalness escape focus return');
+    await evaluate(cdp, "document.getElementById('settingsBtn').click(); true");
+    await waitForValue(cdp, "document.getElementById('settingsDialog').open", Boolean, 'Naturalness reopen settings');
+    await evaluate(cdp, "document.getElementById('naturalnessBtn').click(); true");
+    await waitForValue(cdp, "document.querySelector('.naturalness-dialog [role=status]')?.textContent || ''",
+      value => value.includes('Snapshot loaded'), 'reopened packaged Naturalness snapshot');
+    await evaluate(cdp, `(() => {
+      const toggle = document.getElementById('developerToolsToggle'); toggle.checked = false;
+      toggle.dispatchEvent(new Event('change', { bubbles: true })); return true;
+    })()`);
+    const naturalnessDisabled = await evaluate(cdp, `(() => ({
+      closed: !document.querySelector('.naturalness-dialog').open,
+      hidden: getComputedStyle(document.getElementById('naturalnessBtn')).display === 'none',
+      requests: window.__naturalnessRequests, downloads: window.__naturalnessDownloads
+    }))()`);
+    const evidenceRequests = naturalnessDisabled.requests.filter(row => row.url.startsWith('/api/naturalness?'));
+    if (!naturalnessDisabled.closed || !naturalnessDisabled.hidden || naturalnessDisabled.downloads !== 1 ||
+        evidenceRequests.length !== 4 || evidenceRequests.some(row => row.method !== 'GET') ||
+        naturalnessDisabled.requests.some(row => row.method !== 'GET' || /generate|simulate|vote|run-now/.test(row.url))) {
+      throw new Error('Packaged Naturalness read-only/gating contract failed: ' + JSON.stringify(naturalnessDisabled));
+    }
+    const evidenceFetches = serverOutput.join('').split('\n').filter(line => line.includes('[naturalness-fixture]'));
+    if (evidenceFetches.length !== 4 || evidenceFetches.some(line => !line.includes(' GET '))) throw new Error('Naturalness performed unexpected upstream evidence operations');
+    await evaluate(cdp, `(() => {
+      window.fetch = window.__naturalnessOriginalFetch; URL.createObjectURL = window.__naturalnessOriginalCreateUrl;
+      const toggle = document.getElementById('developerToolsToggle'); toggle.checked = true;
+      toggle.dispatchEvent(new Event('change', { bubbles: true }));
+      if (document.getElementById('settingsDialog').open) document.getElementById('settingsDialog').close();
+      return true;
+    })()`);
+    console.log('[packaged-runtime] Naturalness packaged visibility, rendering, windows, explicit safe export and read-only gating verified');
 
     await waitForValue(cdp, "document.querySelector('.workspace-group-toggle')?.textContent || ''",
       (v) => v.includes('Fixture import'), 'packaged group sidebar');
@@ -758,7 +875,7 @@ globalThis.fetch = async (input, options = {}) => {
     });
     if (shippedSecret) throw new Error('Packaged application assets contained the FetchLayer key');
 
-    console.log('packaged desktop importer, Burst, groups and forecast runtime: 90 checks passed');
+    console.log('packaged desktop importer, Burst, groups and forecast runtime: 90 existing checks passed; Naturalness browser checks passed');
     console.log(JSON.stringify({ burst, visible, opened, boundedStaging, nextStep, missingKey, configuredState, connectionTest, browserExposure, retrieved }));
   } catch (error) {
     if (serverOutput.length) console.error('Packaged server output:\n' + serverOutput.join(''));
