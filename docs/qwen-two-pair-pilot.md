@@ -25,8 +25,11 @@ production Ollama adapter supplies its usual thread, residency and timeout
 options. It exposes no seed control. Arm order is control/treatment for case 1,
 then treatment/control for case 2. No repair or retry is permitted.
 
-`run` waits for an idle desktop and at least twelve minutes to the next natural
-deadline. During inference it polls actual desktop model activity and deadlines
+`run` waits for an idle desktop and at least five minutes to the next natural
+deadline for inputs below 6,000 characters, or twelve minutes for larger inputs.
+These are conservative entry estimates from recent natural turn timing, not
+reservations or changes to model timeout settings. During inference it polls
+actual desktop model activity and deadlines
 every 200 ms, cancelling only its own request if natural work starts, a deadline
 is within three seconds, or status becomes unavailable. An interrupted call
 consumes the budget and stops the pilot. This is cooperative cancellation, not

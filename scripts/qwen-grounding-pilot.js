@@ -134,11 +134,10 @@ function nextNaturalAt(data) {
     return Object.entries(s || {}).filter(([k, v]) => k.startsWith('next') && Number(v) > 0).map(([,v]) => Number(v));
   }));
 }
-async function idleWindow() {
+async function idleWindow(minimumMinutes) {
   if ((await desktopStatus()).busy) return false;
-  // Recent natural decisions typically take 4-9 minutes. Use a 12-minute idle
-  // window, then abort OUR request before any natural deadline, never delay it.
-  return nextNaturalAt(read(path.join(production, 'profiles.json'))) - Date.now() > 12 * 60000;
+  // Size-based entry margin only; abort OUR request before any natural deadline.
+  return nextNaturalAt(read(path.join(production, 'profiles.json'))) - Date.now() > minimumMinutes * 60000;
 }
 async function guardedTransport(transport, body, options, status = modelStatus, pollMs = 200) {
   if ((await status()).busy) throw Object.assign(new Error('Natural work has priority.'), { code: 'PILOT_YIELD' });
@@ -184,11 +183,12 @@ async function runLocked() {
     const prior = ledger.calls.find(c => c.caseIndex === caseIndex && c.arm === arm);
     if (prior) { assert.equal(prior.status, 'completed', 'Prior ambiguous/failed call: stop, never retry.'); continue; }
     assert(ledger.calls.length < 4);
-    while (!await idleWindow()) {
+    const c = freeze(cases[caseIndex]);
+    const minimumMinutes = c.system.length + c[arm].length < 6000 ? 5 : 12;
+    while (!await idleWindow(minimumMinutes)) {
       console.log(new Date().toISOString() + ' waiting: natural work/deadlines take priority');
       await new Promise(resolve => setTimeout(resolve, 30000));
     }
-    const c = freeze(cases[caseIndex]);
     const record = { caseIndex, bot: c.bot, arm, status: 'started', startedAt: Date.now(), promptHash: sha(c[arm]) };
     ledger.calls.push(record); save('results.json', ledger);
     console.log('START ' + JSON.stringify(record));
