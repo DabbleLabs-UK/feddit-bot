@@ -139,6 +139,13 @@ async function idleWindow(minimumMinutes) {
   // Size-based entry margin only; abort OUR request before any natural deadline.
   return nextNaturalAt(read(path.join(production, 'profiles.json'))) - Date.now() > minimumMinutes * 60000;
 }
+function entryMinutes(c, last, caseIndex, now = Date.now()) {
+  // A just-completed paired arm has the same system and almost all input in
+  // Ollama's prefix cache. Do not keep this allowance after an idle wait.
+  const warmPair = last && last.caseIndex === caseIndex && last.status === 'completed' &&
+    now - last.finishedAt >= 0 && now - last.finishedAt < 60000;
+  return c.system.length + c.control.length < 6000 || warmPair ? 5 : 12;
+}
 async function guardedTransport(transport, body, options, status = modelStatus, pollMs = 200) {
   if ((await status()).busy) throw Object.assign(new Error('Natural work has priority.'), { code: 'PILOT_YIELD' });
   options.signal.throwIfAborted();
@@ -184,8 +191,7 @@ async function runLocked() {
     if (prior) { assert.equal(prior.status, 'completed', 'Prior ambiguous/failed call: stop, never retry.'); continue; }
     assert(ledger.calls.length < 4);
     const c = freeze(cases[caseIndex]);
-    const minimumMinutes = c.system.length + c[arm].length < 6000 ? 5 : 12;
-    while (!await idleWindow(minimumMinutes)) {
+    while (!await idleWindow(entryMinutes(c, ledger.calls.at(-1), caseIndex))) {
       console.log(new Date().toISOString() + ' waiting: natural work/deadlines take priority');
       await new Promise(resolve => setTimeout(resolve, 30000));
     }
@@ -208,7 +214,7 @@ async function runLocked() {
   }
 }
 
-module.exports = { prompts, snapshotScheduler, nextNaturalAt, guardedTransport, freeze, exclusiveRunLock };
+module.exports = { prompts, snapshotScheduler, nextNaturalAt, guardedTransport, freeze, exclusiveRunLock, entryMinutes };
 if (require.main === module) {
   const command = process.argv[2];
   Promise.resolve().then(() => {

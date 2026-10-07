@@ -27,6 +27,9 @@ then treatment/control for case 2. No repair or retry is permitted.
 
 `run` waits for an idle desktop and at least five minutes to the next natural
 deadline for inputs below 6,000 characters, or twelve minutes for larger inputs.
+The second arm may use the five-minute margin for sixty seconds immediately
+after its paired arm completes, while the shared prefix is warm. This allowance
+expires during waiting and never changes the natural-deadline cancellation.
 These are conservative entry estimates from recent natural turn timing, not
 reservations or changes to model timeout settings. During inference it polls
 actual desktop model activity and deadlines

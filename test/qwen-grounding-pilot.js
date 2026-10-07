@@ -2,7 +2,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { prompts, freeze, guardedTransport, nextNaturalAt, exclusiveRunLock } = require('../scripts/qwen-grounding-pilot');
+const { prompts, freeze, guardedTransport, nextNaturalAt, exclusiveRunLock, entryMinutes } = require('../scripts/qwen-grounding-pilot');
 const actions = require('../lib/action-candidates');
 async function main() {
   const snapshot = freeze({ candidates: [], voteAllowance: { remaining: 12 }, voteCandidates: [
@@ -38,11 +38,16 @@ async function main() {
   }, {}, { signal: new AbortController().signal }, async () => { if (++probes > 3) throw new Error('offline'); return { busy: false }; }, 2), { code: 'PILOT_YIELD' });
   assert.equal(await guardedTransport(async () => 'result', {}, { signal: new AbortController().signal }, async () => ({ busy: false })), 'result');
   assert.equal(nextNaturalAt({ settings: {}, profiles: [{ enabled: true, sched: { nextVoteAt: 500 } }, { enabled: false, sched: { nextPostAt: 100 } }] }), 500);
+  const large = { system: '', control: 'x'.repeat(14000) };
+  assert.equal(entryMinutes(large, null, 1, 100000), 12);
+  assert.equal(entryMinutes(large, { caseIndex: 1, status: 'completed', finishedAt: 99999 }, 1, 100000), 5);
+  assert.equal(entryMinutes(large, { caseIndex: 0, status: 'completed', finishedAt: 99999 }, 1, 100000), 12);
+  assert.equal(entryMinutes(large, { caseIndex: 1, status: 'completed', finishedAt: 1 }, 1, 100000), 12);
   const source = fs.readFileSync(path.join(__dirname, '../scripts/qwen-grounding-pilot.js'), 'utf8');
   assert(source.includes("'artifacts', 'qwen-two-pair'"));
   assert(source.includes('ledger.calls.length < 4'));
   assert(source.includes('Prior ambiguous/failed call: stop, never retry.'));
   assert(!/store\.(?:update|record|save)|feddit\.(?:vote|submit|register|comment)\(/.test(source));
-  console.log('Qwen pilot: 20 checks passed; mocked transport only, zero model calls.');
+  console.log('Qwen pilot: 24 checks passed; mocked transport only, zero model calls.');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
