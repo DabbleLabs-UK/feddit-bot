@@ -26,11 +26,14 @@ options. It exposes no seed control. Arm order is control/treatment for case 1,
 then treatment/control for case 2. No repair or retry is permitted.
 
 `run` waits for an idle desktop and at least five minutes to the next natural
-deadline for inputs below 6,000 characters, or twelve minutes for larger inputs.
-The second arm may use the five-minute margin for sixty seconds immediately
+deadline for inputs below 6,000 characters, or six minutes for larger inputs.
+The second arm may use the two-minute margin for sixty seconds immediately
 after its paired arm completes, while the shared prefix is warm. This allowance
 expires during waiting and never changes the natural-deadline cancellation.
-These are conservative entry estimates from recent natural turn timing, not
+The initial larger/warm margins were twelve/five minutes. After pair 1 took
+85/44 seconds for 1016/1036 input tokens, they were reduced using measured
+throughput only, without changing any prompt, model setting or case. These
+are entry estimates, not
 reservations or changes to model timeout settings. During inference it polls
 actual desktop model activity and deadlines
 every 200 ms, cancelling only its own request if natural work starts, a deadline

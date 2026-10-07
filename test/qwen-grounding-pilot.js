@@ -39,10 +39,10 @@ async function main() {
   assert.equal(await guardedTransport(async () => 'result', {}, { signal: new AbortController().signal }, async () => ({ busy: false })), 'result');
   assert.equal(nextNaturalAt({ settings: {}, profiles: [{ enabled: true, sched: { nextVoteAt: 500 } }, { enabled: false, sched: { nextPostAt: 100 } }] }), 500);
   const large = { system: '', control: 'x'.repeat(14000) };
-  assert.equal(entryMinutes(large, null, 1, 100000), 12);
-  assert.equal(entryMinutes(large, { caseIndex: 1, status: 'completed', finishedAt: 99999 }, 1, 100000), 5);
-  assert.equal(entryMinutes(large, { caseIndex: 0, status: 'completed', finishedAt: 99999 }, 1, 100000), 12);
-  assert.equal(entryMinutes(large, { caseIndex: 1, status: 'completed', finishedAt: 1 }, 1, 100000), 12);
+  assert.equal(entryMinutes(large, null, 1, 100000), 6);
+  assert.equal(entryMinutes(large, { caseIndex: 1, status: 'completed', finishedAt: 99999 }, 1, 100000), 2);
+  assert.equal(entryMinutes(large, { caseIndex: 0, status: 'completed', finishedAt: 99999 }, 1, 100000), 6);
+  assert.equal(entryMinutes(large, { caseIndex: 1, status: 'completed', finishedAt: 1 }, 1, 100000), 6);
   const source = fs.readFileSync(path.join(__dirname, '../scripts/qwen-grounding-pilot.js'), 'utf8');
   assert(source.includes("'artifacts', 'qwen-two-pair'"));
   assert(source.includes('ledger.calls.length < 4'));

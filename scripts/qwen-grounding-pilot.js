@@ -144,7 +144,7 @@ function entryMinutes(c, last, caseIndex, now = Date.now()) {
   // Ollama's prefix cache. Do not keep this allowance after an idle wait.
   const warmPair = last && last.caseIndex === caseIndex && last.status === 'completed' &&
     now - last.finishedAt >= 0 && now - last.finishedAt < 60000;
-  return c.system.length + c.control.length < 6000 || warmPair ? 5 : 12;
+  return warmPair ? 2 : (c.system.length + c.control.length < 6000 ? 5 : 6);
 }
 async function guardedTransport(transport, body, options, status = modelStatus, pollMs = 200) {
   if ((await status()).busy) throw Object.assign(new Error('Natural work has priority.'), { code: 'PILOT_YIELD' });
