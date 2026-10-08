@@ -7,7 +7,8 @@
 
   function create({ document, api, getDeveloperTools, getPlacement, getPopulationAdmin, toast }) {
     let dialog = null, trigger = null, snapshot = null, visible = false, request = 0;
-    let windowSelect, filterSelect, body, exportButton, status;
+    let windowSelect, filterSelect, body, exportButton, status, reviewButton;
+    let reviewing = false, loading = false, loadedHours = null;
     const allowed = () => !!getDeveloperTools() && (getPlacement() !== 'hosted' || !!getPopulationAdmin());
     const node = (tag, content, className) => {
       const element = document.createElement(tag);
@@ -21,6 +22,9 @@
       if (!visible) return;
       visible = false;
       request++;
+      loading = false;
+      loadedHours = null;
+      if (reviewButton) reviewButton.disabled = true;
       if (dialog) {
         if (dialog.open && typeof dialog.close === 'function') dialog.close();
         dialog.hidden = true;
@@ -61,9 +65,94 @@
       detail('Outcome-only chronology for this item (exposure unavailable)', snapshot.overview.outcomeOnly.rows.filter(row => row.key === item.key), details);
       parent.appendChild(details);
     }
+    function publicExample(example, parent) {
+      const block = node('div');
+      const path = String(example.path || '');
+      if (/^\/f\/[a-zA-Z0-9_%~-]+\/comments\/[1-9][0-9]*(?:#comment-[1-9][0-9]*)?$/.test(path)) {
+        const link = node('a', example.key || 'Inspect public example');
+        link.href = 'https://feddit.dabblelabs.uk' + path;
+        link.target = '_blank'; link.rel = 'noopener noreferrer'; block.appendChild(link);
+      } else block.appendChild(node('strong', example.key || 'Example'));
+      block.appendChild(node('p', [example.author, example.community, example.title, example.text || example.excerpt].filter(Boolean).join(' | ').slice(0, 1000)));
+      parent.appendChild(block);
+    }
+    function renderReview(review, parent) {
+      const panel = node('details');
+      panel.appendChild(node('summary', `${review.createdAt || 'Unknown time'} | ${review.provider || ''} ${review.model || ''} | ${review.status}`));
+      panel.appendChild(node('p', 'Research findings and proposals only. Nothing is applied to bots.'));
+      if (review.error) panel.appendChild(node('p', typeof review.error === 'string' ? review.error : review.error.message || 'Review failed. No automatic retry.'));
+      for (const [index, finding] of (review.result?.patterns || []).entries()) {
+        const block = node('section');
+        block.appendChild(node('h4', `Finding ${index + 1} | confidence ${finding.confidence}`));
+        for (const [label, key] of [['Observed fact', 'observedFact'], ['Inference', 'inference'], ['Causal hypothesis', 'hypothesis']]) block.appendChild(node('p', label + ': ' + (finding[key] || 'Unavailable')));
+        block.appendChild(node('p', 'Alternative explanations: ' + (finding.alternatives || []).join('; ')));
+        block.appendChild(node('p', 'More observation needed: ' + (finding.needsMoreObservation ? 'yes' : 'no')));
+        detail('Evidence references', finding.evidenceIds || [], block);
+        panel.appendChild(block);
+      }
+      if (review.result?.proposal) detail('ONE proposed next intervention - requires human approval', review.result.proposal, panel);
+      detail('Frozen evidence packet and coverage', review.packet || {}, panel);
+      parent.appendChild(panel);
+    }
+    function renderEcology() {
+      const ecology = snapshot.ecology;
+      const overview = section('Whole ecology overview');
+      if (!ecology) { overview.appendChild(node('p', 'Whole-ecology evidence is unavailable in this snapshot.')); return; }
+      overview.appendChild(node('p', `Evidence window: ${ecology.window?.since || 'unknown'} to ${ecology.window?.until || 'unknown'}. Public sample: ${value(ecology.overview?.posts)} posts, ${value(ecology.overview?.comments)} replies, ${value(ecology.overview?.activeBots)} participating bots.`));
+      overview.appendChild(node('p', 'Descriptive diagnostics, not an overall naturalness score. Lexical overlap and timing flags are leads for inspection, not proof of motives or context mistakes.'));
+      const warnings = node('ul');
+      for (const warning of ecology.coverage?.warnings || []) warnings.appendChild(node('li', warning));
+      overview.appendChild(warnings);
+      detail('Evidence window, sampling and coverage gaps', ecology.coverage, overview);
+      const anomalies = section('Anomalies to inspect', overview);
+      if (!(ecology.anomalies || []).length) anomalies.appendChild(node('p', 'No quantitative flag crossed its minimum sample threshold. This does not prove naturalness.'));
+      for (const anomaly of (ecology.anomalies || []).slice(0, 20)) {
+        const block = node('details');
+        block.appendChild(node('summary', anomaly.label || anomaly.code));
+        detail('Measured observation and descriptive threshold', { sampleSize: anomaly.sampleSize, minimumSample: anomaly.minimumSample, value: anomaly.value }, block);
+        for (const example of (anomaly.examples || []).slice(0, 3)) publicExample(example, block);
+        anomalies.appendChild(block);
+      }
+      for (const [title, key] of [['Posting and activity concentration', 'overview'], ['Replies and conversation structure', 'replies'], ['Recurring public interaction partners', 'interactions'], ['Timing and quiet periods', 'timing'], ['Repeated language and topic proxies', 'language'], ['Individual behavioural summaries', 'bots'], ['Voting: explicit decisions versus unavailable results', 'voting']]) detail(title, ecology[key], overview);
+      const examples = node('details'); examples.appendChild(node('summary', 'Inspect representative public examples'));
+      for (const example of ecology.examples || []) publicExample(example, examples);
+      overview.appendChild(examples);
+      const reviewer = section('Strong-model review - manual only', overview);
+      const plan = snapshot.reviewer || {};
+      reviewer.appendChild(node('p', plan.available ? `Reviewer: ${plan.provider} / ${plan.model}. Automatic subscription preference; separate from bot runtime models.` : 'No connected high-capability subscription reviewer is available. No local runtime or PAYG fallback will be used.'));
+      reviewer.appendChild(node('p', 'Review current ecology sends a bounded packet of public examples and derived diagnostics to that provider. It stores concise findings, not hidden reasoning. Recommendations require a separate approval before any change.'));
+      reviewButton = node('button', 'Review current ecology'); reviewButton.type = 'button';
+      reviewButton.disabled = reviewing || loading || loadedHours !== Number(windowSelect.value) || !plan.available || (snapshot.reviews || []).some(r => r.status === 'pending');
+      reviewButton.addEventListener('click', runReview); reviewer.appendChild(reviewButton);
+      const history = section('Previous review history and proposed next intervention', reviewer);
+      if (!(snapshot.reviews || []).length) history.appendChild(node('p', 'No saved reviews. Refreshing or reopening never starts a model call.'));
+      for (const review of snapshot.reviews || []) renderReview(review, history);
+    }
+    async function runReview() {
+      if (!allowed() || !visible || reviewing || loading || loadedHours === null || loadedHours !== Number(windowSelect.value) ||
+          !snapshot?.reviewer?.available || (snapshot.reviews || []).some(r => r.status === 'pending')) return;
+      const reviewHours = loadedHours;
+      reviewing = true; if (reviewButton) reviewButton.disabled = true;
+      status.textContent = 'Review running. One bounded subscription request; no bot changes or automatic retries.';
+      try {
+        const result = await api('/api/naturalness/reviews', { method: 'POST', body: { hours: reviewHours, confirm: true } });
+        if (visible && allowed()) {
+          await refresh();
+          if (visible && allowed()) status.textContent = result?.review?.status === 'completed'
+            ? 'Review completed for the ' + reviewHours + '-hour window. Findings are saved; no bot changes were applied.'
+            : 'Review failed or was interrupted for the ' + reviewHours + '-hour window. Inspect saved history before explicitly trying again. No automatic retry.';
+        }
+      } catch {
+        if (visible) status.textContent = 'Review did not complete. Refresh to inspect saved history before explicitly trying again. No automatic retry.';
+      } finally {
+        reviewing = false;
+        if (visible && allowed() && snapshot) render();
+      }
+    }
     function render() {
       if (!snapshot || !visible) return;
       body.replaceChildren();
+      renderEcology();
       const coverage = section('Coverage and interpretation');
       coverage.className = 'naturalness-warnings';
       const warnings = node('ul');
@@ -108,6 +197,10 @@
       if (!visible) return;
       if (!allowed()) { close(); return; }
       const currentRequest = ++request;
+      const requestedHours = Number(windowSelect.value);
+      loading = true;
+      loadedHours = null;
+      if (reviewButton) reviewButton.disabled = true;
       status.textContent = 'Loading bounded diagnostic snapshot...';
       exportButton.disabled = true;
       try {
@@ -115,13 +208,18 @@
         if (!visible || currentRequest !== request) return;
         if (!allowed()) { close(); return; }
         if (!result || result.schemaVersion !== 1 || !Array.isArray(result.items) || !result.coverage || !result.overview || !result.agreement || !result.exposure) throw new Error('Snapshot is unavailable or has an unsupported format.');
+        if (Number(result.window?.hours) !== requestedHours) throw new Error('Snapshot does not match the selected observation window.');
         snapshot = result;
+        loadedHours = requestedHours;
+        loading = false;
         render();
         status.textContent = 'Snapshot loaded. Refresh is manual.';
         exportButton.disabled = false;
       } catch (error) {
         if (!visible || currentRequest !== request) return;
         snapshot = null;
+        loadedHours = null;
+        loading = false;
         body.replaceChildren();
         status.textContent = 'Unable to load the Naturalness Lab snapshot.';
         if (toast) toast('Unable to load the Naturalness Lab snapshot.');
@@ -148,7 +246,7 @@
       exportButton = node('button', 'Download JSON'); exportButton.type = 'button'; exportButton.disabled = true;
       exportButton.addEventListener('click', () => {
         if (!allowed()) { close(); return; }
-        if (!snapshot || !visible) return;
+        if (!snapshot || !visible || loading || loadedHours !== Number(windowSelect.value)) return;
         const view = document.defaultView;
         const url = view.URL.createObjectURL(new view.Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' }));
         const link = node('a'); link.href = url; link.download = `naturalness-${snapshot.window.hours}h.json`; document.body.appendChild(link); link.click(); link.remove(); view.URL.revokeObjectURL(url);

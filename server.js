@@ -26,6 +26,9 @@ const activityForecast = require('./lib/activity-forecast');
 const { createEvidenceStore } = require('./lib/naturalness-evidence');
 const naturalnessMetrics = require('./lib/naturalness-metrics');
 const naturalnessObserver = require('./lib/naturalness-observer');
+const { createEcologySource } = require('./lib/naturalness-ecology-source');
+const { buildEcology } = require('./lib/naturalness-ecology-metrics');
+const { createReviewer } = require('./lib/naturalness-review');
 const importedDefaults = require('./lib/imported-profile-defaults');
 const { createFileCultureWorkspaceStore } = require('./lib/culture-importer/workspace-store');
 const profilePack = require('./lib/profile-pack');
@@ -66,6 +69,35 @@ const naturalness = naturalnessObserver.createObserver({
 });
 providers.configureDellQueue(jobQueue);
 providers.configureRuntime({ secrets, placement: PLACEMENT });
+const ecologySource = createEcologySource({ request: feddit.request });
+const ecologyReviewer = createReviewer({
+  file: path.join(store.DATA_DIR, 'naturalness-reviews.json'),
+  providerStatuses: () => Promise.all(Object.values(providers.descriptors)
+    .filter((descriptor) => descriptor.category === 'subscription').map((descriptor) => providers.status(descriptor.id))),
+  generate: providers.generate,
+});
+const ecologySnapshots = new Map();
+function ecologyScope(owner) { return PLACEMENT === 'hosted' ? 'owner:' + owner.id : 'local'; }
+async function naturalnessSnapshot(hours, owner) {
+  const selectedHours = naturalnessObserver.windowHours(hours);
+  const key = ecologyScope(owner) + ':' + selectedHours;
+  if (ecologySnapshots.has(key)) return ecologySnapshots.get(key);
+  const run = async () => {
+    const profiles = store.listProfiles().filter((profile) => canManageProfile(profile, owner));
+    const snapshot = await naturalness.snapshot({ hours: selectedHours, profiles });
+    const until = snapshot.generatedAt, since = new Date(Date.parse(until) - selectedHours * 3600000).toISOString();
+    const source = await ecologySource.snapshot({ since, until, votingSnapshot: snapshot });
+    const allowed = new Set(profiles.map((profile) => profile.id));
+    const events = evidenceStore.list({ since: Date.parse(since) }).filter((event) => allowed.has(event.profileId));
+    snapshot.ecology = buildEcology({ ...source, since, until, events, votingSnapshot: snapshot });
+    snapshot.reviewer = await ecologyReviewer.status();
+    snapshot.reviews = ecologyReviewer.list(ecologyScope(owner));
+    return snapshot;
+  };
+  const promise = run().finally(() => ecologySnapshots.delete(key));
+  ecologySnapshots.set(key, promise);
+  return promise;
+}
 const hostedPreviewTasks = new Map();
 const hostedSimulationTasks = new Map();
 const ownerStore = createOwnerStore({ file: path.join(store.DATA_DIR, 'owners.json') });
@@ -855,10 +887,30 @@ async function handleApi(req, res, urlPath, query) {
       return sendJson(res, 404, { error: 'Not found' });
     }
     const query = new URL(req.url, 'http://localhost').searchParams;
-    return sendJson(res, 200, await naturalness.snapshot({
-      hours: query.get('hours'),
-      profiles: store.listProfiles().filter((profile) => canManageProfile(profile, requestOwner)),
-    }));
+    return sendJson(res, 200, await naturalnessSnapshot(query.get('hours'), requestOwner));
+  }
+  if (urlPath === '/api/naturalness/reviewer' || urlPath === '/api/naturalness/reviews') {
+    if (!naturalnessObserver.authorised(PLACEMENT, isPopulationAdmin(requestOwner))) return sendJson(res, 404, { error: 'Not found' });
+    const scope = ecologyScope(requestOwner);
+    if (method === 'GET' && urlPath.endsWith('/reviewer')) return sendJson(res, 200, await ecologyReviewer.status());
+    if (method === 'GET' && urlPath.endsWith('/reviews')) return sendJson(res, 200, { reviews: ecologyReviewer.list(scope) });
+    if (method !== 'POST' || !urlPath.endsWith('/reviews')) return sendJson(res, 404, { error: 'Not found' });
+    // Browser requests must originate at this private workspace. Developer
+    // visibility alone is never authorization, and no caller supplies prompts.
+    if (req.headers['sec-fetch-site'] === 'cross-site' || (req.headers.origin && !['http://' + req.headers.host, 'https://' + req.headers.host].includes(req.headers.origin))) {
+      return sendJson(res, 403, { error: 'Open the review from this private workspace.' });
+    }
+    if (!String(req.headers['content-type'] || '').startsWith('application/json')) return sendJson(res, 415, { error: 'Use the explicit JSON review action.' });
+    try {
+      const body = await readBody(req);
+      if (body.confirm !== true) return sendJson(res, 400, { error: 'An explicit review confirmation is required.' });
+      const snapshot = await naturalnessSnapshot(body.hours, requestOwner);
+      const review = await ecologyReviewer.review({ scope, ecology: snapshot.ecology, votingSnapshot: snapshot });
+      return sendJson(res, 200, { review });
+    } catch (error) {
+      const code = error.code === 'BUSY' ? 'REVIEW_BUSY' : error.code === 'UNAVAILABLE' ? 'REVIEW_UNAVAILABLE' : 'REVIEW_FAILED';
+      return sendJson(res, code === 'REVIEW_BUSY' ? 409 : 503, { code, error: code === 'REVIEW_BUSY' ? 'A review is already running. No second call was made.' : 'Review unavailable or failed. Check provider readiness and saved review history. No automatic retry.' });
+    }
   }
 
   // The private culture importer runs in the desktop Developer-tools surface,
