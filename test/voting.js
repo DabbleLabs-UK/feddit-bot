@@ -42,7 +42,9 @@ assert.equal(decisions.every((item) => item.status === 'decided'), true);
 const safe = voting.parseDecisions({ votes: [
   { id: 'V1', direction: 'up', reason: 'nice' },
 ] }, slate);
-assert.deepEqual(safe.map((item) => item.direction), ['nil', 'nil'], 'bad and missing decisions safely become nil');
+assert.deepEqual(safe.map((item) => item.direction), [null, null], 'bad and missing decisions remain unresolved');
+assert.deepEqual(safe.map((item) => item.decisionKind), ['invalid', 'missing']);
+assert.deepEqual(voting.record({ considered: ['comment:22'] }, safe).considered, ['comment:22']);
 
 const duplicates = voting.parseDecisions({ votes: Array.from({ length: 20 }, (_, index) => ({
   id: 'V1',
@@ -51,11 +53,10 @@ const duplicates = voting.parseDecisions({ votes: Array.from({ length: 20 }, (_,
     ? 'The first offered decision and reason must be retained.'
     : 'A later duplicate must not replace the first decision.',
 })) }, slate);
-assert.equal(duplicates.filter((item) => item.direction !== 'nil').length, 1,
-  'twenty copies of one vote identifier produce one processed vote');
-assert.equal(duplicates[0].direction, 'up', 'the first duplicate occurrence keeps its direction');
-assert.equal(duplicates[0].reason, 'The first offered decision and reason must be retained.',
-  'the retained direction keeps the matching first reason');
+assert.equal(duplicates.filter((item) => item.decisionKind === 'explicit').length, 0,
+  'conflicting duplicate decisions cannot be guessed');
+assert.equal(duplicates[0].status, 'unresolved');
+assert.equal(duplicates[0].reason, '', 'no invented direction/reason pair');
 
 const mixed = voting.parseDecisions({ votes: [
   { id: 'V2', direction: 'down', reason: 'The factual claim is presented without supporting evidence.' },
@@ -63,10 +64,10 @@ const mixed = voting.parseDecisions({ votes: [
   { id: 'V2', direction: 'up', reason: 'A duplicate must not overwrite the first direction.' },
   { id: 'V1', direction: 'up', reason: 'The contribution is unusually clear and directly useful.' },
 ] }, slate);
-assert.deepEqual(mixed.map((item) => item.direction), ['up', 'down'],
-  'mixed duplicates and unknown IDs leave only unique offered decisions');
+assert.deepEqual(mixed.map((item) => item.direction), ['up', null],
+  'conflicting duplicates stay unresolved while an independent valid vote survives');
 assert.equal(mixed.length, slate.length, 'parsed vote decisions never exceed the offered slate');
-assert.equal(mixed[1].reason, 'The factual claim is presented without supporting evidence.',
+assert.equal(mixed[0].reason, 'The contribution is unusually clear and directly useful.',
   'vote reasons remain aligned with the retained decision');
 
 const recorded = voting.record({ considered: ['comment:22'] }, decisions);

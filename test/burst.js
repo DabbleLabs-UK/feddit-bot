@@ -2,6 +2,10 @@
 
 const assert = require('node:assert/strict');
 const burst = require('../lib/burst');
+// Historical durable-plan compatibility. Current version-2 vote correctness
+// and boundedness are exercised in decision-contract.js and durable-scheduler.
+const legacyPlan = (text, candidates, votes) => burst.parsePlan(text, candidates, votes,
+  { decisionContractVersion: 1 });
 
 let checks = 0;
 function eq(actual, expected, message) {
@@ -49,7 +53,7 @@ const voteCandidates = Array.from({ length: 8 }, (_, index) => ({
   label: 'Vote candidate ' + (index + 1),
   content: 'Visible vote candidate ' + (index + 1),
 }));
-let votePlan = burst.parsePlan(JSON.stringify({
+let votePlan = legacyPlan(JSON.stringify({
   actions: [{ candidate: 'C1', text: 'One reply.' }],
   votes: Array.from({ length: 20 }, (_, index) => ({
     id: 'V1', direction: 'up', reason: 'First reason remains aligned ' + index + '.',
@@ -59,7 +63,7 @@ eq(votePlan.votes.length, 1, 'twenty copies of one offered vote ID produce one p
 eq(votePlan.votes[0].reason, 'First reason remains aligned 0.',
   'the first duplicate vote decision and reason are retained');
 
-votePlan = burst.parsePlan(JSON.stringify({
+votePlan = legacyPlan(JSON.stringify({
   actions: [{ candidate: 'C1', text: 'One reply.' }],
   votes: [
     { id: 'V2', direction: 'down', reason: 'First V2 reason is retained.' },
@@ -77,7 +81,7 @@ eq(votePlan.votes.map((vote) => vote.reason), [
   'The V3 reason stays aligned.',
 ], 'retained vote reasons stay aligned with their first decisions');
 
-votePlan = burst.parsePlan(JSON.stringify({
+votePlan = legacyPlan(JSON.stringify({
   actions: [{ candidate: 'C1', text: 'One reply.' }],
   votes: [
     { id: 'V999', direction: 'up', reason: 'Unknown candidates cannot be voted on.' },
@@ -91,14 +95,14 @@ const normalVotes = voteCandidates.slice(0, 3).map((vote, index) => ({
   direction: index === 1 ? 'down' : 'up',
   reason: 'Normal unique reason ' + (index + 1) + ' remains unchanged.',
 }));
-votePlan = burst.parsePlan(JSON.stringify({
+votePlan = legacyPlan(JSON.stringify({
   actions: [{ candidate: 'C1', text: 'One reply.' }],
   votes: normalVotes,
 }), candidates, voteCandidates);
 eq(votePlan.votes.map((vote) => ({ id: vote.id, direction: vote.direction, reason: vote.reason })), normalVotes,
   'a normal unique vote list remains unchanged');
 
-votePlan = burst.parsePlan(JSON.stringify({
+votePlan = legacyPlan(JSON.stringify({
   actions: [{ candidate: 'C1', text: 'One reply.' }],
   votes: [
     ...voteCandidates.map((vote) => ({

@@ -445,7 +445,309 @@ function harness(options = {}) {
   };
 }
 
+function votingHarness(id, count) {
+  const voter = makeProfile(id, false);
+  Object.assign(voter, { canReply: true, canStartDiscussions: false, postsPerHour: 0, commentsPerHour: 1 });
+  Object.assign(voter.sched, { nextPostAt: null, nextCommentAt: 0 });
+  return harness({ profiles: [voter], feedPosts: Array.from({ length: count }, (_, index) => ({
+    id: 73 + index, feddit: 'general', author: 'carol', title: 'A visible item ' + index,
+    selftext: 'A specific public contribution worth considering.', created_utc: 9,
+  })) });
+}
+
 async function run() {
+  // Decision contract versions are frozen with the logical turn, not inferred
+  // from the latest parser when old generations resume after a restart.
+  for (const version of [undefined, 1]) {
+    for (const boundary of ['initial', 'repair', 'content']) {
+      const h = votingHarness('legacy-' + version + '-' + boundary, 1);
+      try {
+        h.profiles[0].voteState.considered = ['post:old-history'];
+        const initial = h.scheduler();
+        await initial.runTick();
+        await settle();
+        const turn = h.turnStore.activeForProfile(h.profiles[0].id);
+        const input = { ...turn.input };
+        if (version === undefined) delete input.decisionContractVersion;
+        else input.decisionContractVersion = version;
+        h.turnStore.update(turn.id, { input });
+        let runtime = { queue: h.queue, turnStore: h.turnStore, scheduler: initial };
+        if (boundary === 'initial') runtime = h.restartRuntime();
+        completeJob(runtime.queue, turn.generations[0].jobId,
+          boundary === 'repair' ? 'No recognizable decision.' : 'C1 because this item is worth answering.');
+        runtime.scheduler.reconcileDurableTurns();
+        await settle();
+        if (boundary === 'repair') {
+          runtime = h.restartRuntime();
+          const repair = runtime.turnStore.get(turn.id).generations[1];
+          completeJob(runtime.queue, repair.jobId, 'C1 because the repaired choice fits.');
+          runtime.scheduler.reconcileDurableTurns();
+          await settle();
+        }
+        if (boundary === 'content') runtime = h.restartRuntime();
+        const pending = runtime.turnStore.get(turn.id);
+        const expectedCalls = boundary === 'repair' ? 3 : 2;
+        eq(pending.generations.length, expectedCalls, 'legacy replay retains its generation sequence at ' + boundary);
+        completeJob(runtime.queue, pending.generations[expectedCalls - 1].jobId, 'A durable legacy reply.');
+        runtime.scheduler.reconcileDurableTurns();
+        await settle();
+        eq(runtime.turnStore.get(turn.id).status, 'completed', 'legacy token-choice replay completes at ' + boundary);
+        eq(h.profiles[0].voteState.considered, ['post:old-history', 'post:73'], 'legacy considered history is not reinterpreted');
+        eq(h.writes.filter((write) => write.type === 'vote').length, 0, 'legacy missing vote retains its original nil effect');
+        eq(h.writes.filter((write) => write.type === 'comment').length, 1, 'legacy reply reaches the mocked endpoint once');
+        h.restartRuntime().scheduler.reconcileDurableTurns();
+        await settle();
+        eq(h.writes.length, 1, 'legacy terminal restart cannot repeat effects');
+      } finally {
+        h.cleanup();
+      }
+    }
+  }
+
+  for (const unresolvedKind of ['missing', 'invalid']) {
+    const h = votingHarness('contract-v2-partial-votes-' + unresolvedKind, 3);
+    const voter = h.profiles[0];
+    try {
+      const initial = h.scheduler();
+      await initial.runTick();
+      await settle();
+      const turn = h.turnStore.activeForProfile(voter.id);
+      eq(turn.input.decisionContractVersion, 2, 'new turns freeze decision contract version two');
+      const slate = turn.checkpoints['opportunity-candidates'].voteCandidates;
+      eq(slate.length, 3, 'partial decision fixture respects the three-target H14 bound');
+      completeJob(h.queue, turn.generations[0].jobId, JSON.stringify({
+        choice: 'C1', reason: 'This concrete discussion is worth answering.', votes: [
+          { id: slate[0].id, direction: 'up', reason: 'The contribution is concrete and useful.' },
+          { id: slate[1].id, direction: 'nil', reason: 'I have no strong reaction to this contribution.' },
+          ...(unresolvedKind === 'invalid'
+            ? [{ id: slate[2].id, direction: 'sideways', reason: 'This is not a supported voting direction.' }]
+            : []),
+        ],
+      }));
+      const restarted = h.restartRuntime();
+      const content = await queueContentGeneration(restarted, turn.id);
+      eq(restarted.turnStore.get(turn.id).generations.length, 2, 'missing votes do not create an extra repair');
+      eq(h.writes.filter((write) => write.type === 'vote').length, 1, 'valid vote effect completes before content suspension');
+      const afterVote = h.restartRuntime();
+      completeJob(afterVote.queue, content.jobId, 'A valid reply with independent unresolved vote siblings.');
+      afterVote.scheduler.reconcileDurableTurns();
+      await settle();
+      const finished = afterVote.turnStore.get(turn.id);
+      eq(finished.status, 'completed', 'valid main action survives unresolved ancillary decisions');
+      eq(h.writes.filter((write) => write.type === 'vote').length, 1, 'only the valid positive vote reaches the endpoint');
+      eq(h.writes.filter((write) => write.type === 'comment').length, 1, 'valid reply executes once');
+      const key = (vote) => vote.targetType + ':' + vote.targetId;
+      eq(voter.voteState.considered, slate.slice(0, 2).map(key), 'only valid vote and explicit abstention become considered');
+      const unresolved = finished.checkpoints['opportunity-decision'].votes.filter((vote) => vote.status === 'unresolved');
+      eq(unresolved.map((vote) => vote.decisionKind), [unresolvedKind], 'technical vote classifications remain distinct');
+      ok(unresolved.every((vote) => vote.direction === null && vote.error && vote.error.length <= 500),
+        'unresolved votes have no invented direction and bounded diagnostics');
+      const after = h.restartRuntime();
+      after.scheduler.reconcileDurableTurns();
+      await after.scheduler.runTick();
+      await settle();
+      eq(queueJobs(h.queueFile).length, 2, 'restart creates no immediate retry or catch-up generation');
+      eq(h.writes.length, 2, 'restart never repeats accepted effects');
+      ok(voter.sched.nextCommentAt > h.now(), 'ordinary comment cadence advances');
+      h.advance(voter.sched.nextCommentAt - h.now() + 1);
+      await after.scheduler.runTick();
+      await settle();
+      const future = after.turnStore.activeForProfile(voter.id);
+      ok(future && future.id !== turn.id, 'later natural opportunity remains available');
+      const offeredAgain = future.checkpoints['opportunity-candidates'].voteCandidates.map(key);
+      eq(offeredAgain.sort(), slate.slice(2).map(key).sort(), 'unresolved targets remain eligible on the later natural opportunity');
+    } finally {
+      h.cleanup();
+    }
+  }
+
+  {
+    const h = votingHarness('contract-v2-pinned-votes', 2);
+    try {
+      const initial = h.scheduler();
+      await initial.runTick();
+      await settle();
+      const turn = h.turnStore.activeForProfile(h.profiles[0].id);
+      const slate = turn.checkpoints['opportunity-candidates'].voteCandidates;
+      completeJob(h.queue, turn.generations[0].jobId, JSON.stringify({
+        choice: 'UNKNOWN', reason: 'The primary choice is invalid.',
+        votes: [{ id: slate[0].id, direction: 'up', reason: 'The original valid reason must remain pinned.' }],
+      }));
+      initial.reconcileDurableTurns();
+      await settle();
+      const restarted = h.restartRuntime();
+      const repair = restarted.turnStore.get(turn.id).generations[1];
+      completeJob(restarted.queue, repair.jobId, JSON.stringify({
+        choice: 'C1', reason: 'The repaired primary choice is valid.', votes: [
+          { id: slate[0].id, direction: 'down', reason: 'This later contradiction must not replace the valid first vote.' },
+          { id: slate[1].id, direction: 'nil', reason: 'The missing vote is now an explicit abstention.' },
+        ],
+      }));
+      restarted.scheduler.reconcileDurableTurns();
+      await settle();
+      const content = restarted.turnStore.get(turn.id).generations[2];
+      completeJob(restarted.queue, content.jobId, 'A reply after one bounded primary repair.');
+      restarted.scheduler.reconcileDurableTurns();
+      await settle();
+      const finished = restarted.turnStore.get(turn.id);
+      const recordedVotes = h.profiles[0].activity.find((entry) => entry.kind === 'vote').votes;
+      eq(recordedVotes.map((vote) => vote.direction), ['up', 'nil'], 'repair fills unresolved votes without rerolling valid votes');
+      eq(recordedVotes[0].reason, 'The original valid reason must remain pinned.', 'repair retains the first valid reason');
+      eq(finished.generations.length, 3, 'restart retains exactly decision, repair and content');
+      eq(h.writes.filter((write) => write.type === 'vote').length, 1, 'pinned vote executes once');
+    } finally {
+      h.cleanup();
+    }
+  }
+
+  for (const explicitNil of [false, true]) {
+    const h = votingHarness('voting-only-unresolved-' + explicitNil, 1);
+    const voter = h.profiles[0];
+    Object.assign(voter, { canReply: false, canVote: true, commentsPerHour: 0, votesPerHour: 1 });
+    Object.assign(voter.sched, { nextCommentAt: null, nextVoteAt: 0 });
+    try {
+      const initial = h.scheduler();
+      await initial.runTick();
+      await settle();
+      const turn = h.turnStore.activeForProfile(voter.id);
+      const slate = turn.checkpoints['opportunity-candidates'].voteCandidates;
+      completeJob(h.queue, turn.generations[0].jobId, JSON.stringify({
+        choice: 'WAIT', reason: 'There is no primary publication in this voting-only turn.',
+        votes: explicitNil ? [{ id: slate[0].id, direction: 'nil', reason: 'This item does not provoke a voting reaction.' }] : [],
+      }));
+      const restarted = h.restartRuntime();
+      restarted.scheduler.reconcileDurableTurns();
+      await settle();
+      const finished = restarted.turnStore.get(turn.id);
+      eq(finished.result.action, 'vote', 'voting-only result remains a voting opportunity');
+      eq(finished.result.ok, explicitNil, 'only explicit abstention is a successful zero-action voting result');
+      eq(finished.result.waited, explicitNil, 'missing votes are not relabeled as a deliberate WAIT');
+      eq(voter.voteState.considered, explicitNil ? ['post:73'] : [], 'voting-only considered state excludes technical omissions');
+      eq(h.writes.length, 0, 'missing and nil votes cause no endpoint writes');
+      ok(voter.sched.nextVoteAt > h.now(), 'voting cadence advances for successful abstention and technical omission');
+      await restarted.scheduler.runTick();
+      await settle();
+      eq(queueJobs(h.queueFile).length, 1, 'unresolved voting-only components do not trigger immediate retries or repair');
+    } finally {
+      h.cleanup();
+    }
+  }
+
+  for (const simulation of [false, true]) {
+    const h = votingHarness('system-partial-vote-' + simulation, 2);
+    const voter = h.profiles[0];
+    Object.assign(voter, {
+      botOrigin: 'system', ownerId: null, dryRun: simulation, enabled: !simulation,
+      canReply: false, canVote: true, commentsPerHour: 0, votesPerHour: 1,
+      populationCadenceMode: 'custom',
+      populationSeed: { initiative: 'balanced', persistence: 'steady' },
+    });
+    Object.assign(voter.sched, { nextCommentAt: null, nextVoteAt: 0 });
+    voter.populationActivity = populationActivity.initialState(voter.populationSeed, { nowMs: h.now(), quantile: 0.5 });
+    const originalLiveSchedule = structuredClone(voter.sched);
+    try {
+      const initial = h.scheduler();
+      let turn;
+      if (simulation) {
+        const dueAt = initial.rehearsalNextAt(voter.id, h.now());
+        const started = await initial.runAcceleratedRehearsalOpportunity(voter.id, {
+          runId: 'partial-vote-rehearsal', virtualNowMs: Math.max(h.now(), dueAt),
+        });
+        await settle();
+        turn = h.turnStore.get(started.turnId);
+      } else {
+        await initial.runTick();
+        await settle();
+        turn = h.turnStore.activeForProfile(voter.id);
+      }
+      ok(turn, 'system voting opportunity creates one durable turn');
+      const slate = turn.checkpoints['opportunity-candidates'].voteCandidates;
+      eq(slate.length, 2, 'partial system voting fixture exposes two targets');
+      completeJob(h.queue, turn.generations[0].jobId, JSON.stringify({
+        choice: 'WAIT', reason: 'Voting only, with one valid positive reaction.',
+        votes: [{ id: slate[0].id, direction: 'up', reason: 'This concrete observation deserves a positive reaction.' }],
+      }));
+      const restarted = h.restartRuntime();
+      restarted.scheduler.reconcileDurableTurns();
+      await settle();
+      const finished = restarted.turnStore.get(turn.id);
+      eq(finished.result.ok, false, 'missing sibling remains a technical partial failure');
+      eq(finished.result.waited, false, 'partial voting success is not an invented WAIT');
+      eq(finished.result.visibleActions, 1, 'accepted vote remains a visible action despite unresolved sibling');
+      eq(finished.result.unresolvedVoteCount, 1, 'partial failure remains separately visible');
+      const state = simulation ? voter.simulationState : voter;
+      eq(state.populationActivity.recentVisibleActions.length, 1, 'population ecology records the actual accepted vote');
+      eq(state.voteState.considered, [slate[0].targetType + ':' + slate[0].targetId], 'only valid sibling becomes considered');
+      eq(h.writes.filter((write) => write.type === 'vote').length, simulation ? 0 : 1, 'rehearsal stays isolated from the vote endpoint');
+      if (simulation) {
+        const events = voter.simulationState.telemetry.events;
+        eq(events.length, 1, 'partial rehearsal has one durable observability event');
+        eq(events[0].outcome, 'action', 'rehearsal records visible action independently of partial technical failure');
+        ok(/unresolved/i.test(events[0].reason), 'rehearsal reason retains unresolved technical failure information');
+        eq(events[0].decisionFailure, true, 'partial rehearsal retains a structured technical failure flag');
+        const summary = rehearsalObservability.summarize([voter], { runId: 'partial-vote-rehearsal' });
+        eq(summary.actions, 1, 'rehearsal summary counts the accepted partial action');
+        eq(summary.failures, 1, 'rehearsal summary also counts the unresolved technical decision');
+        eq(voter.sched, originalLiveSchedule, 'rehearsal leaves live deadlines unchanged');
+      }
+      h.restartRuntime().scheduler.reconcileDurableTurns();
+      await settle();
+      eq(state.populationActivity.recentVisibleActions.length, 1, 'restart cannot double-count the accepted partial action');
+      eq(queueJobs(h.queueFile).length, 1, 'partial vote restart creates no retry generation');
+      eq(h.writes.length, simulation ? 0 : 1, 'partial vote restart cannot duplicate the endpoint effect');
+    } finally {
+      h.cleanup();
+    }
+  }
+
+  for (const version of [2, 99]) {
+    const profile = makeProfile('invalid-primary-' + version, false);
+    const h = harness({ profiles: [profile] });
+    try {
+      const initial = h.scheduler();
+      await initial.runTick();
+      await settle();
+      const turn = h.turnStore.activeForProfile(profile.id);
+      h.turnStore.update(turn.id, { input: { ...turn.input, decisionContractVersion: version } });
+      completeJob(h.queue, turn.generations[0].jobId, 'C1 hidden in prose is not a complete structured decision.');
+      const restarted = h.restartRuntime();
+      restarted.scheduler.reconcileDurableTurns();
+      await settle();
+      if (version === 2) {
+        const repair = restarted.turnStore.get(turn.id).generations[1];
+        ok(repair, 'invalid primary gets one bounded repair');
+        completeJob(restarted.queue, repair.jobId, 'Still not a structured decision, despite mentioning C1.');
+        restarted.scheduler.reconcileDurableTurns();
+        await settle();
+      }
+      const failed = restarted.turnStore.get(turn.id);
+      if (version === 2) {
+        eq(failed.result && failed.result.ok, false, 'technical contract failure is not reported as successful WAIT');
+        eq(failed.result && failed.result.action, 'failed', 'technical decision failure is explicit');
+      } else {
+        eq(failed.status, 'blocked', 'unsupported future contract stays blocked for a compatible runtime');
+        ok(/decision.*contract|contract.*version/i.test(failed.error), 'unsupported contract has a clear diagnostic');
+      }
+      eq(h.writes.length, 0, 'invalid or unsupported contract causes no public effect');
+      eq(profile.voteState.considered, [], 'invalid contract cannot alter considered state');
+      if (version === 2) {
+        ok(profile.sched.nextPostAt > h.now(), 'invalid primary advances cadence rather than retrying immediately');
+        await restarted.scheduler.runTick();
+        await settle();
+        eq(queueJobs(h.queueFile).length, 2, 'failed repair creates no immediate model retry');
+      } else {
+        eq(failed.generations.length, 1, 'unsupported contract fails before repair or content');
+        await restarted.scheduler.runTick();
+        await settle();
+        eq(restarted.turnStore.activeForProfile(profile.id).id, turn.id, 'unsupported contract retains its existing active logical turn');
+        eq(queueJobs(h.queueFile).length, 1, 'unsupported contract does not create a replacement generation');
+        eq(h.writes.length, 0, 'rechecking unsupported contract cannot publish');
+      }
+    } finally {
+      h.cleanup();
+    }
+  }
+
   {
     const h = harness({
       profiles: [makeProfile('bot-a', true), makeProfile('bot-b', true)],
@@ -1288,8 +1590,8 @@ async function run() {
     }
   }
 
-  {
-    const profile = makeProfile('burst-duplicate-votes', false);
+  for (const conflicting of [false, true]) {
+    const profile = makeProfile('burst-duplicate-votes-' + conflicting, false);
     profile.canReply = true;
     profile.canStartDiscussions = false;
     profile.postsPerHour = 0;
@@ -1306,7 +1608,7 @@ async function run() {
           reason: 'One reply and one secondary vote fit.',
           actions: [{ candidate: 'C1', text: 'A concise bounded reply.', reason: 'It is relevant.' }],
           votes: Array.from({ length: 20 }, (_, index) => ({
-            id: 'V1', direction: 'up', reason: 'The first valid vote reason remains ' + index + '.',
+            id: 'V1', direction: 'up', reason: 'The first valid vote reason remains ' + (conflicting ? index : 0) + '.',
           })),
         }),
         usage: { inputTokens: 20, outputTokens: 20, cachedInputTokens: 0 }, ms: 10,
@@ -1319,10 +1621,18 @@ async function run() {
       const finished = h.turnStore.get(started.turnId);
       eq(finished.status, 'completed', 'duplicate Burst votes do not prevent durable completion');
       eq(finished.result.votes.length, 1, 'only one unique offered vote reaches the durable result');
-      eq(finished.result.votes[0].reason, 'The first valid vote reason remains 0.',
-        'the downstream vote retains the first matching decision reason');
-      eq(h.writes.filter((write) => write.type === 'vote').length, 1,
-        'duplicate vote IDs never reach the downstream voting path twice');
+      if (conflicting) {
+        eq(finished.result.votes[0].status, 'unresolved', 'conflicting duplicate reasons remain an unresolved technical decision');
+        eq(finished.result.votes[0].direction, null, 'ambiguous duplicate vote has no invented direction');
+        eq(profile.voteState.considered, [], 'conflicting duplicates never suppress later opportunities');
+      } else {
+        eq(finished.result.votes[0].reason, 'The first valid vote reason remains 0.',
+          'identical duplicates retain their original decision reason');
+      }
+      eq(h.writes.filter((write) => write.type === 'vote').length, conflicting ? 0 : 1,
+        'duplicate IDs never produce repeated or ambiguous downstream votes');
+      eq(h.writes.filter((write) => write.type === 'comment').length, 1,
+        'valid independent Burst main action remains intact');
     } finally {
       h.cleanup();
     }

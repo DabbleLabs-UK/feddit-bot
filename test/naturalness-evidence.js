@@ -95,21 +95,21 @@ try {
     const parsed = { votes: [{ id: 'V1', direction: 'nil' }] };
     const result = evidence.decisionItems(JSON.stringify(parsed), offered, slate, voting.parseDecisions(parsed, slate));
     assert.deepEqual(result.map((value) => value.decisionKind), ['explicit', 'missing']);
-    assert.deepEqual(result.map((value) => value.direction), ['nil', 'nil']);
+    assert.deepEqual(result.map((value) => value.direction), ['nil', null]);
     assert.equal(evidence.decisionItems('not JSON', offered, slate, [])[0].decisionKind, 'invalid');
     const failure = evidence.decisionItems('', offered, slate, [], { failed: true });
     assert.equal(failure[0].decisionKind, 'unknown');
     assert.equal(failure[0].direction, null);
     assert.equal(failure[0].status, 'generation-failed');
   });
-  test('invalid upvote does not become explicit nil and retained first duplicate wins', () => {
+  test('invalid upvote and conflicting duplicates remain unresolved', () => {
     const parsed = { votes: [{ id: 'V1', direction: 'up', reason: 'bad' },
       { id: 'V1', direction: 'nil' }, { id: 'V2', direction: 'down', reason: 'The claimed evidence does not support the conclusion.' }] };
     const actual = voting.parseDecisions(parsed, slate);
     const before = JSON.stringify(actual);
     const result = evidence.decisionItems(JSON.stringify(parsed), offered, slate, actual);
     assert.deepEqual(result.map((value) => value.decisionKind), ['invalid', 'explicit']);
-    assert.deepEqual(result.map((value) => value.direction), ['nil', 'down']);
+    assert.deepEqual(result.map((value) => value.direction), [null, 'down']);
     assert.equal(JSON.stringify(actual), before, 'observer does not mutate parser outputs');
   });
   test('exact source metadata is captured while prompt inputs remain identical', () => {

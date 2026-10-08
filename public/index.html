@@ -3651,7 +3651,7 @@ function simulationValue(label, value) {
 
 function simulationDecision(decision) {
   if (!decision || typeof decision !== 'object') return '';
-  const reasonLabel = decision.outcome === 'wait'
+  const reasonLabel = decision.outcome === 'failed' ? 'Why the decision failed' : decision.outcome === 'wait'
     ? 'Why the bot waited'
     : 'Why this candidate was chosen';
   const selected = decision.outcome === 'wait'
@@ -3663,7 +3663,8 @@ function simulationDecision(decision) {
   const considered = Number(decision.candidateCount) || 0;
   const votes = Array.isArray(decision.votes) ? decision.votes : [];
   const voteRows = votes.map((vote) => {
-    const direction = vote.direction === 'up' ? 'UPVOTE' : (vote.direction === 'down' ? 'DOWNVOTE' : 'NO VOTE');
+    const direction = vote.status === 'unresolved' ? 'UNRESOLVED' :
+      (vote.direction === 'up' ? 'UPVOTE' : (vote.direction === 'down' ? 'DOWNVOTE' : 'NO VOTE'));
     const status = vote.status ? ' - ' + vote.status.replaceAll('-', ' ') : '';
     const reason = vote.reason ? ': ' + vote.reason : '';
     const error = vote.error ? ' (' + vote.error + ')' : '';

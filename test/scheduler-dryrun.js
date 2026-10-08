@@ -524,7 +524,7 @@ async function scenarioStandaloneVoting() {
     'the standalone vote timer advances without changing other cadences');
   const voteLog = p.activity.findLast((entry) => entry.kind === 'vote');
   ok(JSON.stringify(voteLog.voteSummary) === JSON.stringify({
-    candidates: 2, up: 1, down: 1, nil: 0, accepted: 2, rejected: 0, failures: [],
+    candidates: 2, up: 1, down: 1, nil: 0, accepted: 2, rejected: 0, unresolved: 0, failures: [],
   }), 'observability reports candidates, direction counts and outcomes');
 
   const disabled = profile({
@@ -1174,7 +1174,7 @@ async function scenarioIndependentAbilities() {
     p.sched.nextCommentAt = clock.now();
     const store = makeStore([p]);
     const providers = makeProviders({ textFor: (_opts, index) => (
-      index === 0 ? '1' : 'A discussion worth having\n\nHere is an actual opening thought.'
+      index === 0 ? '{"choice":"C1"}' : 'A discussion worth having\n\nHere is an actual opening thought.'
     ) });
     const world = {
       feddits: { botlife: [] }, comments: {},
@@ -1206,7 +1206,7 @@ async function scenarioIndependentAbilities() {
     p.sched.nextPostAt = clock.now();
     p.sched.nextCommentAt = clock.now();
     const store = makeStore([p]);
-    const providers = makeProviders({ textFor: () => 'WAIT' });
+    const providers = makeProviders({ textFor: () => '{"choice":"WAIT"}' });
     const sched = scheduler.createScheduler({
       store, providers, feddit: makeFeddit({ feddits: { botlife: [] }, comments: {} }),
       now: clock.now, random: () => 0, getDeepseekKey: KEY,
@@ -1218,7 +1218,7 @@ async function scenarioIndependentAbilities() {
       'the reason for waiting is visible in simulation results');
   }
 
-  // A local transport failure is a safe WAIT: no write is attempted, the due
+  // A local transport failure is technical: no write is attempted, the due
   // opportunity moves forward once, and the bot can act normally next time.
   {
     const clock = makeClock(1_925_000);
@@ -1247,7 +1247,8 @@ async function scenarioIndependentAbilities() {
     });
 
     const failed = await sched.runTick();
-    eq(failed.results[0].action, 'wait', 'a failed local decision ends as a safe wait');
+    eq(failed.results[0].action, 'failed', 'a failed local decision is not a deliberate abstention');
+    eq(failed.results[0].ok, false, 'technical failure is visible without immediate retry');
     eq(client.calls.comment.length, 0, 'a failed generation publishes nothing');
     ok(p.sched.nextCommentAt > clock.now(), 'a failed generation preserves a future scheduled opportunity');
     const retryAt = p.sched.nextCommentAt;

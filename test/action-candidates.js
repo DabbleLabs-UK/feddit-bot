@@ -202,8 +202,8 @@ eq(decision.candidate.candidateType, 'ordinary_post', 'secondary votes do not di
 eq(decision.votes.map((vote) => vote.direction), ['up', 'down', 'nil'],
   'one structured response can include up, down and nil secondary reactions');
 decision = candidates.parseDecision('{"choice":"C4","reason":"Still fits.","votes":"bad"}', menu, { voteCandidates: voteItems });
-ok(decision.valid && decision.votes.every((vote) => vote.direction === 'nil'),
-  'malformed secondary votes never invalidate a valid primary action');
+ok(decision.valid && decision.votes.every((vote) => vote.status === 'unresolved' && vote.direction === null),
+  'malformed secondary votes are unresolved independently of a valid primary action');
 decision = candidates.parseDecision(JSON.stringify({
   choice: 'WAIT', reason: 'Nothing needs a written reply.', votes: [
     { id: 'V1', direction: 'up', reason: 'The post remains useful without a reply.' },

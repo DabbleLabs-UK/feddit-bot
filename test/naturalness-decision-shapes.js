@@ -1,7 +1,8 @@
 'use strict';
 
 // Synthetic frozen shapes from the hosted audit, never real prompts or reasons.
-// These protect diagnostic distinctions, not the permissive production parser.
+// These protect diagnostic distinctions in the historical parser. Version-2
+// production correctness and no-salvage behavior are covered separately.
 // Pure modules only: no store, scheduler, transport, model or publication calls.
 const assert = require('node:assert/strict');
 const candidates = require('../lib/action-candidates');
@@ -20,7 +21,7 @@ const before = JSON.stringify({ menu, slate, offered });
 let checks = 0;
 function eq(actual, expected) { assert.deepEqual(actual, expected); checks++; }
 function observe(text) {
-  const parsed = candidates.parseDecision(text, menu, { voteCandidates: slate });
+  const parsed = candidates.parseDecision(text, menu, { voteCandidates: slate, decisionContractVersion: 1 });
   return evidence.decisionItems(text, offered, slate, parsed.votes);
 }
 for (const text of [
