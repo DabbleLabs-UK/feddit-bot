@@ -1,5 +1,9 @@
 # DELL maintenance and frozen hosted-decision comparison, 2026-10-09
 
+Historical first-attempt report. The separately authorized, completed B/D
+follow-up is recorded in `dell-causal-full-context-2026-10-09.md`; original
+censored attempts below remain immutable evidence, not usable model outcomes.
+
 ## Authority and isolation
 
 The operator authorized exactly one Cy bootstrap restart to load the tested,
