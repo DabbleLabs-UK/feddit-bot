@@ -101,3 +101,23 @@ claim template/context fixed based solely on parseable JSON.
 
 Run fixture checks with `node tools/causal-maintenance-test.js`. They do not use
 network, models, registration, durable state or publication.
+
+## Partial-run continuation
+
+Never rerun the original CLI or delete its reservation after a timeout. The
+experiment-only `causal-maintenance-continue.js` permits only previously
+unstarted C or D, requires the original immutable config/frozen ledger, and
+retains the 300-second deadline. Its `attest` phase proves the preceding owned
+process is gone before a replacement is started; `run` verifies the new process
+and exclusively reserves the cell in the original ledger before invocation.
+Ownership receipts must stay immutable. This tool does not start/stop Ollama or
+release maintenance; an independently verified controller must own cleanup.
+Run `node tools/causal-maintenance-continue-test.js` for mocked fencing checks.
+
+The 2026-10-09 private controller hit process-identity guards during Ollama
+startup, including a cancellation of D before model load completed. Do not reuse
+that private controller as a proven unattended lifecycle solution. Preserve the
+four attempted-call ledger; any further model requests need separate authority.
+See `dell-causal-2026-10-09-results.md` for the inconclusive outcome, restoration
+evidence and follow-up requirements. A missing terminal file never licenses a
+retry of an already reserved cell.
