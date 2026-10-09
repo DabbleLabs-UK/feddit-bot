@@ -119,6 +119,10 @@ function createWorker(options = {}) {
       // Hosted jobs keep the existing absolute/stream-idle contract. The new
       // first-output/progress policy is for desktop/self-hosted local requests.
       payload.legacyTimeouts = true;
+      // Apply to old durable requests too, without rewriting their frozen
+      // request signatures. Oversized legacy decisions fail, never truncate.
+      payload.hostedDecision = /^(scheduled|simulation-now)-decision(?:-retry)?$/.test(String(job.kind || '')) || !!job.payload.decisionBudget;
+      if (job.payload.decisionBudget) payload.decisionBudget = job.payload.decisionBudget;
       payload.priorityClass = sharedPriority(job);
       renewTimer = setInterval(() => {
         request('api/worker/jobs/' + encodeURIComponent(job.id) + '/renew', workerDetails(true))
@@ -137,7 +141,7 @@ function createWorker(options = {}) {
       await request('api/worker/jobs/' + encodeURIComponent(job.id) + '/fail', {
         ...workerDetails(false),
         error: err.message,
-        retryable: err.code !== 'UNSUPPORTED_MODEL',
+        retryable: err.code !== 'UNSUPPORTED_MODEL' && !String(err.code || '').startsWith('HOSTED_DECISION') && !String(err.code || '').startsWith('HOSTED_TOKENIZER'),
       }).catch((reportErr) => {
         logger.error('Could not report failed job ' + job.id + ': ' + reportErr.message);
       });

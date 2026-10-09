@@ -14,6 +14,9 @@ const populationActivity = require('../lib/population-activity');
 const socialRelationships = require('../lib/social-relationships');
 const autobiographicalMemory = require('../lib/autobiographical-memory');
 const rehearsalObservability = require('../lib/rehearsal-observability');
+const { DEFAULT_MODEL } = require('../lib/providers/ollama');
+const actionCandidates = require('../lib/action-candidates');
+const crypto = require('node:crypto');
 
 let checks = 0;
 function ok(value, message) {
@@ -44,7 +47,7 @@ function makeProfile(id, dryRun) {
     fedditUsername: id,
     token: 'secret-' + id,
     provider: 'dell',
-    model: 'test-model',
+    model: DEFAULT_MODEL,
     persona: 'A test persona for ' + id + '.',
     toneNotes: '',
     temperature: 0.8,
@@ -90,7 +93,7 @@ function makeStore(profiles, now) {
   };
   const byId = new Map(profiles.map((profile) => [profile.id, profile]));
   return {
-    DEFAULT_MODEL: 'test-model',
+    DEFAULT_MODEL,
     schedDefaults: () => ({
       nextPostAt: null,
       nextArticleAt: null,
@@ -456,6 +459,189 @@ function votingHarness(id, count) {
 }
 
 async function run() {
+  {
+    const voter = makeProfile('budget-pressure', false);
+    Object.assign(voter, { canReply: true, canStartDiscussions: false, canVote: true,
+      postsPerHour: 0, commentsPerHour: 1 });
+    Object.assign(voter.sched, { nextPostAt: null, nextCommentAt: 0 });
+    const text = Array(60).fill('A photograph with careful lighting documents a different public workshop.').join(' ');
+    const h = harness({ profiles: [voter], feedPosts: Array.from({ length: 3 }, (_, index) => ({
+      id: 173 + index, feddit: 'general', author: 'carol', title: 'Complete pressure target ' + index,
+      selftext: text, created_utc: 9,
+    })) });
+    try {
+      const runtime = h.scheduler();
+      await runtime.runTick();
+      await settle();
+      const turn = h.turnStore.activeForProfile(voter.id);
+      eq(turn.input.hostedDecisionBudgetVersion, 1, 'new turns freeze hosted prompt construction version');
+      const snapshot = turn.checkpoints['opportunity-candidates'];
+      const packed = turn.checkpoints['hosted-decision-construction'];
+      ok(packed && !packed.failure, 'a complete minimum decision slate fits the pressure fixture');
+      ok(packed.deferredCandidateIds.length + packed.deferredVoteIds.length > 0,
+        'pressure deliberately defers whole targets instead of relying on truncation');
+      ok(packed.originalRepairTokens + packed.numPredict + packed.budget.safetyTokens > packed.budget.contextTokens,
+        'the original pressure fixture really exceeds the unchanged context budget');
+      for (const budget of [packed.budget, packed.repairBudget]) {
+        ok(budget.inputTokens + budget.outputTokens + budget.safetyTokens <= budget.contextTokens,
+          'both initial and repair reserve their entire response and safety headroom');
+      }
+      eq(packed.candidateIds, snapshot.candidates.slice(0, packed.candidateIds.length).map((item) => item.id),
+        'action packing preserves the original ordered prefix and stable IDs');
+      eq(packed.voteIds, snapshot.voteCandidates.slice(0, packed.voteIds.length).map((item) => item.id),
+        'independent vote packing preserves its own ordered prefix and stable IDs');
+      const frozenFirst = structuredClone(turn.generations[0]);
+      eq(frozenFirst.request.prompt, packed.prompt, 'initial request uses the frozen budgeted prompt');
+      eq(frozenFirst.request.decisionBudget, packed.budget, 'initial request carries its frozen budget evidence');
+      eq(queueJobs(h.queueFile)[0].payload.decisionBudget, packed.budget,
+        'hosted queue forwards construction evidence to the worker guard');
+      eq(frozenFirst.request.system, voter.persona, 'complete authored persona reaches the packed request unchanged');
+      const restarted = h.restartRuntime();
+      h.advance(95_000);
+      restarted.scheduler.reconcileDurableTurns();
+      await settle();
+      eq(restarted.turnStore.get(turn.id).generations[0].signature, frozenFirst.signature,
+        'elapsed time and restart cannot rewrite the initial packed request');
+      completeJob(restarted.queue, frozenFirst.jobId, 'Malformed decision requiring the one existing repair.');
+      restarted.scheduler.reconcileDurableTurns();
+      await settle();
+      const repair = restarted.turnStore.get(turn.id).generations[1];
+      ok(repair, 'packed decision retains one normal primary repair');
+      eq(repair.request.prompt, packed.repair, 'repair uses the already-budgeted complete repair prompt');
+      eq(repair.request.decisionBudget, packed.repairBudget, 'repair retains its distinct frozen budget');
+      const afterRepairRestart = h.restartRuntime();
+      afterRepairRestart.scheduler.reconcileDurableTurns();
+      await settle();
+      eq(afterRepairRestart.turnStore.get(turn.id).generations[1].signature, repair.signature,
+        'restart at repair preserves request signature and generation ordinal');
+      completeJob(afterRepairRestart.queue, repair.jobId, JSON.stringify({ choice: 'WAIT',
+        reason: 'None of these offered actions fit now.', votes: packed.voteIds.map((id) => ({
+          id, direction: 'nil', reason: '',
+        })) }));
+      afterRepairRestart.scheduler.reconcileDurableTurns();
+      await settle();
+      const finished = afterRepairRestart.turnStore.get(turn.id);
+      eq(finished.status, 'completed', 'budgeted WAIT and explicit abstentions complete durably');
+      const offered = snapshot.voteCandidates.filter((item) => packed.voteIds.includes(item.id));
+      eq(voter.voteState.considered, offered.map((item) => item.targetType + ':' + item.targetId),
+        'only genuinely offered explicit abstentions become considered');
+      eq(finished.result.decision.unresolvedVoteCount, 0,
+        'deliberately unoffered votes are not mislabeled missing model decisions');
+      eq(finished.checkpoints['opportunity-candidates'], snapshot,
+        'budget packing never rewrites the original observation/social/memory snapshot');
+      eq(finished.checkpoints['hosted-decision-construction'], packed,
+        'initial and repair replay keep the same immutable construction checkpoint');
+      eq(h.writes.length, 0, 'pressure and repair fixture performs no endpoint writes');
+      const beforeDue = h.restartRuntime();
+      await beforeDue.scheduler.runTick();
+      await settle();
+      eq(queueJobs(h.queueFile).length, 2, 'budget deferral creates no immediate catch-up generation');
+      h.advance(voter.sched.nextCommentAt - h.now() + 1);
+      await beforeDue.scheduler.runTick();
+      await settle();
+      const future = beforeDue.turnStore.activeForProfile(voter.id);
+      const futureTargets = future.checkpoints['opportunity-candidates'].voteCandidates
+        .map((item) => item.targetType + ':' + item.targetId);
+      const deferred = snapshot.voteCandidates.filter((item) => packed.deferredVoteIds.includes(item.id));
+      ok(deferred.every((item) => futureTargets.includes(item.targetType + ':' + item.targetId)),
+        'budget-deferred vote targets remain eligible for a normal future opportunity');
+    } finally { h.cleanup(); }
+  }
+
+  {
+    const voter = makeProfile('budget-impossible-persona', false);
+    voter.persona = Array(4000).fill('The whole authored personality must stay intact.').join(' ');
+    const h = harness({ profiles: [voter] });
+    try {
+      const runtime = h.scheduler();
+      await runtime.runTick();
+      await settle();
+      const turns = JSON.parse(fs.readFileSync(h.turnFile, 'utf8')).turns;
+      const turn = turns[0];
+      ok(turn.checkpoints['hosted-decision-construction'].failure,
+        'an impossible complete persona/slate freezes an explicit budget failure');
+      eq(turn.generations.length, 0, 'impossible persona queues no model generation');
+      eq(fs.existsSync(h.queueFile) ? queueJobs(h.queueFile).length : 0, 0,
+        'impossible construction never reaches the durable inference queue');
+      eq(turn.result && turn.result.ok, false, 'budget failure is technical failure rather than successful WAIT');
+      ok(/budget|fit|context/i.test(JSON.stringify(turn.result)), 'budget failure gives an explicit bounded diagnostic');
+      eq(voter.voteState.considered, [], 'budget failure never invents considered votes');
+      h.restartRuntime().scheduler.reconcileDurableTurns();
+      await settle();
+      eq(h.turnStore.get(turn.id).generations.length, 0, 'restart does not retry impossible construction');
+      eq(h.writes.length, 0, 'impossible construction performs no publication');
+    } finally { h.cleanup(); }
+  }
+
+  {
+    const h = votingHarness('budget-legacy-v2', 1);
+    try {
+      const runtime = h.scheduler();
+      await runtime.runTick();
+      await settle();
+      const turn = h.turnStore.activeForProfile(h.profiles[0].id);
+      const snapshot = turn.checkpoints['opportunity-candidates'];
+      const input = { ...turn.input };
+      delete input.hostedDecisionBudgetVersion;
+      const checkpoints = { ...turn.checkpoints };
+      delete checkpoints['hosted-decision-construction'];
+      const request = { ...turn.generations[0].request, prompt: actionCandidates.prompt(
+        snapshot.candidates, turn.createdAt, { voteCandidates: snapshot.voteCandidates,
+          voteAllowance: snapshot.voteAllowance, decisionContractVersion: 2 }) };
+      delete request.decisionBudget;
+      const signature = crypto.createHash('sha256').update(JSON.stringify(request)).digest('hex');
+      h.turnStore.update(turn.id, { input, checkpoints });
+      h.turnStore.generation(turn.id, 0, { request, signature });
+      const queueData = JSON.parse(fs.readFileSync(h.queueFile, 'utf8'));
+      const job = queueData.jobs.find((item) => item.id === turn.generations[0].jobId);
+      job.payload.prompt = request.prompt;
+      delete job.payload.decisionBudget;
+      fs.writeFileSync(h.queueFile, JSON.stringify(queueData));
+      const restarted = h.restartRuntime();
+      completeJob(restarted.queue, job.id, JSON.stringify({ choice: 'WAIT', reason: 'A valid legacy v2 abstention.',
+        votes: snapshot.voteCandidates.map((item) => ({ id: item.id, direction: 'nil', reason: '' })) }));
+      restarted.scheduler.reconcileDurableTurns();
+      await settle();
+      const finished = restarted.turnStore.get(turn.id);
+      eq(finished.status, 'completed', 'pre-budget contract-v2 turn replays successfully');
+      eq(finished.generations[0].signature, signature, 'pre-budget request signature remains unchanged');
+      eq(finished.generations[0].request, JSON.parse(JSON.stringify(request)),
+        'pre-budget frozen request is not upgraded or reconstructed');
+      eq(finished.checkpoints['hosted-decision-construction'], undefined,
+        'legacy decision contract v2 does not imply a new prompt-construction contract');
+      eq(h.profiles[0].voteState.considered, ['post:73'], 'legacy valid abstention keeps its original durable semantics');
+      eq(h.writes.length, 0, 'legacy abstention replay performs no publication');
+    } finally { h.cleanup(); }
+  }
+
+  {
+    const h = harness({ profiles: [makeProfile('future-budget-contract', false)] });
+    try {
+      const before = structuredClone(h.profiles[0].sched);
+      const { turn } = h.turnStore.create({ profileId: h.profiles[0].id,
+        botName: h.profiles[0].fedditUsername, rehearsal: false, trigger: 'scheduled',
+        profile: h.profiles[0], input: { mode: 'capabilities', decisionContractVersion: 2,
+          hostedDecisionBudgetVersion: 99, choices: [{ key: 'discussion' }] } });
+      const restarted = h.restartRuntime();
+      restarted.scheduler.reconcileDurableTurns();
+      await settle();
+      eq(restarted.turnStore.get(turn.id).status, 'blocked',
+        'unknown future construction version remains blocked for a compatible runtime');
+      ok(/construction version/i.test(restarted.turnStore.get(turn.id).error),
+        'unknown construction version has a useful explicit diagnostic');
+      eq(restarted.turnStore.get(turn.id).generations.length, 0,
+        'unknown construction version never starts inference');
+      eq(h.profiles[0].sched, before, 'unknown construction version leaves deadlines unchanged');
+      await restarted.scheduler.runTick();
+      await settle();
+      eq(restarted.turnStore.activeForProfile(h.profiles[0].id).id, turn.id,
+        'blocked future turn occupies its profile instead of being replaced');
+      eq(fs.existsSync(h.queueFile) ? queueJobs(h.queueFile).length : 0, 0,
+        'rechecking future construction version creates no replacement model job');
+      eq(h.writes.length, 0, 'unknown construction version cannot publish');
+    } finally { h.cleanup(); }
+  }
+
   // Decision contract versions are frozen with the logical turn, not inferred
   // from the latest parser when old generations resume after a restart.
   for (const version of [undefined, 1]) {

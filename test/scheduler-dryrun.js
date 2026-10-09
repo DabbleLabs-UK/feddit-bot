@@ -18,6 +18,7 @@ const cost = require('../lib/cost');
 const store = require('../lib/store'); // migrateProfiles/referenceName are pure - no disk touched
 const hostedPolicy = require('../lib/hosted-policy');
 const deepseek = require('../lib/providers/deepseek'); // generate() drivable with an injected fetch stub - no network
+const { DEFAULT_MODEL: HOSTED_MODEL } = require('../lib/providers/ollama');
 const socialRelationships = require('../lib/social-relationships');
 const autobiographicalMemory = require('../lib/autobiographical-memory');
 
@@ -257,7 +258,7 @@ function profile(over) {
     commentsPerHour: over.commentsPerHour || 0,
     votesPerHour: over.votesPerHour || 0,
     provider: over.provider || 'ollama',
-    model: 'stub-model',
+    model: over.provider === 'dell' ? HOSTED_MODEL : 'stub-model',
     deepseekModel: over.deepseekModel || 'deepseek-v4-flash',
     temperature: 0.8,
     numPredict: 50,

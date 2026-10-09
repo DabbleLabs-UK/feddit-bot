@@ -28,6 +28,9 @@ try {
         $names = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
         Assert-True ($names -contains "app/server.js") "package contains app/server.js"
         Assert-True ($names -contains "app/public/index.html") "package contains app/public/index.html"
+        foreach ($required in @("hosted-tokenizer.js", "hosted-tokenizer-data.json.gz", "hosted-tokenizer-unicode.json", "third-party/llama31/LICENSE.txt", "third-party/llama31/Notice.txt", "third-party/llama31/README.md", "third-party/llama31/llama.cpp-LICENSE.txt")) {
+            Assert-True ($names -contains ("app/lib/" + $required)) "package includes tokenizer dependency/notice $required"
+        }
         Assert-True (-not ($names | Where-Object { $_ -match '^runtime/' })) "package excludes the shared runtime"
         Assert-True (-not ($names | Where-Object { $_ -match '(^|/)data/' })) "package excludes runtime data"
         Assert-True (-not ($names | Where-Object { $_ -match '(^|/)secrets\.json$' })) "package excludes secret stores"
@@ -35,6 +38,11 @@ try {
     } finally {
         $archive.Dispose()
     }
+
+    $tokenizerExtract = Join-Path $root "tokenizer-package"
+    [IO.Compression.ZipFile]::ExtractToDirectory($package, $tokenizerExtract)
+    & node -e 'const t=require(process.argv[1]);if(t.countText("Hello world!")!==4||!Number.isInteger(t.countRequest("Complete persona", "Complete task")))process.exit(1);' (Join-Path $tokenizerExtract "app/lib/hosted-tokenizer.js")
+    Assert-True ($LASTEXITCODE -eq 0) "tokenizer loads and counts using only packaged dependencies"
 
     $manifest = Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json -DateKind String
     $sha = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant()
