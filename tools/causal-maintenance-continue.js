@@ -120,6 +120,7 @@ async function jsonRequest(url, body, signal) {
 async function run(configFile, receiptFile, maintenanceId, currentFile) {
   const original = loadOriginal(configFile), receipt = verifyReceipt(original, receiptFile), current = ownedRecord(currentFile);
   check(current.pid !== receipt.previousPid && current.exeSha256 === receipt.previousExeSha256 && samePath(current.models, receipt.previousModels), 'Replacement isolated process provenance differs.');
+  check(digest(current.exe) === receipt.previousExeSha256, 'Replacement executable bytes changed.');
   check(Date.parse(current.createdAt || '') > Date.parse(receipt.tornDownAt), 'Replacement process must be born after teardown proof.');
   const actualBirth = proveCurrent(current); check(actualBirth === current.createdAt, 'Replacement process birth mismatch.');
   const guard = async () => { base.heldSnapshot(original.config.maintenanceDirectory, maintenanceId); proveCurrent(current);
