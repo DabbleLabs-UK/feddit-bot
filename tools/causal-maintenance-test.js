@@ -81,6 +81,20 @@ async function main() {
     throws(() => heldSnapshot(directory, 'other', current, () => true), /changed/);
     throws(() => heldSnapshot(directory, config.maintenanceId, current + 15001, () => true), /stale/);
     throws(() => heldSnapshot(directory, config.maintenanceId, current, () => false), /alive/);
+    const realRead = fs.readFileSync, realNow = Date.now;
+    let clock = current;
+    try {
+      Date.now = () => clock;
+      fs.readFileSync = (file, ...args) => {
+        if (path.basename(String(file)) === 'cy-status.json') {
+          clock = current + 1;
+          return JSON.stringify({ ...status, updatedAt: new Date(clock).toISOString() });
+        }
+        return realRead(file, ...args);
+      };
+      heldSnapshot(directory, config.maintenanceId, undefined, () => true); checks++;
+      throws(() => heldSnapshot(directory, config.maintenanceId, current, () => true), /stale/);
+    } finally { fs.readFileSync = realRead; Date.now = realNow; }
     write('cy-status', { ...status, active: 1 });
     throws(() => heldSnapshot(directory, config.maintenanceId, current, () => true), /quiescence/);
     checkArbiter({ active: null, queued: { cy: 0, interactive: 0 } }); checks++;

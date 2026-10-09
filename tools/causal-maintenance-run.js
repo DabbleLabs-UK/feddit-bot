@@ -66,12 +66,14 @@ function score(text, frozen) {
   };
 }
 
-function heldSnapshot(directory, id, now = Date.now(), alive = pid => { process.kill(pid, 0); return true; }) {
+function heldSnapshot(directory, id, now, alive = pid => { process.kill(pid, 0); return true; }) {
   const request = read(path.join(directory, 'request.json'));
   check(request.version === 1 && request.id === id, 'Maintenance request changed or is absent.');
   for (const client of ['cy', 'feddit']) {
     const status = read(path.join(directory, client + '-status.json'));
-    const age = now - Date.parse(status.updatedAt);
+    // Read the clock after the file: a concurrent fresh heartbeat must not look
+    // future-dated merely because the caller started reading a moment earlier.
+    const age = (now === undefined ? Date.now() : now) - Date.parse(status.updatedAt);
     check(status.version === 1 && status.requestId === id && status.state === 'held' && status.active === 0,
       client + ' has not acknowledged quiescence.');
     check(Number.isInteger(status.pid) && status.pid > 0 && Number.isFinite(age) && age >= 0 && age <= 15000,

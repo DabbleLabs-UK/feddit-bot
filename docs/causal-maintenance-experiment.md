@@ -121,3 +121,27 @@ four attempted-call ledger; any further model requests need separate authority.
 See `dell-causal-2026-10-09-results.md` for the inconclusive outcome, restoration
 evidence and follow-up requirements. A missing terminal file never licenses a
 retry of an already reserved cell.
+
+## Explicitly authorized full-context follow-up
+
+The separate `causal-full-context-window.js` coordinator is experimental only.
+It reserves a NEW private ledger for exactly B/D and pins the original A/C and
+censored B/D evidence; it never rewrites or retries the original ledger.
+`causal-full-context.js` uses native HTTP with a 15-minute per-call deadline,
+without changing any production provider timeout. The window is capped at
+40 minutes and draining at 8 minutes. Insufficient remaining time aborts safely.
+Only the isolated 11436 endpoint receives inference. Production 11434 operations
+are limited to model-residency inspection and non-generating keep_alive=0 unload.
+
+`causal-process-owner.js` canonicalizes Windows paths, verifies daemon PID,
+birth and executable, resolves descendant ancestry independent of CIM order,
+and journals exact process identities and rejected observations. It does not
+claim unrelated processes merely because they use the same Ollama directory.
+Cleanup rechecks identities and proves descendants/listener absent before the
+coordinator removes its own maintenance request. Cancellation follows cleanup;
+an unresolved ownership/cleanup failure retains the hold for safe intervention.
+
+Run the full-context, process-owner and window-ordering test files in tools.
+The optional native ownership fixture uses disposable Node processes only,
+never a model or production service. No template/context production fix is
+authorized by running this harness.
