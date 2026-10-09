@@ -108,6 +108,18 @@ async function main(inputFile) {
         check(await fileHash(setup.ollamaExe) === setup.ollamaExeSha256, 'Installed Ollama executable changed.');
         check(setup.environmentVerified === true, 'Production environment provenance missing.');
         await full.prepare(input.originalConfig, out);
+        if (input.previousWindowDirectory) {
+          const previous = input.previousWindowDirectory;
+          check(path.isAbsolute(previous) && path.resolve(previous) !== path.resolve(out), 'Separate prior-window evidence required.');
+          check(read(path.join(previous, 'manual-cleanup-verified.json')).gone === true, 'Prior owned processes were not proven stopped.');
+          check(read(path.join(previous, 'B-failed-no-retry.json')).errorClass === 'maintenance-guard-lost', 'Prior interruption was not an ownership guard failure.');
+          check(!fs.existsSync(path.join(previous, 'B-completed.json')) && !fs.existsSync(path.join(previous, 'D-started.json')), 'Prior window already produced a result or attempted D.');
+          const pins = {};
+          for (const name of ['followup-reserved.json', 'B-started.json', 'B-failed-no-retry.json', 'guard-failure.json', 'manual-cleanup-verified.json', 'restored.json']) {
+            const file = path.join(previous, name); pins[file] = await fileHash(file);
+          }
+          save('preceding-window', { directory: previous, files: pins, reason: 'Manual continuation after diagnosed PID reuse; no automatic retry.' });
+        }
         save('window-started', { at: new Date(started).toISOString(), deadline: new Date(deadline).toISOString(), maintenanceId: input.maintenanceId });
       },
       requestHold: async () => {

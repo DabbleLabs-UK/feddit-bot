@@ -11,6 +11,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const identity = p => ({ pid: p.pid, parentPid: p.parentPid, exe: p.exe, createdAt: p.createdAt });
 const validIdentity = p => p && Number.isInteger(p.pid) && p.pid > 0 && typeof p.exe === 'string' && path.win32.isAbsolute(p.exe) && Number.isFinite(Date.parse(p.createdAt));
 const matches = (a, b) => a.pid === b.pid && a.createdAt === b.createdAt && canonical(a.exe) === canonical(b.exe);
+const generationKey = p => crypto.createHash('sha256').update(JSON.stringify([p.pid, p.createdAt, canonical(p.exe)])).digest('hex');
 function fault(code, processes = []) { const error = new Error(code); error.code = code; error.processes = processes.map(identity); return error; }
 function powershell(script) {
   if (process.platform !== 'win32') return Promise.reject(fault('WINDOWS_REQUIRED'));
@@ -44,6 +45,7 @@ function createOwner(record, options = {}) {
       owner.url !== 'http://127.0.0.1:11436') throw fault('INVALID_OWNER_RECORD');
   const ownerKey = crypto.createHash('sha256').update(JSON.stringify([owner.pid, owner.createdAt, canonical(owner.exe), canonical(owner.models)])).digest('hex');
   const known = new Map([[owner.pid, { ...identity(owner), lastSeenAt: null }]]);
+  const generations = new Map();
   const snapshot = options.snapshot || (() => powershell(snapshotScript(owner, [...known.values()])));
   const terminate = options.terminate || terminateExact;
   const wait = options.sleep || sleep;
@@ -69,9 +71,13 @@ function createOwner(record, options = {}) {
         if (!Array.isArray(event.known)) throw fault('INVALID_PROCESS_EVIDENCE');
         for (const p of event.known) {
           if (!validIdentity(p) || !Number.isFinite(Date.parse(p.lastSeenAt))) throw fault('INVALID_PROCESS_EVIDENCE');
-          if (known.has(p.pid) && !matches(known.get(p.pid), p)) throw fault('PROCESS_EVIDENCE_IDENTITY_CHANGED');
+          if (known.has(p.pid) && !matches(known.get(p.pid), p)) {
+            const prior = known.get(p.pid);
+            const transition = (event.reboundKnown || []).find(item => matches(item.previous, prior) && matches(item.next, p));
+            if (p.pid === owner.pid || !transition || Date.parse(p.createdAt) <= Date.parse(prior.createdAt)) throw fault('PROCESS_EVIDENCE_IDENTITY_CHANGED');
+          }
           if (p.pid !== owner.pid && !known.has(p.parentPid)) throw fault('PROCESS_EVIDENCE_ANCESTRY_MISSING');
-          known.set(p.pid, p);
+          known.set(p.pid, p); generations.set(generationKey(p), p);
         }
       }
     }
@@ -83,13 +89,14 @@ function createOwner(record, options = {}) {
       if (!Number.isInteger(p.pid) || !Number.isInteger(p.parentPid) || !p.exe || !path.win32.isAbsolute(p.exe) || !Number.isFinite(Date.parse(p.createdAt)) || rows.has(p.pid)) throw fault('INCOMPLETE_PROCESS_IDENTITY', [p]);
       rows.set(p.pid, p);
     }
-    const root = rows.get(owner.pid), accepted = new Map();
+    const root = rows.get(owner.pid), accepted = new Map(), reboundKnown = [];
     if (root && !matches(root, owner)) throw fault('ROOT_IDENTITY_CHANGED', [root]);
     if (root) accepted.set(root.pid, root);
     else if (requireParent) throw fault('ROOT_NOT_PRESENT');
+    const changedIdentities = new Map();
     for (const p of rows.values()) {
       const prior = known.get(p.pid);
-      if (prior && !matches(prior, p)) throw fault('DESCENDANT_IDENTITY_CHANGED', [p]);
+      if (prior && !matches(prior, p)) { changedIdentities.set(p.pid, p); continue; }
       if (prior) accepted.set(p.pid, p);
     }
     // Resolve ancestry independent of CIM enumeration order. Exact ancestry,
@@ -102,13 +109,36 @@ function createOwner(record, options = {}) {
         const parent = accepted.get(p.parentPid);
         // A previously observed child may outlive its parent. An UNSEEN orphan
         // cannot acquire ownership merely by quoting a historical/reused PPID.
-        if (parent && Date.parse(p.createdAt) >= Date.parse(parent.createdAt)) { accepted.set(p.pid, p); changed = true; }
+        if (parent && Date.parse(p.createdAt) >= Date.parse(parent.createdAt)) {
+          const prior = changedIdentities.has(p.pid) && known.get(p.pid);
+          if (prior && Date.parse(p.createdAt) <= Date.parse(prior.createdAt)) continue;
+          if (prior) reboundKnown.push({ previous: identity(prior), next: identity(p) });
+          accepted.set(p.pid, p); changed = true;
+        }
       }
     } while (changed);
     // Windows retains ParentProcessId after parent exit. An older process whose
     // PPID now names our younger daemon belongs to a prior PID incarnation.
     // It is not ours to terminate. A model-path reference still blocks release.
-    const unrelated = new Map();
+    const unrelated = new Map(), departedKnown = [];
+    for (const p of changedIdentities.values()) {
+      if (accepted.has(p.pid)) continue;
+      const prior = known.get(p.pid), visited = new Set();
+      let parentPid = p.parentPid, ownedAncestry = false;
+      while (!visited.has(parentPid)) {
+        // An absent former parent is not proof of foreign ancestry: this may
+        // be a newly spawned probe whose daemon exited during cleanup.
+        if (accepted.has(parentPid) || known.has(parentPid)) { ownedAncestry = true; break; }
+        if (!rows.has(parentPid)) break;
+        visited.add(parentPid); parentPid = rows.get(parentPid).parentPid;
+      }
+      // PID reuse proves the former child departed. Only ignore its unrelated
+      // replacement when both model-path and current ancestry checks are clear.
+      if (p.modelReference !== false || ownedAncestry || Date.parse(p.createdAt) <= Date.parse(prior.createdAt)) {
+        throw fault('DESCENDANT_IDENTITY_CHANGED', [p]);
+      }
+      unrelated.set(p.pid, p); departedKnown.push(identity(prior));
+    }
     do {
       changed = false;
       for (const p of rows.values()) {
@@ -125,8 +155,11 @@ function createOwner(record, options = {}) {
       if (!root || listener.pid !== owner.pid || listener.address !== '127.0.0.1') throw fault('FOREIGN_ISOLATED_LISTENER');
     }
     if (requireListener && sample.listeners.length !== 1) throw fault('ISOLATED_LISTENER_MISSING');
-    for (const p of accepted.values()) known.set(p.pid, { ...identity(p), lastSeenAt: sample.sampledAt });
-    return { sampledAt: sample.sampledAt, live: [...accepted.values()].map(identity), ignoredPriorParentInstance: [...unrelated.values()].map(identity), listeners: sample.listeners, known: [...known.values()] };
+    for (const p of accepted.values()) {
+      const current = { ...identity(p), lastSeenAt: sample.sampledAt };
+      known.set(p.pid, current); generations.set(generationKey(p), current);
+    }
+    return { sampledAt: sample.sampledAt, live: [...accepted.values()].map(identity), ignoredPriorParentInstance: [...unrelated.values()].map(identity), departedKnown, reboundKnown, listeners: sample.listeners, known: [...known.values()], generations: [...generations.values()] };
   }
   async function observe(settings) {
     for (let attempt = 1; attempt <= attempts; attempt++) {
@@ -155,11 +188,22 @@ function createOwner(record, options = {}) {
     return result;
   }
   async function cleanup() {
-    await observe({ requireParent: false, requireListener: false });
+    const observed = await observe({ requireParent: false, requireListener: false });
     // Exact-identity checks occur again in the native termination operation.
     // Parent first prevents it spawning another runner while children drain.
     await terminate(owner);
-    for (const p of [...known.values()].reverse()) if (p.pid !== owner.pid) await terminate(p);
+    const departed = new Set(observed.departedKnown.map(p => p.pid));
+    for (const p of [...known.values()].reverse()) if (p.pid !== owner.pid && !departed.has(p.pid)) {
+      try { await terminate(p); }
+      catch (error) {
+        // A child can exit and its PID be recycled after observation. The
+        // native exact-identity operation never kills that replacement; obtain
+        // fresh positive proof before treating the former identity as gone.
+        const current = await observe({ requireParent: false, requireListener: false });
+        if (!current.departedKnown.some(item => item.pid === p.pid)) throw error;
+        emit({ type: 'termination-skipped-reused-pid', former: identity(p) });
+      }
+    }
     return proveGone();
   }
   return { observe, cleanup, proveGone, ownerKey };

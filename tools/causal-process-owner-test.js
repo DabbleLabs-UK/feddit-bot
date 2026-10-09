@@ -48,9 +48,71 @@ test('unknown orphan with no proven ancestry blocks cleanup and release', async 
   const f = fixture([sample([{ ...child, modelReference: true }], [])]);
   await assert.rejects(f.owner.cleanup(), /UNPROVEN_ISOLATED_PROCESS/); assert.deepEqual(f.stops, []);
 });
-test('known child PID reuse blocks exact cleanup', async () => {
-  const f = fixture([sample([root, child]), sample([root, { ...child, createdAt: '2026-10-09T13:00:04Z' }])]);
+test('same birth with changed executable blocks exact cleanup', async () => {
+  const f = fixture([sample([root, child]), sample([root, { ...child, exe: 'C:/foreign.exe' }])]);
   await f.owner.observe(); await assert.rejects(f.owner.cleanup(), /DESCENDANT_IDENTITY_CHANGED/); assert.deepEqual(f.stops, []);
+});
+test('observed probe 25540 recycled to unrelated msrdc never aborts or reaches termination', async () => {
+  const probe = { ...child, pid: 25540 };
+  const msrdc = { pid: 25540, parentPid: 12480, exe: 'C:/Windows/System32/msrdc.exe', createdAt: '2026-10-09T16:51:54.7445580Z', modelReference: false };
+  const f = fixture([sample([root, probe]), sample([root, msrdc]), sample([root, msrdc]), sample([msrdc], [])]);
+  await f.owner.observe();
+  const reused = await f.owner.observe();
+  assert.deepEqual(reused.live.map(p => p.pid), [10]);
+  assert.equal(reused.departedKnown[0].pid, 25540);
+  assert.equal(reused.known.find(p => p.pid === 25540).exe, probe.exe, 'original observed identity remains immutable');
+  await f.owner.cleanup(); assert.deepEqual(f.stops, [10], 'foreign recycled PID is never submitted to termination');
+  assert.equal(f.events.at(-1).type, 'teardown-verified');
+});
+test('recycled child PID still blocks with an isolated-model reference but no owned ancestry', async () => {
+  for (const replacement of [{ ...child, modelReference: true, parentPid: 99 }, { ...child, modelReference: true, parentPid: 12480 }]) {
+    const f = fixture([sample([root, child]), sample([root, { ...replacement, createdAt: '2026-10-09T13:00:04Z' }])]);
+    await f.owner.observe(); await assert.rejects(f.owner.cleanup(), /DESCENDANT_IDENTITY_CHANGED/); assert.deepEqual(f.stops, []);
+  }
+});
+test('later legitimate model runner may reuse an exited probe PID as a distinct owned generation', async () => {
+  const later = { ...child, exe: 'C:/Ollama/lib/llama-server.exe', createdAt: '2026-10-09T13:00:04Z', modelReference: true };
+  const stopped = [];
+  const f = fixture([sample([root, child]), sample([root, later]), sample([root, later]), sample([], [])], { terminate: async p => stopped.push(p) });
+  await f.owner.observe(); const result = await f.owner.observe();
+  assert.equal(result.reboundKnown.length, 1);
+  assert.equal(result.generations.filter(p => p.pid === child.pid).length, 2);
+  await f.owner.cleanup(); assert.equal(stopped.find(p => p.pid === child.pid).createdAt, later.createdAt);
+});
+test('recycled probe with missing known parent cannot be declared foreign during cleanup', async () => {
+  for (const indirect of [false, true]) {
+    const later = { ...child, createdAt: '2026-10-09T13:00:04Z', modelReference: false, parentPid: indirect ? 13 : root.pid };
+    const bridge = { ...helper, pid: 13, parentPid: root.pid, modelReference: false };
+    const f = fixture([sample([root, child]), sample(indirect ? [later, bridge] : [later], [])]);
+    await f.owner.observe();
+    await assert.rejects(f.owner.cleanup(), /DESCENDANT_IDENTITY_CHANGED/);
+    assert.deepEqual(f.stops, [], 'unknown orphan is neither ignored nor terminated');
+    assert(!f.events.some(e => e.type === 'teardown-verified'));
+  }
+});
+test('owned identity generation transitions survive journal replay without silently reinterpreting a PID', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'causal-owner-generation-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const evidenceFile = path.join(dir, 'processes.jsonl');
+  const later = { ...child, exe: 'C:/Ollama/lib/llama-server.exe', createdAt: '2026-10-09T13:00:04Z', modelReference: true };
+  let rows = [root, child];
+  const owner = createOwner(root, { evidenceFile, snapshot: async () => sample(rows) });
+  await owner.observe(); rows = [root, later]; await owner.observe();
+  const restored = createOwner(root, { evidenceFile, snapshot: async () => sample(rows) });
+  assert.equal((await restored.observe()).generations.filter(p => p.pid === child.pid).length, 2);
+  const lines = fs.readFileSync(evidenceFile, 'utf8').trim().split('\n').map(JSON.parse);
+  lines[1].reboundKnown = [];
+  fs.writeFileSync(evidenceFile, lines.map(v => JSON.stringify(v)).join('\n') + '\n');
+  assert.throws(() => createOwner(root, { evidenceFile }), /PROCESS_EVIDENCE_IDENTITY_CHANGED/);
+});
+test('PID recycling between observation and exact termination requires fresh foreign proof', async () => {
+  const replacement = { ...child, parentPid: 99, exe: 'C:/Windows/System32/msrdc.exe', createdAt: '2026-10-09T16:51:54Z', modelReference: false };
+  const stopped = [];
+  const f = fixture([sample([root, child]), sample([root, child]), sample([replacement], [])], { terminate: async p => {
+    if (p.pid === child.pid) throw Error('exact identity differs; no termination performed');
+    stopped.push(p.pid);
+  } });
+  await f.owner.observe(); await f.owner.cleanup(); assert.deepEqual(stopped, [10]);
+  assert(f.events.some(e => e.type === 'termination-skipped-reused-pid'));
 });
 test('foreign listener and residual bound port prevent release', async () => {
   await assert.rejects(fixture([sample([root], [{ pid: 99, address: '127.0.0.1' }])]).owner.observe(), /FOREIGN_ISOLATED_LISTENER/);
