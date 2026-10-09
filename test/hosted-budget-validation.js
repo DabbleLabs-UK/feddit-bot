@@ -1,6 +1,6 @@
 'use strict';
 const assert = require('node:assert/strict');
-const { score } = require('../bin/validate-hosted-decision-budget');
+const { score, remainingAfterTimeout, TIMEOUT_MESSAGE } = require('../bin/validate-hosted-decision-budget');
 const item = { construction: { candidateIds: ['C1'], voteIds: ['V1'], deferredVoteIds: ['V2'] },
   record: { slate: { candidates: [{ id: 'C1' }, { id: 'C2' }], voteCandidates: [
     { id: 'V1', targetType: 'post', targetId: 1 }, { id: 'V2', targetType: 'post', targetId: 2 }] } } };
@@ -19,4 +19,11 @@ assert.equal(nil.votes.length, 1); assert.equal(nil.deferredNeverConsidered, tru
 const invalidChoice = score('{"choice":"C2","votes":[]}', item);
 assert.equal(invalidChoice.valid, false); assert.equal(invalidChoice.technicalFailure, true); checks += 2;
 assert.equal(JSON.stringify(item), before); checks++;
+const packet = { cases: [{ label: 'first', construction: { budget: { requestHash: 'frozen-hash' } } }, { label: 'second' }, { label: 'third' }, { label: 'blocked' }] };
+const prior = { status: 'failed', attempts: 1, lastError: TIMEOUT_MESSAGE, profileId: 'frozen-first', payload: { decisionBudget: { requestHash: 'frozen-hash' } } };
+assert.deepEqual(remainingAfterTimeout(packet, [prior]).map((entry) => entry.label), ['second', 'third', 'blocked']); checks++;
+for (const change of [{ status: 'claimed' }, { attempts: 2 }, { lastError: 'ambiguous transport' }, { profileId: 'other' }, { payload: { decisionBudget: { requestHash: 'changed' } } }]) {
+  assert.throws(() => remainingAfterTimeout(packet, [{ ...prior, ...change }])); checks++;
+}
+assert.throws(() => remainingAfterTimeout(packet, [prior, prior])); checks++;
 console.log('Frozen budget validation: ' + checks + ' checks passed');

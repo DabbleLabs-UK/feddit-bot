@@ -52,7 +52,19 @@ function score(text, item) {
     unresolved: unresolved.length, isolatedConsideredCount: considered.length, deferredNeverConsidered: true };
 }
 
-async function run(packet, output) {
+const TIMEOUT_MESSAGE = 'The local model did not finish within 5 minute(s). No complete result was accepted.';
+function remainingAfterTimeout(packet, previousJobs) {
+  assert.equal(previousJobs.length, 1, 'Continuation must follow exactly one attempted case');
+  const prior = previousJobs[0];
+  assert.equal(prior.status, 'failed');
+  assert.equal(prior.attempts, 1);
+  assert.equal(prior.lastError, TIMEOUT_MESSAGE);
+  assert.equal(prior.profileId, 'frozen-' + packet.cases[0].label);
+  assert.equal(prior.payload.decisionBudget.requestHash, packet.cases[0].construction.budget.requestHash);
+  return packet.cases.slice(1); // Never retry the failed first inference.
+}
+
+async function run(packet, output, previousDirectory = null) {
   assert.equal(process.platform, 'win32');
   assert.equal(os.hostname().toUpperCase(), 'DELL');
   assert.equal(packet.version, 1);
@@ -61,6 +73,8 @@ async function run(packet, output) {
   assert(path.isAbsolute(output));
   assert(!fs.existsSync(output), 'Refuse to resume/retry an existing validation directory');
   assert(!fs.existsSync('C:/dev/inference-maintenance/request.json'), 'Another maintenance operation owns admission');
+  const selectedCases = previousDirectory
+    ? remainingAfterTimeout(packet, read(path.join(previousDirectory, 'private-jobs.json')).jobs) : packet.cases;
   fs.mkdirSync(output);
   process.env.FEDDIT_BOT_DATA_DIR = path.join(output, 'telemetry');
   process.env.OLLAMA_BASE = 'http://127.0.0.1:11434';
@@ -96,7 +110,7 @@ async function run(packet, output) {
     logger: { log() {}, warn() {}, error() {} } });
   const results = [];
   try {
-    for (const item of packet.cases) {
+    for (const item of selectedCases) {
       assert.equal(hash(JSON.stringify(item.record)), item.frozenHash);
       const built = budget.construct({ model: item.request.model, system: item.request.system,
         ...item.record.slate, decisionAt: item.record.createdAt, decisionContractVersion: 2 });
@@ -118,7 +132,12 @@ async function run(packet, output) {
       await worker.pollOnce();
       const completed = queue.get(job.id);
       if (completed.status !== 'completed') {
-        save(item.label + '-failure', { status: completed.status, error: completed.lastError });
+        const result = { label: item.label, status: completed.status, error: completed.lastError, budget: measured,
+          nativeInput: null, partialResultAccepted: false, automaticRetry: false };
+        save(item.label + '-failure', result); results.push(result); console.log(JSON.stringify(result));
+        // Explicit operator continuation may finish the remaining DIFFERENT
+        // cases after this already-diagnosed timeout, never retry a model call.
+        if (previousDirectory && completed.lastError === TIMEOUT_MESSAGE) continue;
         throw new Error('Frozen worker request failed; no retry: ' + item.label);
       }
       const generated = await provider.wait(job.id, 1000);
@@ -143,7 +162,8 @@ if (require.main === module) {
       console.log(JSON.stringify(packet.cases.map((item) => ({ label: item.label, original: item.construction.originalInputTokens,
         input: (item.repair ? item.construction.repairBudget : item.construction.budget)?.inputTokens, failure: !!item.construction.failure }))));
     } else if (process.argv[2] === '--run') await run(read(process.argv[3]), process.argv[4]);
+    else if (process.argv[2] === '--continue-after-timeout') await run(read(process.argv[3]), process.argv[4], process.argv[5]);
     else throw new Error('Explicit --prepare or --run required');
   })().catch((error) => { console.error('Frozen validation stopped: ' + error.message); process.exitCode = 1; });
 }
-module.exports = { prepare, score };
+module.exports = { prepare, score, remainingAfterTimeout, TIMEOUT_MESSAGE };
