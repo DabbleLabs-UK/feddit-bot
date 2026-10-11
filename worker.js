@@ -5,6 +5,7 @@
 
 const os = require('node:os');
 const ollama = require('./lib/providers/ollama');
+const { createMaintenanceGate } = require('./lib/worker-maintenance');
 
 const VERSION = '1';
 const DEFAULT_POLL_MS = 10 * 1000;
@@ -75,6 +76,7 @@ function createWorker(options = {}) {
   const renewMs = Number(options.renewMs) || DEFAULT_RENEW_MS;
   const sleep = options.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const models = parseAllowedModels(options.allowedModels, ollama.DEFAULT_MODEL);
+  const maintenance = createMaintenanceGate({ directory: options.maintenanceDir, logger });
   let stopped = false;
 
   async function request(route, body) {
@@ -116,6 +118,11 @@ function createWorker(options = {}) {
     let renewTimer = null;
     try {
       const payload = cleanPayload(job.payload, models);
+      // Hosted jobs keep the existing absolute/stream-idle contract. The new
+      // first-output/progress policy is for desktop/self-hosted local requests.
+      payload.legacyTimeouts = true;
+      payload.hostedDecision = /^(scheduled|simulation-now)-decision(?:-retry)?$/.test(String(job.kind || '')) || !!job.payload.decisionBudget;
+      if (job.payload.decisionBudget) payload.decisionBudget = job.payload.decisionBudget;
       payload.priorityClass = sharedPriority(job);
       renewTimer = setInterval(() => {
         request('api/worker/jobs/' + encodeURIComponent(job.id) + '/renew', workerDetails(true))
@@ -134,7 +141,7 @@ function createWorker(options = {}) {
       await request('api/worker/jobs/' + encodeURIComponent(job.id) + '/fail', {
         ...workerDetails(false),
         error: err.message,
-        retryable: err.code !== 'UNSUPPORTED_MODEL',
+        retryable: err.code !== 'UNSUPPORTED_MODEL' && !String(err.code || '').startsWith('HOSTED_DECISION') && !String(err.code || '').startsWith('HOSTED_TOKENIZER'),
       }).catch((reportErr) => {
         logger.error('Could not report failed job ' + job.id + ': ' + reportErr.message);
       });
@@ -146,10 +153,15 @@ function createWorker(options = {}) {
   }
 
   async function pollOnce() {
-    const response = await request('api/worker/claim', workerDetails(false));
-    if (!response.job) return false;
-    await runJob(response.job);
-    return true;
+    if (!maintenance.begin()) return false;
+    try {
+      const response = await request('api/worker/claim', workerDetails(false));
+      if (!response.job) return false;
+      await runJob(response.job);
+      return true;
+    } finally {
+      maintenance.end();
+    }
   }
 
   async function run() {
@@ -169,7 +181,7 @@ function createWorker(options = {}) {
     stopped = true;
   }
 
-  return { runnerUrl, workerId, models, request, runJob, pollOnce, run, stop };
+  return { runnerUrl, workerId, models, request, runJob, pollOnce, run, stop, maintenance };
 }
 
 if (require.main === module) {
@@ -180,6 +192,7 @@ if (require.main === module) {
       key: process.env.FEDDIT_WORKER_KEY,
       workerId: process.env.FEDDIT_WORKER_ID || os.hostname(),
       allowedModels: process.env.FEDDIT_WORKER_MODELS,
+      maintenanceDir: process.env.FEDDIT_MAINTENANCE_DIR,
     });
   } catch (err) {
     console.error(err.message);
