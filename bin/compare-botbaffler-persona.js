@@ -30,6 +30,30 @@ const TARGETS = [
   { label: 'contempt-self-care', kind: 'post', id: 385 },
   { label: 'collaborative-tree-tax', kind: 'post', id: 338 },
 ];
+const MISSING_KEYS = ['contempt-question-old', 'contempt-question-revised',
+  'collaborative-underpants-revised', 'collaborative-underpants-old', 'contempt-self-care-old'];
+function missingPlans(calls, previousPlan, previousSummary, packetHash) {
+  assert.equal(previousPlan.treatment, 'revised');
+  assert.equal(previousPlan.packetHash, packetHash, 'Frozen packet changed');
+  assert.deepEqual(previousPlan.traitRevisions, TRAIT_REVISIONS, 'Persona treatment changed');
+  assert.deepEqual(previousPlan.calls, calls, 'Frozen calls/settings changed');
+  assert.equal(previousSummary.results.length, 8);
+  const missing = [], seen = new Set();
+  for (const result of previousSummary.results) {
+    const key = result.label + '-' + result.variant;
+    assert(!seen.has(key), 'Duplicate previous evidence'); seen.add(key);
+    const call = calls.find(c => c.label + '-' + c.variant === key);
+    assert(call, 'Unknown previous result');
+    assert.equal(result.promptHash, call.promptHash); assert.equal(result.expectedInput, call.inputTokens);
+    if (result.status === 'failed') { assert.equal(result.partialAccepted, false); missing.push(key); }
+    else {
+      assert.equal(result.status, 'completed', 'Ambiguous previous result');
+      assert.equal(result.usage.inputTokens, call.inputTokens); assert(String(result.text).trim());
+    }
+  }
+  assert.deepEqual(missing, MISSING_KEYS, 'Only the five explicitly authorized missing outputs may run');
+  return calls.filter(call => missing.includes(call.label + '-' + call.variant));
+}
 function plans(packet, tokenizer, treatment = 'clarified') {
   assert(['clarified', 'revised'].includes(treatment), 'Unknown experiment treatment');
   assert.equal(packet.version, 1); assert.equal(packet.cases.length, 4);
@@ -70,28 +94,51 @@ function freeze(output) {
   fs.writeFileSync(output, JSON.stringify(packet, null, 2), { flag: 'wx', mode: 0o600 });
   console.log(JSON.stringify(packet.cases.map(item => ({ ...item.target, turnId: item.turnId, requestHash: item.requestHash, originalUsage: item.originalUsage }))));
 }
-async function run(packet, output, tokenizerPath, treatment = 'clarified') {
+async function run(packet, output, tokenizerPath, treatment = 'clarified', options = {}) {
   assert.equal(process.platform, 'win32'); assert.equal(require('node:os').hostname().toUpperCase(), 'DELL');
   assert(path.isAbsolute(output)); assert(!fs.existsSync(output), 'Refuse to retry an existing experiment directory');
   const maintenance = 'C:/dev/inference-maintenance/request.json';
   assert(!fs.existsSync(maintenance), 'Another operation owns maintenance');
-  const tokenizer = require(path.resolve(tokenizerPath)), calls = plans(packet, tokenizer, treatment);
+  const tokenizer = require(path.resolve(tokenizerPath)), allCalls = plans(packet, tokenizer, treatment);
+  let calls = allCalls, previousPins = null;
+  if (options.previousDirectory) {
+    assert.equal(treatment, 'revised'); assert(path.isAbsolute(options.previousDirectory));
+    const previousPlan = read(path.join(options.previousDirectory, 'plan.json'));
+    const previousSummary = read(path.join(options.previousDirectory, 'summary.json'));
+    calls = missingPlans(allCalls, previousPlan, previousSummary, hash(JSON.stringify(packet)));
+    previousPins = {};
+    for (const name of ['plan', 'summary', ...allCalls.map(c => c.label + '-' + c.variant)]) {
+      const file = path.join(options.previousDirectory, name + '.json');
+      previousPins[name] = hash(fs.readFileSync(file));
+      if (name !== 'plan' && name !== 'summary') assert.deepEqual(read(file),
+        previousSummary.results.find(r => r.label + '-' + r.variant === name), 'Prior result file disagrees');
+    }
+  }
   const base = 'http://127.0.0.1:11434';
   const show = await fetch(base + '/api/show', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: tokenizer.MODEL }) }).then(r => r.json());
   tokenizer.verifyModel(show, await fetch(base + '/api/tags').then(r => r.json()));
   const health = await fetch('http://127.0.0.1:11435/health').then(r => r.json());
   assert.deepEqual(health.profile, { num_ctx: 3072, num_thread: 4 });
+  assert.equal((await fetch(base + '/api/version').then(r => r.json())).version, '0.34.1');
   fs.mkdirSync(output);
   process.env.FEDDIT_BOT_DATA_DIR = path.join(output, 'telemetry');
   process.env.OLLAMA_BASE = base; process.env.SHARED_OLLAMA_ARBITER_URL = 'http://127.0.0.1:11435';
   const { createQueue } = require('../lib/job-queue');
   const { createDellProvider } = require('../lib/providers/dell');
   const { createWorker } = require('../worker');
+  const ollama = require('../lib/providers/ollama');
   const queue = createQueue({ file: path.join(output, 'private-jobs.json') }), provider = createDellProvider(queue);
   const key = crypto.randomBytes(24).toString('hex');
   const save = (name, value) => fs.writeFileSync(path.join(output, name + '.json'), JSON.stringify(value, null, 2), { flag: 'wx', mode: 0o600 });
+  const timeoutMs = options.previousDirectory ? 15 * 60 * 1000 : 300000;
+  const window = options.previousDirectory ? require('./botbaffler-experiment-window').createWindow({
+    directory: path.dirname(maintenance), id: 'botbaffler-missing-' + crypto.randomBytes(8).toString('hex'),
+    save, isBusy: ollama.isBusy,
+  }) : null;
+  const leaseClient = window ? window.wrapLeaseClient(require('../lib/shared-ollama-lease').createClient('http://127.0.0.1:11435')) : null;
   save('plan', { treatment, clarification: treatment === 'clarified' ? CLARIFICATION : null,
     traitRevisions: treatment === 'revised' ? TRAIT_REVISIONS : null, packetHash: hash(JSON.stringify(packet)), calls,
+    previousDirectory: options.previousDirectory || null, previousPins, experimentTimeoutMs: timeoutMs,
     modelManifest: tokenizer.MANIFEST_SHA256, template: tokenizer.TEMPLATE_SHA256, profile: health.profile, stochastic: true, retries: 0 });
   const server = http.createServer(async (req, res) => {
     try {
@@ -111,13 +158,17 @@ async function run(packet, output, tokenizerPath, treatment = 'clarified') {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const worker = createWorker({ runnerUrl: 'http://127.0.0.1:' + server.address().port, key,
-    workerId: 'private-botbaffler-pairs', allowedModels: tokenizer.MODEL, logger: { log() {}, warn() {}, error() {} } });
+    workerId: 'private-botbaffler-pairs', allowedModels: tokenizer.MODEL,
+    ...(window ? { generate: payload => ollama.generate({ ...payload, leaseClient }) } : {}),
+    logger: { log() {}, warn() {}, error() {} } });
   const results = [];
   try {
+    if (window) await window.enter();
     for (const call of calls) {
-      assert(!fs.existsSync(maintenance), 'Maintenance began; stop before next call');
+      if (window) await window.guard();
+      else assert(!fs.existsSync(maintenance), 'Maintenance began; stop before next call');
       const job = provider.enqueue({ ...call.request, profileId: 'frozen-' + call.label + '-' + call.variant,
-        ownerKey: 'private-botbaffler-experiment', kind: 'scheduled-generation', priority: 'background', allocationClass: 'synthetic', timeoutMs: 300000 });
+        ownerKey: 'private-botbaffler-experiment', kind: 'scheduled-generation', priority: 'background', allocationClass: 'synthetic', timeoutMs });
       console.log(JSON.stringify({ label: call.label, variant: call.variant, state: 'queued', inputTokens: call.inputTokens, at: new Date().toISOString() }));
       await worker.pollOnce(); const done = queue.get(job.id);
       assert.equal(done.attempts, 1, 'Never retry an inference');
@@ -125,10 +176,11 @@ async function run(packet, output, tokenizerPath, treatment = 'clarified') {
         ...(done.status === 'completed' ? { text: done.result.text, ms: done.result.ms, queueMs: done.result.queueMs, usage: done.result.usage } : { error: done.lastError, partialAccepted: false }) };
       save(call.label + '-' + call.variant, result); results.push(result); console.log(JSON.stringify({ ...result, text: undefined }));
       if (done.status === 'completed') assert.equal(result.usage.inputTokens, call.inputTokens, 'Native truncation/token mismatch; stop');
-      else assert.equal(done.status, 'failed', 'Ambiguous inference; stop');
+      else { assert.equal(done.status, 'failed', 'Ambiguous inference; stop'); if (window) throw Error('Missing-output attempt failed; stop without retry'); }
     }
+    if (window) await window.guard();
     save('summary', { results, publicationRoutes: 0, liveStoresOpened: 0, retries: 0 });
-  } finally { worker.stop(); await new Promise(resolve => server.close(resolve)); }
+  } finally { worker.stop(); await new Promise(resolve => server.close(resolve)); if (window) await window.close(); }
 }
 if (require.main === module) {
   (async () => {
@@ -137,7 +189,8 @@ if (require.main === module) {
     else if (process.argv[2] === '--run') await run(read(process.argv[3]), process.argv[4], process.argv[5]);
     else if (process.argv[2] === '--preflight-revision') console.log(JSON.stringify(plans(read(process.argv[3]), require(path.resolve(process.argv[4])), 'revised').map(({ request, ...meta }) => ({ ...meta, temperature: request.temperature, numPredict: request.numPredict })), null, 2));
     else if (process.argv[2] === '--run-revision') await run(read(process.argv[3]), process.argv[4], process.argv[5], 'revised');
+    else if (process.argv[2] === '--complete-revision') await run(read(process.argv[3]), process.argv[4], process.argv[5], 'revised', { previousDirectory: process.argv[6] });
     else throw new Error('Explicit --freeze, --preflight or --run required');
   })().catch(error => { console.error(error.message); process.exitCode = 1; });
 }
-module.exports = { plans, CLARIFICATION, TRAIT_REVISIONS, revisePersona, TARGETS, hash };
+module.exports = { plans, missingPlans, MISSING_KEYS, CLARIFICATION, TRAIT_REVISIONS, revisePersona, TARGETS, hash };
