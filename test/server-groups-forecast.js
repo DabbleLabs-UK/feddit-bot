@@ -13,9 +13,10 @@ async function run(placement) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'feddit-groups-api-'));
   const apiPort = await port();
   const own = placement === 'hosted' ? 'a' : null;
+  const replyGuardState = {version:2,attempts:[{postId:'10',targetKey:'t1_20',at:100}]};
   fs.writeFileSync(path.join(dir,'owners.json'), JSON.stringify({version:2,owners:['a','b'].map(id => ({id,accessHash:digest('token-'+id),createdAt:new Date().toISOString()}))}));
   fs.writeFileSync(path.join(dir,'profiles.json'), JSON.stringify({schemaVersion:26,settings:{paused:true},groups:[],profiles:[
-    {id:'first',ownerId:own,enabled:false,dryRun:true,provider:'ollama',fedditUsername:'first',postsPerHour:0,commentsPerHour:0},
+    {id:'first',ownerId:own,enabled:false,dryRun:true,provider:'ollama',fedditUsername:'first',postsPerHour:0,commentsPerHour:0,replyGuardState},
     {id:'other',ownerId:'b',enabled:false,dryRun:true,fedditUsername:'other'},
     {id:'population',ownerId:null,botOrigin:'system',enabled:false,dryRun:true,canReply:true,canStartDiscussions:true,canShareLinks:false,provider:'ollama',fedditUsername:'population',postsPerHour:0,commentsPerHour:0},
   ]}));
@@ -29,6 +30,10 @@ async function run(placement) {
     let ready=false;
     for(let i=0;i<100;i++){try{await request('/api/runtime');ready=true;break;}catch{await new Promise(r=>setTimeout(r,50));}}
     if(!ready)throw new Error(output);
+    eq('replyGuardState' in (await request('/api/profiles')).data.profiles.find(p=>p.id==='first'),false,'profile list hides internal reply guard');
+    eq('replyGuardState' in (await request('/api/profiles/first')).data.profile,false,'profile detail hides internal reply guard');
+    await request('/api/profiles/first','PUT',{replyGuardState:{version:2,attempts:[]}});
+    eq(JSON.parse(fs.readFileSync(path.join(dir,'profiles.json'),'utf8')).profiles.find(p=>p.id==='first').replyGuardState,replyGuardState,'ordinary API edits cannot reset internal reply guard');
     const created=await request('/api/groups','POST',{name:'Fixture',profileId:'first'});
     eq(created.status,201,'create group'); const id=created.data.group.id;
     eq((await request('/api/profiles/first/group','PUT',{groupId:id})).data.profile.groupId,id,'assign group');

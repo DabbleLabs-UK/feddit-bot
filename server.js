@@ -380,7 +380,7 @@ function safeProfile(p) {
   // count of the news dedupe set so the UI can show it on the clear button.
   const {
     token, ownerId, repliedTo, postedNews, newsDomainDaily, newsDomainDays,
-    attentionState, socialState, memoryState, voteState, simulationState,
+    attentionState, socialState, memoryState, voteState, simulationState, replyGuardState,
     creatorProfile, creatorProvenance, ...rest
   } = p;
   const now = Date.now();
@@ -1589,7 +1589,7 @@ async function handleApi(req, res, urlPath, query) {
       const biography = await currentFedditBiography(existing);
       const {
         token, ownerId, postedNews, newsDomainDaily, newsDomainDays,
-        socialState, memoryState, voteState, simulationState, ...rest
+        socialState, memoryState, voteState, simulationState, replyGuardState, ...rest
       } = existing;
       const simulation = scheduler.isDryRun(existing, store.getSettings());
       return sendJson(res, 200, {
@@ -1717,6 +1717,7 @@ async function handleApi(req, res, urlPath, query) {
       delete body.memoryState;
       delete body.voteState;
       delete body.simulationState;
+      delete body.replyGuardState;
       if (existing.token && Object.prototype.hasOwnProperty.call(body, 'fedditUsername')) {
         const currentUsername = String(existing.fedditUsername || '').trim().toLowerCase();
         const requestedUsername = String(body.fedditUsername || '').trim().toLowerCase();

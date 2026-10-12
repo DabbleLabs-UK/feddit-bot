@@ -106,7 +106,7 @@ try {
     eq(withoutGroup(item), withoutGroup({ ...expected, token: '' }), 'migration preserves unrelated profile fields and cadence');
   }
   const migrated = JSON.parse(fs.readFileSync(store.DATA_FILE, 'utf8'));
-  eq(migrated.schemaVersion, 26, 'migration persists schema 26');
+  eq(migrated.schemaVersion, store.DATA_SCHEMA_VERSION, 'migration persists the current schema');
   eq(migrated.groups, [], 'migration persists empty groups');
 
   migrated.groups = [other];

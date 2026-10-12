@@ -17,6 +17,7 @@ const rehearsalObservability = require('../lib/rehearsal-observability');
 const { DEFAULT_MODEL } = require('../lib/providers/ollama');
 const actionCandidates = require('../lib/action-candidates');
 const crypto = require('node:crypto');
+const continuationGuard = require('../lib/continuation-guard');
 
 let checks = 0;
 function ok(value, message) {
@@ -148,6 +149,18 @@ function makeStore(profiles, now) {
       parent.attentionState = structuredClone(scan || { cursor: { comments: 0, posts: 0 }, seenEventIds: [] });
       return parent.attentionState;
     },
+    getActiveThreadState(id, options = {}) {
+      const p = byId.get(id);
+      const parent = options.simulation && p.simulationState ? p.simulationState : p;
+      return structuredClone(parent.activeThreadState || { consideredEventIds: [] });
+    },
+    recordActiveThreadScan(id, scan, options = {}) {
+      const p = byId.get(id);
+      const parent = options.simulation && p.simulationState ? p.simulationState : p;
+      const seen = new Set(parent.activeThreadState && parent.activeThreadState.consideredEventIds || []);
+      for (const key of scan.consideredEventIds || []) seen.add(key);
+      parent.activeThreadState = { consideredEventIds: [...seen] };
+    },
     getSocialState(id, options = {}) {
       const profile = byId.get(id);
       const parent = options.simulation && profile && profile.simulationState ? profile.simulationState : profile;
@@ -188,6 +201,10 @@ function makeStore(profiles, now) {
     getThreadReplyCount(postId, options = {}) {
       const profileId = options.profileId;
       const profile = profileId ? byId.get(profileId) : null;
+      if (options.continuationVersion === 2) {
+        const field = options.simulation ? '_testRehearsalReplyGuardState' : 'replyGuardState';
+        return continuationGuard.count(profile && profile[field], postId, options.nowMs);
+      }
       const threadState = options.simulation && profile && profile.simulationState
         ? profile.simulationState
         : settings;
@@ -196,6 +213,11 @@ function makeStore(profiles, now) {
     bumpThreadReply(postId, options = {}) {
       const profileId = options.profileId;
       const profile = profileId ? byId.get(profileId) : null;
+      if (options.continuationVersion === 2) {
+        const field = options.simulation ? '_testRehearsalReplyGuardState' : 'replyGuardState';
+        profile[field] = continuationGuard.record(profile[field], postId, options).state;
+        return continuationGuard.count(profile[field], postId, options.nowMs);
+      }
       const threadState = options.simulation && profile && profile.simulationState
         ? profile.simulationState
         : settings;
@@ -460,6 +482,166 @@ function votingHarness(id, count) {
 
 async function run() {
   {
+    const p=makeProfile('burst-scoped-guard',false);
+    Object.assign(p,{canReply:true,canStartDiscussions:false,canVote:false,postsPerHour:0,commentsPerHour:1});
+    p.replyGuardState=continuationGuard.record(undefined,42,{targetKey:'t1_800',nowMs:9000}).state;
+    p.replyGuardState=continuationGuard.record(p.replyGuardState,42,{targetKey:'t1_801',nowMs:9001}).state;
+    const h=harness({profiles:[p],providerGenerate:async()=>({text:JSON.stringify({
+      actions:[1,2,3].map(i=>({candidate:'C'+i,text:'A bounded reply '+i,reason:'A relevant reply.'})),votes:[],
+    }),model:'sonnet',usage:{inputTokens:10,outputTokens:10},ms:1})});
+    h.feddit.attention=async()=>({ok:true,data:{cursor:{comments:883,posts:0},has_more:false,
+      events:[881,882,883].map(id=>({type:'reply_to_own_comment',event_id:'t1_'+id,source_type:'comment',comment_id:id,
+        post_id:42,created_utc:9,community:'general',author:'other',body:'A direct reply.',
+        context:{post:{post_id:42,title:'A thread',author:'other',community:'general'}}}))}});
+    try{
+      const runtime=h.scheduler(),started=runtime.startBurstSession(p.id,'claude-plan');await settle();
+      const turn=h.turnStore.get(started.turnId);
+      eq(turn.input.continuationVersion,2,'new Burst freezes the shared continuation contract');
+      eq(turn.status,'completed','stale multi-action Burst menu safely completes');
+      eq(h.writes.filter(w=>w.type==='comment').length,1,'only the remaining same-bot thread allowance publishes from a three-action snapshot');
+      eq(p.replyGuardState.attempts.length,3,'Burst cannot bypass the per-bot attempt bound');
+      eq(turn.result.actions.filter(a=>a.result && a.result.skipped==='reply-loop-guard').length,2,
+        'later stale-snapshot actions are individually held without forced publication');
+      runtime.reconcileDurableTurns();await settle();
+      eq(h.writes.length,1,'Burst replay cannot resend the admitted reply');
+    }finally{h.cleanup();}
+  }
+  {
+    const p=makeProfile('checkpoint-accounting',false);
+    Object.assign(p,{canReply:true,canStartDiscussions:false,postsPerHour:0,commentsPerHour:1});
+    Object.assign(p.sched,{nextPostAt:null,nextCommentAt:0});
+    const h=harness({profiles:[p],feedPosts:[{id:97,author:'other',feddit:'general',title:'A target',selftext:'A small premise.',created_utc:9}]});
+    let failures=1;
+    const checkpoint=h.turnStore.setCheckpoint;
+    h.turnStore.setCheckpoint=(id,key,value)=>{
+      if(key==='comment-continuation-attempt' && failures-- > 0)throw new Error('fixture turn checkpoint interrupted');
+      return checkpoint(id,key,value);
+    };
+    try {
+      const runtime=h.scheduler();await runtime.runTick();await settle();
+      const turn=h.turnStore.activeForProfile(p.id);
+      completeJob(h.queue,turn.generations[0].jobId,JSON.stringify({choice:'C1',reason:'A fitting reply.'}));
+      const gen=await queueContentGeneration({scheduler:runtime,turnStore:h.turnStore},turn.id);
+      completeJob(h.queue,gen.jobId,'A complete reply.');
+      runtime.reconcileDurableTurns();await settle();
+      eq(h.turnStore.get(turn.id).status,'blocked','attempt checkpoint failure holds the confirmed publication for accounting replay');
+      eq(h.turnStore.get(turn.id).publication.state,'response-received','publication receipt stays frozen during bookkeeping interruption');
+      const restarted=h.restartRuntime();h.advance(continuationGuard.WINDOW_MS+1);
+      restarted.scheduler.reconcileDurableTurns();await settle();
+      eq(restarted.turnStore.get(turn.id).status,'completed','checkpoint and profile bookkeeping resume safely');
+      eq(h.writes.length,1,'confirmed publication never resends after accounting interruption');
+      eq(p.replyGuardState.attempts.length,1,'confirmed attempt recorded once after recovery');
+      eq(p.replyGuardState.attempts[0].at,turn.createdAt,'delayed recovery retains original publication timestamp');
+      eq(continuationGuard.count(p.replyGuardState,97,h.now()),0,'expired replay does not manufacture a fresh guard window');
+    }finally{h.cleanup();}
+  }
+  {
+    const p = makeProfile('legacy-continuation', false);
+    Object.assign(p,{canReply:true,canStartDiscussions:false,postsPerHour:0,commentsPerHour:1});
+    const h = harness({profiles:[p]});
+    h.feddit.attention = async()=>({ok:true,data:{cursor:{comments:702,posts:0},has_more:false,
+      events:[701,702].map(id=>({type:'reply_to_own_comment',event_id:'t1_'+id,source_type:'comment',comment_id:id,
+        post_id:99,created_utc:9,community:'general',author:'other',body:'A direct reply.',
+        context:{post:{post_id:99,title:'A thread',author:'other',community:'general'}}}))}});
+    try {
+      const turn=h.turnStore.create({profileId:p.id,profile:structuredClone(p),rehearsal:false,trigger:'scheduled',
+        input:{mode:'capabilities',choices:[{key:'reply'}],decisionContractVersion:2,hostedDecisionBudgetVersion:1}}).turn;
+      const runtime=h.scheduler();runtime.reconcileDurableTurns();await settle();
+      eq(p.attentionState.seenEventIds,['t1_701','t1_702'],'missing continuation version retains legacy pre-inference scan acknowledgment');
+      const active=h.turnStore.get(turn.id),original=active.generations[0].signature;
+      completeJob(h.queue,active.generations[0].jobId,JSON.stringify({choice:'C1',reason:'A relevant direct reply.'}));
+      const gen=await queueContentGeneration({scheduler:runtime,turnStore:h.turnStore},turn.id);
+      completeJob(h.queue,gen.jobId,'A complete reply.');
+      runtime.reconcileDurableTurns();await settle();
+      eq(h.turnStore.get(turn.id).status,'completed','legacy in-flight turn still completes under its frozen contract');
+      eq(h.store.getSettings().threadReplies['99'],1,'legacy in-flight accounting retains the old ledger');
+      eq(p.replyGuardState,undefined,'legacy replay does not invent a new guard history');
+      eq(h.turnStore.get(turn.id).generations[0].signature,original,'legacy frozen request signature unchanged');
+      eq(h.writes.length,1,'legacy replay sends only its original publication');
+    } finally {h.cleanup();}
+  }
+  {
+    const p=makeProfile('uncertain-accounting',false);
+    Object.assign(p,{canReply:true,canStartDiscussions:false,postsPerHour:0,commentsPerHour:1});
+    Object.assign(p.sched,{nextPostAt:null,nextCommentAt:0});
+    const h=harness({profiles:[p],feedPosts:[{id:98,author:'other',feddit:'general',title:'A reply target',selftext:'A small public premise.',created_utc:9}],
+      commentResponse:async()=>{throw new Error('fixture ambiguous delivery');}});
+    let failures=1;
+    const bump=h.store.bumpThreadReply;
+    h.store.bumpThreadReply=(...args)=>{if(failures-- > 0)throw new Error('fixture bookkeeping interrupted');return bump(...args);};
+    try{
+      const runtime=h.scheduler();await runtime.runTick();await settle();
+      const turn=h.turnStore.activeForProfile(p.id);
+      completeJob(h.queue,turn.generations[0].jobId,JSON.stringify({choice:'C1',reason:'A fitting reply.'}));
+      const gen=await queueContentGeneration({scheduler:runtime,turnStore:h.turnStore},turn.id);
+      completeJob(h.queue,gen.jobId,'A bounded reply.');
+      runtime.reconcileDurableTurns();await settle();
+      eq(h.turnStore.get(turn.id).status,'blocked','ambiguous publication stays recoverable until guard accounting persists');
+      eq(h.turnStore.get(turn.id).publication.state,'uncertain','uncertain publication fence remains intact');
+      const restarted=h.restartRuntime();h.advance(5000);restarted.scheduler.reconcileDurableTurns();await settle();
+      eq(restarted.turnStore.get(turn.id).status,'publication-uncertain','safe bookkeeping recovery then terminalizes without resending');
+      eq(h.writes.length,1,'ambiguous registration/publication is never retried');
+      eq(p.replyGuardState.attempts.length,1,'ambiguous attempt is conservatively accounted exactly once');
+      eq(p.replyGuardState.attempts[0].at,turn.createdAt,'attempt time stays frozen at the original publication boundary');
+      ok(p.repliedTo.includes('t3_98'),'uncertain target remains handled before terminalization');
+    }finally{h.cleanup();}
+  }
+  {
+    const voter = makeProfile('renewed-budget-receipt', false);
+    Object.assign(voter, { canReply: true, canStartDiscussions: false, canVote: true, postsPerHour: 0, commentsPerHour: 1 });
+    Object.assign(voter.sched, { nextPostAt: null, nextCommentAt: 0 });
+    const text = Array(60).fill('A photograph with careful lighting documents a different public workshop.').join(' ');
+    const h = harness({ profiles: [voter] });
+    h.feddit.activeThreads = async () => ({ ok: true, data: { threads: [0,1,2].map(i => ({
+      event_id: 'active:t1_' + (601+i), community: 'general',
+      post: { id: 173+i, author: 'carol', feddit: 'general', title: 'Complete pressure target '+i,
+        selftext: i === 0 ? 'A short complete public workshop opening.' : Array(500).fill('42? 43! 44? 45!').join(' '),
+        kind: 'text', created_utc: 9 },
+      fresh_comment: { id: 601+i, author: 'carol', body: 'A fresh specific contribution.', created_utc: 9 },
+    })) } });
+    try {
+      await h.scheduler().runTick(); await settle();
+      const turn = h.turnStore.activeForProfile(voter.id);
+      eq(turn.input.continuationVersion, 2, 'new hosted turns freeze continuation contract independently');
+      const snapshot = turn.checkpoints['opportunity-candidates'], packed = turn.checkpoints['hosted-decision-construction'];
+      ok(packed && !packed.failure && packed.deferredCandidateIds.length > 0, 'renewed fixture fits only a deliberately reduced complete menu: ' +
+        JSON.stringify(packed && {failure:packed.failure,original:packed.originalInputTokens,minimum:packed.minimumInputTokens,kept:packed.candidateIds}));
+      eq(voter.activeThreadState && voter.activeThreadState.consideredEventIds || [], [],
+        'fetch and generation admission do not consume renewed events');
+      const restarted = h.restartRuntime();
+      completeJob(restarted.queue, turn.generations[0].jobId, JSON.stringify({ choice:'WAIT', reason:'Nothing fits now.',
+        votes:packed.voteIds.map(id=>({id,direction:'nil',reason:''})) }));
+      restarted.scheduler.reconcileDurableTurns(); await settle();
+      const final = restarted.turnStore.get(turn.id);
+      eq(final.status, 'completed', 'valid reduced-menu WAIT completes after restart');
+      const kept = snapshot.candidates.filter(c=>packed.candidateIds.includes(c.id));
+      const deferred = snapshot.candidates.filter(c=>packed.deferredCandidateIds.includes(c.id));
+      eq(voter.activeThreadState.consideredEventIds, kept.map(c=>c.target.activeThread.eventId),
+        'receipt consumes actual retained renewed targets only');
+      ok(deferred.every(c=>!voter.activeThreadState.consideredEventIds.includes(c.target.activeThread.eventId)),
+        'budget-deferred renewed IDs are not acknowledged');
+      eq(h.writes.length, 0, 'WAIT fixture never publishes');
+      h.advance(voter.sched.nextCommentAt-h.now()+1);
+      await restarted.scheduler.runTick(); await settle();
+      const next = JSON.parse(fs.readFileSync(h.turnFile, 'utf8')).turns
+        .filter(t=>t.profileId===voter.id && t.id!==turn.id).sort((a,b)=>b.createdAt-a.createdAt)[0];
+      const nextKeys = next.checkpoints['opportunity-candidates'].candidates.map(c=>c.target && c.target.key);
+      ok(deferred.every(c=>nextKeys.includes(c.target.key)), 'deferred renewed conversations surface on a later ordinary opportunity');
+      eq(final.generations[0].signature, turn.generations[0].signature, 'receipt fix does not rewrite a frozen inference request');
+    } finally { h.cleanup(); }
+  }
+  {
+    const p = makeProfile('unknown-continuation', false), h = harness({ profiles:[p] });
+    try {
+      const turn = h.turnStore.create({ profileId:p.id,profile:structuredClone(p),rehearsal:false,trigger:'scheduled',
+        input:{mode:'capabilities',choices:[{key:'discussion'}],decisionContractVersion:2,continuationVersion:99} }).turn;
+      h.scheduler().reconcileDurableTurns(); await settle();
+      eq(h.turnStore.get(turn.id).status, 'blocked', 'unknown continuation contract blocks rather than discarding in-flight ownership');
+      eq(h.turnStore.get(turn.id).generations.length, 0, 'unknown version cannot infer or publish');
+      eq(h.writes.length, 0, 'blocked future contract is nonpublishing');
+    } finally { h.cleanup(); }
+  }
+  {
     const voter = makeProfile('budget-pressure', false);
     Object.assign(voter, { canReply: true, canStartDiscussions: false, canVote: true,
       postsPerHour: 0, commentsPerHour: 1 });
@@ -477,7 +659,8 @@ async function run() {
       eq(turn.input.hostedDecisionBudgetVersion, 1, 'new turns freeze hosted prompt construction version');
       const snapshot = turn.checkpoints['opportunity-candidates'];
       const packed = turn.checkpoints['hosted-decision-construction'];
-      ok(packed && !packed.failure, 'a complete minimum decision slate fits the pressure fixture');
+      ok(packed && !packed.failure, 'a complete minimum decision slate fits the pressure fixture: ' +
+        JSON.stringify({ status: turn.status, error: turn.error, failure: packed && packed.failure, logs: h.logs }));
       ok(packed.deferredCandidateIds.length + packed.deferredVoteIds.length > 0,
         'pressure deliberately defers whole targets instead of relying on truncation');
       ok(packed.originalRepairTokens + packed.numPredict + packed.budget.safetyTokens > packed.budget.contextTokens,

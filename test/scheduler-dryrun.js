@@ -21,6 +21,7 @@ const deepseek = require('../lib/providers/deepseek'); // generate() drivable wi
 const { DEFAULT_MODEL: HOSTED_MODEL } = require('../lib/providers/ollama');
 const socialRelationships = require('../lib/social-relationships');
 const autobiographicalMemory = require('../lib/autobiographical-memory');
+const continuationGuard = require('../lib/continuation-guard');
 
 // ---- tiny assert framework --------------------------------------------------
 
@@ -198,8 +199,21 @@ function makeStore(profiles) {
       p.probation = { onProbation: null, checkedAt: 0, ...(p.probation || {}), ...(patch || {}) };
       return p.probation;
     },
-    getThreadReplyCount: (postId) => settings.threadReplies[String(postId)] || 0,
-    bumpThreadReply: (postId) => {
+    getThreadReplyCount: (postId, options = {}) => {
+      if (options.continuationVersion === 2) {
+        const p = byId.get(options.profileId);
+        const field = options.simulation ? '_testRehearsalReplyGuardState' : 'replyGuardState';
+        return continuationGuard.count(p && p[field], postId, options.nowMs);
+      }
+      return settings.threadReplies[String(postId)] || 0;
+    },
+    bumpThreadReply: (postId, options = {}) => {
+      if (options.continuationVersion === 2) {
+        const p = byId.get(options.profileId);
+        const field = options.simulation ? '_testRehearsalReplyGuardState' : 'replyGuardState';
+        p[field] = continuationGuard.record(p[field], postId, options).state;
+        return continuationGuard.count(p[field], postId, options.nowMs);
+      }
       const k = String(postId);
       settings.threadReplies[k] = (settings.threadReplies[k] || 0) + 1;
       return settings.threadReplies[k];
@@ -882,8 +896,8 @@ async function scenarioReliableAttention() {
   ok(p.simulationState.repliedTo.includes('t1_77'), 'the selected event is recorded as replied to in rehearsal continuity');
   ok(!p.simulationState.repliedTo.includes('t1_78'), 'an unselected event is not falsely recorded as replied to');
   ok(p.simulationState.attentionState.seenEventIds.includes('t1_77') &&
-    p.simulationState.attentionState.seenEventIds.includes('t1_78'),
-  'all delivered events are acknowledged as seen without conflating seen with replied');
+    !p.simulationState.attentionState.seenEventIds.includes('t1_78'),
+  'only the legacy-style generation target was offered; the other fetched event stays pending');
   eq(p.attentionState.cursor.comments, 0, 'rehearsal attention does not advance live attention continuity');
   eq(p.memoryState.episodes.length, 0, 'rehearsal attention does not alter live autobiographical memory');
   eq(p.simulationState.memoryState.episodes.length, 2,
@@ -1598,7 +1612,7 @@ async function scenarioCadenceCeiling() {
 }
 
 // ============================================================================
-// Scenario 3: thread cap stops ping-pong between two of our profiles (DRY-RUN)
+// Scenario 3: per-bot rolling guard stops rapid ping-pong, not other profiles
 // ============================================================================
 async function scenarioThreadCap() {
   console.log('\n[3] thread cap (anti ping-pong) (dry-run)');
@@ -1625,9 +1639,12 @@ async function scenarioThreadCap() {
 
   for (let i = 0; i < 12; i++) { await sched.runTick(); clock.advance(600_000); }
 
-  const cnt = store.getThreadReplyCount(100);
-  eq(cnt, scheduler.THREAD_CAP, 'thread 100 capped at THREAD_CAP (' + scheduler.THREAD_CAP + ') this-runner replies');
-  ok(cnt <= scheduler.THREAD_CAP, 'thread reply count never exceeded the cap');
+  const aCount = store.getThreadReplyCount(100, { profileId: a.id, simulation: true, continuationVersion: 2, nowMs: clock.now() });
+  const bCount = store.getThreadReplyCount(100, { profileId: b.id, simulation: true, continuationVersion: 2, nowMs: clock.now() });
+  ok(aCount <= scheduler.THREAD_CAP && bCount <= scheduler.THREAD_CAP, 'each bot stays within its rolling thread guard');
+  ok((a._testRehearsalReplyGuardState.attempts.length + b._testRehearsalReplyGuardState.attempts.length) > scheduler.THREAD_CAP,
+    'independent bots are not subject to the old shared three-reply ceiling');
+  eq(store.getThreadReplyCount(100), 0, 'new guard leaves the legacy shared ledger unchanged');
 }
 
 // ============================================================================

@@ -26,9 +26,12 @@ parent comments. The API stores no read receipts or notification rows.
 
 The runner stores paired post/comment cursors and a FIFO list of up to 500 recent
 event identifiers. This `attentionState` is separate from `repliedTo`: seeing an
-event does not mean the bot answered it. Events considered during a turn are
-acknowledged even when the bot chooses another target, so they do not repeatedly
-appear new.
+event does not mean the bot answered it. New continuation-contract-v2 turns
+acknowledge the exact retained menu only after a valid decision, including WAIT.
+Fetching, filtering or budget-deferring an event is not acknowledgement. A
+resolved explicit vote can acknowledge only its exact public target, not a fresh
+comment elsewhere in that thread. Existing reply dedupe can repair a missed
+receipt for a previously handled target.
 
 Live and rehearsal state are separate. Resetting simulation clears only the
 rehearsal cursor and seen-event list. A continuity move or identity handover
@@ -47,7 +50,7 @@ WAIT from the real content and context.
 Replies to the bot's own comments or posts and exact mentions are labelled as
 highly salient, and nested continuations are also distinguished. None forces an
 answer. An ordinary post, article, new discussion, or WAIT may still fit the
-persona better. Existing thread caps, NSFW choice, community context,
+persona better. Per-bot rolling reply safeguards, NSFW choice, community context,
 rehearsal/live mode, and all publishing limits remain in force after selection.
 
 The fetch itself is bounded to three pages of 100 new comments and posts per
@@ -55,8 +58,16 @@ turn. Events older than 30 days are advanced past but not offered as new targets
 The complete candidate snapshot and its short decision are durable checkpoints.
 The selection generation is also a durable generation step, so restarting a
 hosted turn reuses its stored result rather than selecting or generating twice.
-Attention state is persisted only after the candidate snapshot is durable, so a
-restart cannot acknowledge delivered events before that opportunity can resume.
+New turns freeze selective discovery receipts after parsing their actual offered
+menu. Idempotent profile writes replay those receipts after interruption without
+another inference or publication. Each source cursor stays behind its oldest
+pending eligible event; already handled IDs remain deduplicated while a deferred
+event can surface later. Stale/invalid events can still be advanced past. Missing
+or malformed decisions do not consume their unresolved discovery candidates.
+
+Legacy in-flight durable turns retain their frozen pre-v2 acknowledgement and
+reply-cap semantics. Existing cursors and considered history are not rewound.
+See `conversation-continuation.md` for the migration and rollback boundary.
 
 ## Observability
 
