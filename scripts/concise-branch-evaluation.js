@@ -4,6 +4,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const diagnostics = require('./evaluation-guard-diagnostics');
 
 const MODEL = 'qwen3:4b-instruct';
 const CASE_COUNT = 5;
@@ -141,20 +142,46 @@ function nextNaturalAt(data) {
   return next;
 }
 
+async function readStatusResponse(fetchStatus, endpoint, { base = 'http://127.0.0.1:8770',
+  options = {}, timeoutMs = 1500, now = Date.now, code = 'EVAL_STATUS_UNAVAILABLE' } = {}) {
+  const prefix = { '/api/settings': 'settings', '/api/runtime': 'identity',
+    '/api/runtime-state': 'runtime', '/api/local-model-activity': 'activity' }[endpoint];
+  const startedAt = now();
+  const details = (part, extra = {}) => ({ phase: prefix + '-' + part, endpoint,
+    elapsedMs: now() - startedAt, timeoutMs, fallbackCode: code, now, ...extra });
+  let response;
+  try {
+    response = await fetchStatus(base + endpoint, { method: 'GET', ...options,
+      signal: AbortSignal.timeout(timeoutMs) });
+  } catch (error) { throw diagnostics.attach(error, details('fetch')); }
+  if (!response || response.ok !== true) {
+    throw diagnostics.failure(code, details('http', { httpStatus: response && response.status }));
+  }
+  try { return await response.json(); }
+  catch (error) { throw diagnostics.attach(error, details('json')); }
+}
+
 function createStatusReader({ fetch: fetchStatus = globalThis.fetch, profilesFile = path.join(PRODUCTION, 'profiles.json'),
   readProfiles = () => read(profilesFile) } = {}) {
   return async () => {
     const states = await Promise.all(['/api/runtime-state', '/api/local-model-activity'].map(async (endpoint) => {
-      const response = await fetchStatus('http://127.0.0.1:8770' + endpoint,
-        { method: 'GET', signal: AbortSignal.timeout(1500) });
-      requireState(response && response.ok === true, 'EVAL_STATUS_UNAVAILABLE');
-      return response.json();
+      return readStatusResponse(fetchStatus, endpoint);
     }));
     const [runtime, model] = states;
-    requireState(runtime && typeof runtime.busy === 'boolean' && model && Object.hasOwn(model, 'active') &&
-      (model.active === null || (typeof model.active === 'object' && !Array.isArray(model.active))),
-    'EVAL_STATUS_UNAVAILABLE');
-    return { busy: runtime.busy || model.active !== null, nextAt: nextNaturalAt(readProfiles()) };
+    if (!runtime || typeof runtime.busy !== 'boolean') throw diagnostics.failure('EVAL_STATUS_UNAVAILABLE',
+      { phase: 'runtime-schema', endpoint: '/api/runtime-state' });
+    if (!model || !Object.hasOwn(model, 'active') ||
+      (model.active !== null && (typeof model.active !== 'object' || Array.isArray(model.active)))) {
+      throw diagnostics.failure('EVAL_STATUS_UNAVAILABLE',
+        { phase: 'activity-schema', endpoint: '/api/local-model-activity' });
+    }
+    let profiles;
+    try { profiles = readProfiles(); }
+    catch (error) { throw diagnostics.attach(error, { phase: 'schedule-read', fallbackCode: 'EVAL_SCHEDULE_UNKNOWN' }); }
+    let nextAt;
+    try { nextAt = nextNaturalAt(profiles); }
+    catch (error) { throw diagnostics.attach(error, { phase: 'schedule-schema' }); }
+    return { busy: runtime.busy || model.active !== null, nextAt };
   };
 }
 
@@ -166,44 +193,68 @@ function checkedStatus(state) {
 }
 
 async function guardedTransport(transport, body, options, status, { now = Date.now,
-  pollMs = POLL_MS, ceilingMs = CEILING_MS } = {}) {
-  async function reason() {
+  pollMs = POLL_MS, ceilingMs = CEILING_MS, recordDiagnostic = () => {} } = {}) {
+  let pollIndex = 0;
+  async function reason(stage) {
     let state;
-    try { state = checkedStatus(await status()); }
-    catch { return 'EVAL_STATUS_UNAVAILABLE'; }
-    if (state.busy) return 'EVAL_YIELD';
-    if (state.nextAt <= now() + DEADLINE_MARGIN_MS) return 'EVAL_DEADLINE_DUE';
-    return '';
+    try {
+      state = await status();
+      try { state = checkedStatus(state); }
+      catch (error) { throw diagnostics.attach(error, { phase: 'status-schema', now }); }
+    } catch (error) {
+      return Object.assign(failure('EVAL_STATUS_UNAVAILABLE'), { guardDiagnostic: diagnostics.snapshot(error,
+        { phase: stage, guardStage: stage, pollIndex, fallbackCode: 'EVAL_STATUS_UNAVAILABLE', now }) });
+    }
+    if (state.busy) return diagnostics.failure('EVAL_YIELD', { phase: stage, guardStage: stage, pollIndex, now });
+    if (state.nextAt <= now() + DEADLINE_MARGIN_MS) return diagnostics.failure('EVAL_DEADLINE_DUE',
+      { phase: stage, guardStage: stage, pollIndex, now });
+    return null;
   }
-  const initial = await reason();
-  if (initial) throw failure(initial);
-  if (options.signal && options.signal.aborted) throw failure('EVAL_CANCELLED');
+  const retain = (error) => {
+    try { recordDiagnostic(error.guardDiagnostic); return error; }
+    catch (writeError) { return diagnostics.attach(writeError, { phase: 'guard-diagnostic-write',
+      fallbackCode: 'GUARD_DIAGNOSTIC_WRITE_FAILED', now }); }
+  };
+  const initial = await reason('transport-initial');
+  if (initial) throw retain(initial);
+  if (options.signal && options.signal.aborted) throw retain(diagnostics.failure('EVAL_CANCELLED',
+    { phase: 'transport-initial', now }));
   const abort = new AbortController();
-  let code = '';
-  let checking = false;
+  let rejected = null;
+  let pending = null;
+  let finishing = false;
   let stopped = false;
-  const cancel = (why) => {
-    if (!code) code = why;
+  const cancel = (error) => {
+    // Fsync the first bounded classification before cancelling the owned request.
+    if (!rejected) rejected = retain(error);
     abort.abort();
   };
-  const relay = () => cancel('EVAL_CANCELLED');
+  const relay = () => cancel(diagnostics.failure('EVAL_CANCELLED', { phase: 'transport-poll', now }));
   if (options.signal) options.signal.addEventListener('abort', relay, { once: true });
-  const timer = setInterval(async () => {
-    if (checking || stopped) return;
-    checking = true;
-    try {
-      const why = await reason();
-      if (why && !stopped) cancel(why);
-    } finally { checking = false; }
+  const timer = setInterval(() => {
+    if (pending || stopped || finishing || rejected) return;
+    pollIndex++;
+    pending = reason('transport-poll').then((error) => {
+      if (error && !stopped) cancel(error);
+    }).finally(() => { pending = null; });
   }, pollMs);
-  const ceiling = setTimeout(() => cancel('EVAL_CEILING'), Math.min(CEILING_MS, ceilingMs));
+  const ceiling = setTimeout(() => cancel(diagnostics.failure('EVAL_CEILING',
+    { phase: 'transport-poll', now })), Math.min(CEILING_MS, ceilingMs));
   try {
     const result = await transport(body, { ...options, signal: abort.signal,
       timeoutMs: Math.min(CEILING_MS, ceilingMs, options.timeoutMs || CEILING_MS) });
-    if (code) throw failure(code);
+    // A result cannot overtake an in-flight safety check or bypass a final check.
+    finishing = true;
+    if (pending) await pending;
+    if (rejected) throw rejected;
+    const final = await reason('transport-final');
+    if (final) cancel(final);
+    if (rejected) throw rejected;
     return result;
   } catch (error) {
-    if (code) throw failure(code);
+    finishing = true;
+    if (pending) await pending;
+    if (rejected) throw rejected;
     throw error;
   } finally {
     stopped = true;
@@ -238,6 +289,7 @@ function summary(ledger) {
 }
 
 async function runOne({ directory = OUTPUT, status = createStatusReader(), now = Date.now,
+  recordDiagnostic = diagnostics.createRecorder({ directory, now }),
   loadProvider = isolatedProvider, log = (value) => console.log(JSON.stringify(value)) } = {}) {
   const relative = path.relative(path.resolve(PRODUCTION).toLowerCase(), path.resolve(directory).toLowerCase());
   requireState(relative && (relative.startsWith('..' + path.sep) || path.isAbsolute(relative)), 'EVAL_OUTPUT_NOT_ISOLATED');
@@ -252,8 +304,11 @@ async function runOne({ directory = OUTPUT, status = createStatusReader(), now =
     }
     let state;
     try { state = checkedStatus(await status()); }
-    catch {
-      const result = { status: 'deferred', reason: 'status-unavailable', calls: ledger.calls.length };
+    catch (error) {
+      const guardDiagnostic = diagnostics.snapshot(error, { phase: 'admission', guardStage: 'admission',
+        fallbackCode: 'EVAL_STATUS_UNAVAILABLE', now });
+      recordDiagnostic(guardDiagnostic);
+      const result = { status: 'deferred', reason: 'status-unavailable', calls: ledger.calls.length, guardDiagnostic };
       log(result);
       return result;
     }
@@ -277,13 +332,15 @@ async function runOne({ directory = OUTPUT, status = createStatusReader(), now =
     // Durable intent precedes the provider invocation, including admission in its transport.
     saveLedger(directory, ledger);
     let guardCode = '';
+    let guardDiagnostic;
     try {
       const generated = await provider.generate({ model: MODEL, system: item.system, prompt: item[next.arm],
         temperature: item.temperature, numPredict: item.numPredict, timeoutMs: CEILING_MS,
         botName: item.bot, kind: 'isolated-concise-branch-evaluation', leaseClient: null,
         chatTransport: async (body, options) => {
-          try { return await guardedTransport(provider._test.ollamaChatStream, body, options, status, { now }); }
-          catch (error) { guardCode = error.code || ''; throw error; }
+          try { return await guardedTransport(provider._test.ollamaChatStream, body, options, status,
+            { now, recordDiagnostic }); }
+          catch (error) { guardCode = error.code || ''; guardDiagnostic = error.guardDiagnostic; throw error; }
         } });
       requireState(generated && generated.provider === 'ollama' && generated.model === MODEL &&
         typeof generated.text === 'string' && generated.text.trim().length > 0, 'EVAL_INVALID_RESULT');
@@ -299,9 +356,10 @@ async function runOne({ directory = OUTPUT, status = createStatusReader(), now =
       record.finishedAt = now();
       const code = guardCode || error.code || 'EVAL_UNKNOWN_FAILURE';
       record.code = /^[A-Z_]{1,80}$/.test(code) ? code : 'EVAL_UNKNOWN_FAILURE';
+      if (guardDiagnostic) record.guardDiagnostic = diagnostics.snapshot({ guardDiagnostic }, { now });
       saveLedger(directory, ledger);
       log({ status: 'stopped-no-retry', ...summary(ledger) });
-      throw failure(record.code);
+      throw Object.assign(failure(record.code), record.guardDiagnostic ? { guardDiagnostic: record.guardDiagnostic } : {});
     }
   } finally {
     release();
@@ -310,7 +368,7 @@ async function runOne({ directory = OUTPUT, status = createStatusReader(), now =
 
 module.exports = { MODEL, CASE_COUNT, MAX_CALLS, ENTRY_MARGIN_MS, CEILING_MS, POLL_MS,
   sha, caseHash, readCases, readLedger, saveLedger, order, exclusiveRunLock, nextNaturalAt,
-  createStatusReader, guardedTransport, isolatedProvider, summary, runOne };
+  readStatusResponse, createStatusReader, guardedTransport, isolatedProvider, summary, runOne };
 
 if (require.main === module) {
   Promise.resolve().then(() => {

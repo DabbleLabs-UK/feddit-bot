@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const evaluation = require('../scripts/concise-branch-evaluation');
+const diagnostics = require('../scripts/evaluation-guard-diagnostics');
 
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'feddit-concise-evaluation-test-'));
 const now = 1800000000000;
@@ -121,6 +122,8 @@ async function run() {
     status: async () => { throw new Error('PRIVATE runtime detail'); },
   }))).status, 'deferred');
   assert.equal(fs.existsSync(path.join(unavailableDirectory, 'results.json')), false);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(unavailableDirectory, diagnostics.FILE_NAME), 'utf8')).guardStage,
+    'admission', 'pre-admission failure is durable without loading a provider');
 
   const options = { signal: new AbortController().signal, timeoutMs: 600000 };
   let transported = false;
@@ -184,6 +187,7 @@ async function run() {
   })), { code: 'EVAL_YIELD' });
   assert.equal(ledger(yieldingDirectory).calls[0].status, 'failed-no-retry');
   assert.equal(ledger(yieldingDirectory).calls[0].code, 'EVAL_YIELD');
+  assert.equal(ledger(yieldingDirectory).calls[0].guardDiagnostic.safetyCode, 'EVAL_YIELD');
   await assert.rejects(evaluation.runOne(runOptions(yieldingDirectory)), { code: 'EVAL_PRIOR_CALL_NO_RETRY' });
 
   const failedDirectory = fixture();
@@ -197,6 +201,35 @@ async function run() {
   await assert.rejects(evaluation.runOne(runOptions(failedDirectory, { loadProvider: () => failing })),
     { code: 'EVAL_PRIOR_CALL_NO_RETRY' });
   assert.equal(attempts, 1);
+  const guardDirectory = fixture();
+  let guardChecks = 0;
+  const guarded = mockProvider(guardDirectory);
+  guarded._test.ollamaChatStream = async (_body, request) => new Promise((resolve, reject) => {
+    request.signal.addEventListener('abort', () => {
+      assert.equal(JSON.parse(fs.readFileSync(path.join(guardDirectory, diagnostics.FILE_NAME), 'utf8')).phase,
+        'watchdog-liveness', 'content-free inner failure survives before request abort');
+      reject(new Error('PRIVATE cancellation'));
+    }, { once: true });
+  });
+  await assert.rejects(evaluation.runOne(runOptions(guardDirectory, {
+    loadProvider: () => guarded,
+    status: async () => {
+      if (++guardChecks <= 2) return idle();
+      throw diagnostics.failure('PAUSE_WATCHDOG_UNAVAILABLE', { phase: 'watchdog-liveness', now: () => now });
+    },
+  })), (error) => {
+    assert.equal(error.code, 'EVAL_STATUS_UNAVAILABLE', 'outer code remains compatible');
+    assert.equal(error.guardDiagnostic.safetyCode, 'PAUSE_WATCHDOG_UNAVAILABLE');
+    return true;
+  });
+  const guardRecord = ledger(guardDirectory).calls[0];
+  assert.equal(guardRecord.status, 'failed-no-retry');
+  assert.equal(guardRecord.guardDiagnostic.phase, 'watchdog-liveness');
+  assert.equal(guardRecord.guardDiagnostic.guardStage, 'transport-poll');
+  assert.equal(Object.hasOwn(guardRecord, 'result'), false);
+  const guardEvidence = fs.readFileSync(path.join(guardDirectory, diagnostics.FILE_NAME), 'utf8');
+  await assert.rejects(evaluation.runOne(runOptions(guardDirectory)), { code: 'EVAL_PRIOR_CALL_NO_RETRY' });
+  assert.equal(fs.readFileSync(path.join(guardDirectory, diagnostics.FILE_NAME), 'utf8'), guardEvidence);
   const failedLedger = ledger(failedDirectory);
   failedLedger.calls[0].status = 'started';
   evaluation.saveLedger(failedDirectory, failedLedger);

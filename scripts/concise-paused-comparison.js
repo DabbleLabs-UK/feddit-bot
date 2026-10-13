@@ -6,6 +6,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { spawn, execFile } = require('node:child_process');
 const evaluation = require('./concise-branch-evaluation');
+const diagnostics = require('./evaluation-guard-diagnostics');
 
 const BASE = 'http://127.0.0.1:8770';
 const MAX_PAUSE_MS = 20 * 60 * 1000;
@@ -55,25 +56,27 @@ function owned(file, nonce) {
 
 function createApi(fetchApi = globalThis.fetch) {
   async function request(endpoint, paused, timeoutMs = REQUEST_MS) {
-    const response = await fetchApi(BASE + endpoint, {
-      method: paused === undefined ? 'GET' : 'PUT', signal: AbortSignal.timeout(timeoutMs),
+    return evaluation.readStatusResponse(fetchApi, endpoint, { base: BASE, timeoutMs,
+      code: 'PAUSE_API_UNAVAILABLE', options: {
+      method: paused === undefined ? 'GET' : 'PUT',
       redirect: 'error', ...(paused === undefined ? {} : {
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paused }),
       }),
-    });
-    requireState(response && response.ok === true, 'PAUSE_API_UNAVAILABLE');
-    return response.json();
+    } });
   }
   async function settings(paused, timeoutMs) {
     const data = await request('/api/settings', paused, timeoutMs);
-    requireState(data && data.settings && typeof data.settings.paused === 'boolean', 'PAUSE_SETTINGS_UNKNOWN');
+    if (!data || !data.settings || typeof data.settings.paused !== 'boolean') {
+      throw diagnostics.failure('PAUSE_SETTINGS_UNKNOWN', { phase: 'settings-schema', endpoint: '/api/settings' });
+    }
     return data.settings.paused;
   }
   return {
     identity: async (timeoutMs) => {
       const data = await request('/api/runtime', undefined, timeoutMs);
-      requireState(data && data.placement === 'desktop' && data.ownerSessionRequired === false,
-        'PAUSE_DESKTOP_REQUIRED');
+      if (!data || data.placement !== 'desktop' || data.ownerSessionRequired !== false) {
+        throw diagnostics.failure('PAUSE_DESKTOP_REQUIRED', { phase: 'identity-schema', endpoint: '/api/runtime' });
+      }
     },
     paused: (timeoutMs) => settings(undefined, timeoutMs),
     setPaused: (value, timeoutMs) => settings(value, timeoutMs),
@@ -81,9 +84,13 @@ function createApi(fetchApi = globalThis.fetch) {
       const [paused, runtime, model] = await Promise.all([
         settings(), request('/api/runtime-state'), request('/api/local-model-activity'),
       ]);
-      requireState(runtime && typeof runtime.busy === 'boolean' && model && Object.hasOwn(model, 'active') &&
-        (model.active === null || (typeof model.active === 'object' && !Array.isArray(model.active))),
-      'PAUSE_STATUS_UNKNOWN');
+      if (!runtime || typeof runtime.busy !== 'boolean') {
+        throw diagnostics.failure('PAUSE_STATUS_UNKNOWN', { phase: 'runtime-schema', endpoint: '/api/runtime-state' });
+      }
+      if (!model || !Object.hasOwn(model, 'active') ||
+        (model.active !== null && (typeof model.active !== 'object' || Array.isArray(model.active)))) {
+        throw diagnostics.failure('PAUSE_STATUS_UNKNOWN', { phase: 'activity-schema', endpoint: '/api/local-model-activity' });
+      }
       return { paused, busy: runtime.busy || model.active !== null };
     },
   };
@@ -95,7 +102,7 @@ function freshDirectory(directory) {
   requireState(fs.statSync(resolved).isDirectory(), 'PAUSE_DIRECTORY_REQUIRED');
   const names = fs.readdirSync(resolved);
   requireState(!names.some((name) => name === 'results.json' || name === 'run.lock' || name === 'telemetry' ||
-    name.startsWith('pause-')), 'PAUSE_FRESH_DIRECTORY_REQUIRED');
+    name.startsWith('pause-') || name === diagnostics.FILE_NAME), 'PAUSE_FRESH_DIRECTORY_REQUIRED');
   const frozen = evaluation.readCases(resolved);
   const data = read(path.join(resolved, 'cases.json'));
   requireState(typeof data.protocolId === 'string' && data.protocolId.length > 0 &&
@@ -251,19 +258,32 @@ async function restore({ files, lease, actor, api, now = Date.now, wait = sleep,
 }
 
 function createPausedStatus({ files, lease, api, now = Date.now, alive = parentAlive }) {
-  function checkOwner() {
-    validateLease(files.lease, lease.nonce);
-    requireState(!owned(files.released, lease.nonce) && !owned(files.abort, lease.nonce), 'PAUSE_ABORTED');
-    const watcher = owned(files.watchdog, lease.nonce);
-    requireState(watcher && watcher.status === 'armed' && Number.isSafeInteger(watcher.pid) &&
-      watcher.pid > 0 && alive(watcher.pid), 'PAUSE_WATCHDOG_UNAVAILABLE');
-    requireState(now() < lease.inferenceDeadlineAt, 'PAUSE_DEADLINE');
+  const checked = (phase, callback, ownershipStage) => {
+    try { return callback(); }
+    catch (error) { throw diagnostics.attach(error, { phase, ownershipStage,
+      fallbackCode: 'EVAL_STATUS_UNAVAILABLE', now }); }
+  };
+  function checkOwner(ownershipStage) {
+    // Separate file access/JSON failures from a well-formed but invalid lease.
+    checked('lease-read', () => read(files.lease), ownershipStage);
+    checked('lease-validate', () => validateLease(files.lease, lease.nonce), ownershipStage);
+    const released = checked('released-read', () => owned(files.released, lease.nonce), ownershipStage);
+    if (released) throw diagnostics.failure('PAUSE_ABORTED', { phase: 'released-read', ownershipStage, now });
+    const abort = checked('abort-read', () => owned(files.abort, lease.nonce), ownershipStage);
+    if (abort) throw diagnostics.failure('PAUSE_ABORTED', { phase: 'abort-read', ownershipStage, now });
+    const watcher = checked('watchdog-read', () => owned(files.watchdog, lease.nonce), ownershipStage);
+    if (!watcher || watcher.status !== 'armed' || !Number.isSafeInteger(watcher.pid) || watcher.pid <= 0) {
+      throw diagnostics.failure('PAUSE_WATCHDOG_UNAVAILABLE', { phase: 'watchdog-read', ownershipStage, now });
+    }
+    checked('watchdog-liveness', () => requireState(alive(watcher.pid), 'PAUSE_WATCHDOG_UNAVAILABLE'), ownershipStage);
+    checked('experiment-deadline', () => requireState(now() < lease.inferenceDeadlineAt, 'PAUSE_DEADLINE'), ownershipStage);
   }
   return async () => {
-    checkOwner();
+    checkOwner('pre');
     const state = await api.state();
-    requireState(state.paused === true, 'PAUSE_RESUMED_EXTERNALLY');
-    checkOwner();
+    if (!state || state.paused !== true) throw diagnostics.failure('PAUSE_RESUMED_EXTERNALLY',
+      { phase: 'pause-check', now });
+    checkOwner('post');
     // Ordinary due times cannot admit work during this explicitly authorized
     // pause. This guard owns the separate experiment deadline instead.
     return { busy: state.busy, nextAt: Infinity };
@@ -352,6 +372,7 @@ async function run({ directory, resumeOnExit = false, api = createApi(), now = D
   const fresh = freshDirectory(directory);
   directory = fresh.directory;
   const files = paths(directory);
+  const recordDiagnostic = diagnostics.createRecorder({ directory, now });
   await api.identity();
   const originalPaused = await api.paused();
   requireState(!originalPaused || resumeOnExit === true, 'PAUSE_EXISTING_PAUSE_REQUIRES_RESUME_ON_EXIT');
@@ -399,7 +420,7 @@ async function run({ directory, resumeOnExit = false, api = createApi(), now = D
       const state = await status();
       requireState(!state.busy, 'PAUSE_NORMAL_WORK_BUSY');
       requireState(lease.inferenceDeadlineAt > now() + ARM_MARGIN_MS, 'PAUSE_ENTRY_MARGIN');
-      const next = await runOne({ directory, status, now, log: () => {},
+      const next = await runOne({ directory, status, now, recordDiagnostic, log: () => {},
         loadProvider: () => provider || (provider = loadProvider(directory)) });
       attempts = fs.existsSync(path.join(directory, 'results.json'))
         ? read(path.join(directory, 'results.json')).calls.length : attempts;
@@ -411,6 +432,10 @@ async function run({ directory, resumeOnExit = false, api = createApi(), now = D
     result = { status: 'completed', attempts };
   } catch (caught) {
     error = caught;
+    if (caught.guardDiagnostic) {
+      try { recordDiagnostic(diagnostics.snapshot(caught, { now })); }
+      catch (writeError) { error = writeError; }
+    }
   } finally {
     try {
       if (before !== null) {
@@ -426,7 +451,8 @@ async function run({ directory, resumeOnExit = false, api = createApi(), now = D
         attempts = fs.existsSync(path.join(directory, 'results.json'))
           ? read(path.join(directory, 'results.json')).calls.length : attempts;
         const evidence = { nonce: lease.nonce, status: error ? 'stopped' : 'completed',
-          ...(error ? { code: safeCode(error) } : {}), originalPaused, pausedAt,
+          ...(error ? { code: safeCode(error), ...(error.guardDiagnostic
+            ? { guardDiagnostic: diagnostics.snapshot(error, { now }) } : {}) } : {}), originalPaused, pausedAt,
           resumedAt: resumed.resumedAt, attempts, restoreAttempts: resumed.attempts, paused: false };
         if (before !== null) Object.assign(evidence, { before, after,
           statePreserved: JSON.stringify(before) === JSON.stringify(after) });

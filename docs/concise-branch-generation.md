@@ -258,3 +258,65 @@ The full private report and frozen evidence remain under ignored
 `artifacts/concise-paused-20261013-clean`. There are no paired outputs or word
 counts to report. Hold release; do not infer a behavioral pass/fail from this
 technical cancellation or bypass its non-retryable ledger.
+
+## Evaluation guard diagnosis and harness repair, 13 October 2026
+
+Starting revision: `db29524449bba1696288f03b629fe01f1f152eb9`.
+The historical 5.319-second provider cancellation cannot be assigned an exact
+inner cause: `guardedTransport` erased every status/ownership exception. The
+fresh heartbeat and distant experiment deadline do not support a stale
+heartbeat or ordinary deadline expiry. Transient HTTP/timeout/JSON/schema,
+lease/file/ownership, watchdog availability and external resume remain
+possible; healthy later requests cannot exclude an inference-load transient.
+
+An investigator compiled the original harness revision in memory. Seventeen
+injected faults all reproduced the generic `EVAL_STATUS_UNAVAILABLE`, without
+model calls. A bounded read-only desktop probe made 93 GETs across 31 checks
+in 6.521 seconds; all HTTP responses were 200/schema-valid, slowest 136 ms.
+The exact paused guard correctly refused admission because desktop scheduling
+was resumed. Its ownership files were synthetic fixtures, not historical
+watchdog evidence. No production pause/settings write or inference occurred.
+
+Harness-only changes now retain the first failing phase and safe inner code,
+endpoint, HTTP status, elapsed/timeout milliseconds, poll index, ownership
+pre/post stage and timestamp. Error names/nested transport codes become fixed
+classes (timeout/reset/connect/abort/permission/missing/malformed-json/unknown).
+No raw messages, stacks, response bodies, prompts, output, secrets, nonces or
+process IDs enter diagnostics. The first record is fsynced and published
+exclusively before cancelling the owned request. Later cleanup/reopening
+cannot overwrite it; malformed/oversized evidence or write failure fails
+closed. Failed-call and pause-restoration evidence retain the sanitized record.
+Existing outer cancellation codes and failed-no-retry semantics remain intact.
+
+A separate mock-proven race was also repaired: a fast transport result could
+overtake an in-flight asynchronous safety poll, and cleanup could discard that
+poll's failure. Both success and rejection now join the pending poll; success
+also requires a final status/ownership check before acceptance. This race is
+not claimed to have caused the historical cancellation. Poll interval,
+request timeout, inference ceiling, ownership predicates, pause bound and
+watchdog restoration authority are unchanged. No provider/application code or
+writing prompt was changed.
+
+The diagnostic/helper and integration suites cover per-endpoint fetch, HTTP,
+JSON and schema failures; lease/nonce/abort/release/watchdog/deadline/resume
+faults; schedule/status validation; completion/rejection races; fsync-before-
+abort, preserved first failure, sanitized hostile errors and write failure.
+Existing evaluation and bounded-pause restoration suites remain required,
+as do unchanged public-writing/reply-branch/writing-integration regressions.
+
+Final verification: all eight affected suites passed (diagnostic helper,
+44 integration fault/race checks, evaluation ledger, mocked bounded-pause
+restoration, public writing, reply branch, writing integration and 535 durable
+scheduler checks). Manifest JSON and Git whitespace checks passed. Application
+`lib`, `server.js` and `public` files remain unchanged from `831727c`. A final
+GET-only check through the repaired API wrapper verified desktop identity,
+paused=false and valid runtime/model status; `/api/runtime` reports 0.27.2.
+The four original frozen-case/failed-ledger hashes still match retained
+evidence; neither prior failed protocol was cleared or admitted again.
+
+Both historical failed ledgers and frozen cases remain untouched and
+non-retryable. The repaired guard is suitable for one separately authorized
+new clean bounded comparison, with fresh cases/evidence and unchanged safety
+checks. That comparison was not run by this diagnosis; the behavioral release
+decision remains held. No model call, bot pause, installation, deployment or
+public release occurred.
