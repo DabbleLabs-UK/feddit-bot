@@ -155,3 +155,37 @@ The release decision requires actual paired outputs and word counts, not
 prompt inspection or synthetic mock answers. Until those are available, no
 claim of halved output length, improved semantic continuity, unchanged humor
 or reduced copying is justified, and deployment should remain held.
+
+## Verification result (13 October 2026)
+
+Implementation commit: `831727c905dacec8540b6a7b04fc6ee61591602a`.
+Independent review found no remaining material implementation blockers after
+the Burst hydration and authored-title corrections.
+
+- All 93 root Node suites passed (91 in the full runner plus the separately
+  executed durable-scheduler and writing-integration suites).
+- Scheduler dry-run: 532 checks; durable scheduler: 535 checks.
+- Desktop updater fixture: 13 checks.
+- Signed-package fixture: 27 checks, including packaged writing-helper loads.
+- Existing packaged-browser fixture: 90 checks plus Naturalness checks passed.
+- Local update/preservation fixture: 9 checks.
+- Syntax, JSON manifest and whitespace checks passed.
+
+Sandbox temporary-file renames/local callback handling initially blocked some
+test runs. Writable temporary directories or narrow unsandboxed test execution
+resolved them; the verified runs had no remaining failures. These were test
+fixtures, not a new staged application or an installation.
+
+The actual desktop `/api/runtime` still reported 0.27.2. Three explicit idle
+guard checks deferred with `natural-work-busy` and zero inference calls.
+Enabled bots also had overdue natural opportunities, so the experiment did not
+take their resource window. No DELL/Cy hold, restart or isolated heavy model
+process was started. No public output was produced by the experiment and no
+live runtime data was changed by this work.
+
+Therefore the **after-output distribution and paired semantic results are not
+available**. Mock tests prove construction/replay/safety, not model behavior.
+Recommend holding release until the preserved five-case Qwen comparison can
+run in a genuine natural idle window; hosted Llama comparison remains subject
+to safely available isolated/shared resources. No production behavior was
+changed, deployed, installed or released.
