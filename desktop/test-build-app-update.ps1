@@ -28,7 +28,7 @@ try {
         $names = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
         Assert-True ($names -contains "app/server.js") "package contains app/server.js"
         Assert-True ($names -contains "app/public/index.html") "package contains app/public/index.html"
-        foreach ($required in @("continuation-guard.js", "discovery-receipt.js", "hosted-tokenizer.js", "hosted-tokenizer-data.json.gz", "hosted-tokenizer-unicode.json", "third-party/llama31/LICENSE.txt", "third-party/llama31/Notice.txt", "third-party/llama31/README.md", "third-party/llama31/llama.cpp-LICENSE.txt")) {
+        foreach ($required in @("public-writing.js", "reply-branch.js", "continuation-guard.js", "discovery-receipt.js", "hosted-tokenizer.js", "hosted-tokenizer-data.json.gz", "hosted-tokenizer-unicode.json", "third-party/llama31/LICENSE.txt", "third-party/llama31/Notice.txt", "third-party/llama31/README.md", "third-party/llama31/llama.cpp-LICENSE.txt")) {
             Assert-True ($names -contains ("app/lib/" + $required)) "package includes required dependency/notice $required"
         }
         Assert-True (-not ($names | Where-Object { $_ -match '^runtime/' })) "package excludes the shared runtime"
@@ -43,6 +43,8 @@ try {
     [IO.Compression.ZipFile]::ExtractToDirectory($package, $tokenizerExtract)
     & node -e 'const t=require(process.argv[1]);if(t.countText("Hello world!")!==4||!Number.isInteger(t.countRequest("Complete persona", "Complete task")))process.exit(1);' (Join-Path $tokenizerExtract "app/lib/hosted-tokenizer.js")
     Assert-True ($LASTEXITCODE -eq 0) "tokenizer loads and counts using only packaged dependencies"
+    & node -e 'const p=require(process.argv[1]);const b=require(process.argv[2]);const s=p.comment({version:2,target:{replyBranch:b.forPost({title:"Frozen title",body:"Frozen body"})}});if(!s.includes("40-70 words")||!s.includes("Frozen body"))process.exit(1);' (Join-Path $tokenizerExtract "app/lib/public-writing.js") (Join-Path $tokenizerExtract "app/lib/reply-branch.js")
+    Assert-True ($LASTEXITCODE -eq 0) "shared public writing and branch rendering load from packaged dependencies"
 
     & node -e 'const a=require("node:assert/strict"),p=require("node:path"),g=require(p.join(process.argv[1],"lib/continuation-guard.js")),r=require(p.join(process.argv[1],"lib/discovery-receipt.js"));a.equal(g.VERSION,2);a.equal(g.WINDOW_MS,3600000);a.equal(g.count(g.record(null,1,{targetKey:"t1_2",nowMs:100}).state,1,100),1);const scan={cursor:{comments:2,posts:0},startCursor:{comments:0,posts:0},seenEventIds:["t1_2"],pendingEventIds:["t1_2"]};a.equal(r.plan({attentionScan:scan},{valid:false}).attentionScan.cursor.comments,1);a.deepEqual(r.plan({attentionScan:scan},{valid:true,candidates:[{target:{key:"t1_2"}}]}).attentionScan.seenEventIds,["t1_2"]);' (Join-Path $tokenizerExtract "app")
     Assert-True ($LASTEXITCODE -eq 0) "packaged continuation guard and selective discovery receipts load and execute"

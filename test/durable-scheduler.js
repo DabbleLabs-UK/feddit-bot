@@ -482,6 +482,35 @@ function votingHarness(id, count) {
 
 async function run() {
   {
+    const p = makeProfile('unknown-public-writing', false);
+    const h = harness({ profiles: [p] });
+    try {
+      const before = structuredClone(p.sched);
+      const turn = h.turnStore.create({ profileId: p.id, profile: structuredClone(p), rehearsal: false,
+        input: { mode: 'capabilities', choices: [{ key: 'discussion' }],
+          decisionContractVersion: 2, continuationVersion: 2, publicWritingVersion: 99 } }).turn;
+      const runtime = h.scheduler();
+      runtime.reconcileDurableTurns();
+      await settle();
+      const blocked = h.turnStore.get(turn.id);
+      eq(blocked.status, 'blocked', 'unknown public writing version retains the durable turn');
+      ok(/public writing contract version/i.test(blocked.error), 'unknown writing version has an explicit diagnostic');
+      eq(blocked.generations, [], 'unknown writing version blocks before any generation');
+      eq(blocked.checkpoints, {}, 'unknown writing version blocks before candidate reads or effects');
+      eq(h.writes, [], 'unknown writing version cannot publish');
+      eq(p.sched, before, 'unknown writing version preserves ordinary deadlines');
+      const restarted = h.restartRuntime();
+      await restarted.scheduler.runTick();
+      await settle();
+      eq(restarted.turnStore.activeForProfile(p.id).id, turn.id,
+        'unknown writing version cannot be replaced by a new turn after restart');
+      eq(restarted.turnStore.get(turn.id).generations, [], 'unknown writing replay still performs no inference');
+      eq(h.writes, [], 'unknown writing replay still performs no publication');
+    } finally {
+      h.cleanup();
+    }
+  }
+  {
     const p=makeProfile('burst-scoped-guard',false);
     Object.assign(p,{canReply:true,canStartDiscussions:false,canVote:false,postsPerHour:0,commentsPerHour:1});
     p.replyGuardState=continuationGuard.record(undefined,42,{targetKey:'t1_800',nowMs:9000}).state;
@@ -497,6 +526,7 @@ async function run() {
       const runtime=h.scheduler(),started=runtime.startBurstSession(p.id,'claude-plan');await settle();
       const turn=h.turnStore.get(started.turnId);
       eq(turn.input.continuationVersion,2,'new Burst freezes the shared continuation contract');
+      eq(turn.input.publicWritingVersion,2,'new Burst freezes the public writing contract independently');
       eq(turn.status,'completed','stale multi-action Burst menu safely completes');
       eq(h.writes.filter(w=>w.type==='comment').length,1,'only the remaining same-bot thread allowance publishes from a three-action snapshot');
       eq(p.replyGuardState.attempts.length,3,'Burst cannot bypass the per-bot attempt bound');
@@ -603,6 +633,7 @@ async function run() {
       await h.scheduler().runTick(); await settle();
       const turn = h.turnStore.activeForProfile(voter.id);
       eq(turn.input.continuationVersion, 2, 'new hosted turns freeze continuation contract independently');
+      eq(turn.input.publicWritingVersion, 2, 'new hosted turns freeze public writing contract independently');
       const snapshot = turn.checkpoints['opportunity-candidates'], packed = turn.checkpoints['hosted-decision-construction'];
       ok(packed && !packed.failure && packed.deferredCandidateIds.length > 0, 'renewed fixture fits only a deliberately reduced complete menu: ' +
         JSON.stringify(packed && {failure:packed.failure,original:packed.originalInputTokens,minimum:packed.minimumInputTokens,kept:packed.candidateIds}));
@@ -2083,7 +2114,11 @@ async function run() {
   console.log('durable scheduler: ' + checks + ' checks passed');
 }
 
-run().catch((error) => {
-  console.error(error.stack || error);
-  process.exitCode = 1;
-});
+module.exports = { harness, makeProfile, completeJob, queueContentGeneration, settle };
+
+if (require.main === module) {
+  run().catch((error) => {
+    console.error(error.stack || error);
+    process.exitCode = 1;
+  });
+}

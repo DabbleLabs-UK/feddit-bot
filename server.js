@@ -18,6 +18,8 @@ const secrets = require('./lib/secrets');
 const cost = require('./lib/cost');
 const speed = require('./lib/speed');
 const burst = require('./lib/burst');
+const publicWriting = require('./lib/public-writing');
+const replyBranch = require('./lib/reply-branch');
 const feddit = require('./lib/feddit');
 const gdelt = require('./lib/gdelt');
 const feeds = require('./lib/feeds');
@@ -2000,12 +2002,8 @@ async function handleApi(req, res, urlPath, query) {
       const body = await readBody(req);
       const title = (body.title || '').trim();
       const post = (body.body || '').trim();
-      const task =
-        'You are browsing a forum called Feddit. Write a single reply to this post. ' +
-        'Reply in character, plain text, no preamble, no quotes around it.\n\n' +
-        'POST TITLE: ' + title + '\n' +
-        (post ? 'POST BODY: ' + post + '\n' : '') +
-        '\nYour reply:';
+      const task = publicWriting.comment({ version: publicWriting.VERSION,
+        target: { commentId: null, replyBranch: replyBranch.forPost({ title, body: post, kind: 'text' }) } });
 
       const model = scheduler.modelOf(existing, store.DEFAULT_MODEL);
       try {
