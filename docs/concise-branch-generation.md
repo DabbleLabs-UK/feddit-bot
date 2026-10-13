@@ -221,3 +221,40 @@ no before/after word counts or semantic/humor/copying conclusions are possible.
 Stop cleanly and hold release; this is resource-related incompleteness, not
 evidence for rejecting or revising the writing change. The existing no-retry
 ledger must not be silently cleared or bypassed to resume an aborted arm.
+
+## Explicit bounded-pause protocol, 13 October 2026
+
+Under separate explicit authorization, a fresh five-case protocol was frozen
+with the same contexts and exact prompt texts/settings, in a new private
+directory. The old failed ledger was not cleared or retried. Application
+implementation remains byte-for-byte unchanged from `831727c`; `72df898`
+adds only preparation/pause experiment scripts, mocked tests and manifest
+documentation. The scripts are not imported or packaged by the application.
+
+Desktop 0.27.2 was already paused and idle before this job made any mutation.
+The explicitly adopted controlled interval was 2026-10-13 16:39:32.205 UTC
+through verified restoration at 16:39:38.886 UTC: 6.681 seconds (8.215 seconds
+from owned lease start). The onset of the earlier manual pause is unknown.
+The independent watchdog has a 20-minute absolute ceiling, bounded drain,
+positive experiment-process identity fencing and automatic restoration; it
+exited after this restoration. Hosted Feddit and Cy were not touched.
+
+One local Qwen control request was attempted; its status guard failed with
+`EVAL_STATUS_UNAVAILABLE` after 5.319 seconds of provider activity. No response
+bytes or meaningful output arrived and no result was accepted. The ledger
+retains one failed-no-retry record, and no second arm or retry was attempted.
+The inner status/ownership exception was not retained, so its exact cause is
+not established. Later read-only status checks were healthy; that does not
+retroactively prove the earlier cause.
+
+Before/after private-state hashes matched (profiles excluding only pause,
+secrets, population, durable turns and importer workspaces; jobs absent).
+After automatic restoration, paused=false and natural work by
+reaction_fragment_bo started at 16:39:45.932 UTC. No artificial verification
+turn, publication, persona/memory/cadence changes or paid/hosted fallback
+occurred. Both mocked comparison suites and final safety review passed.
+
+The full private report and frozen evidence remain under ignored
+`artifacts/concise-paused-20261013-clean`. There are no paired outputs or word
+counts to report. Hold release; do not infer a behavioral pass/fail from this
+technical cancellation or bypass its non-retryable ledger.
