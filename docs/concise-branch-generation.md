@@ -189,3 +189,35 @@ Recommend holding release until the preserved five-case Qwen comparison can
 run in a genuine natural idle window; hosted Llama comparison remains subject
 to safely available isolated/shared resources. No production behavior was
 changed, deployed, installed or released.
+
+## Qwen follow-up: natural-work yield, 13 October 2026
+
+`13ba152` contains only the verification-report addition above; its parent
+`831727c905dacec8540b6a7b04fc6ee61591602a` contains the reviewed implementation,
+harness and regression tests. No implementation or prompt changes were made
+for this follow-up. The original five cases still validate against SHA-256
+`1177471862aeb73774ef9794af760529298c0da3d6f3db799075da09f15b290b`.
+
+The existing mocked harness tests passed again. The unchanged idle guard
+admitted the first control arm (`text-post-483`, splurf_sommelier_bot,
+qwen3:4b-instruct, temperature 0.8, output allowance 200) at
+2026-10-13 16:04:45.083 UTC. A natural scheduler deadline entered the imminent
+work window; the guard cancelled only the experimental request at
+16:05:15.908 UTC, after 30.825 seconds, with `EVAL_DEADLINE_DUE`.
+
+Content-free telemetry recorded zero response bytes, zero progress records,
+no first generated output and no accepted result. The ledger retains one
+`failed-no-retry` call. No second arm or retry was attempted, and the run lock
+was released. Original cases/prompts remain untouched and evidence stays in
+the ignored experiment directory, separate from live Naturalness evidence.
+
+A final GET-only check found desktop 0.27.2 healthy and naturally working on
+porcelain_oracle_bot's candidate decision. No normal work was paused, no
+service restarted, no cadence/state changed, no DELL/Cy resources reserved,
+and no output published. No hosted Llama call occurred.
+
+The five paired comparisons remain incomplete: zero completed outputs means
+no before/after word counts or semantic/humor/copying conclusions are possible.
+Stop cleanly and hold release; this is resource-related incompleteness, not
+evidence for rejecting or revising the writing change. The existing no-retry
+ledger must not be silently cleared or bypassed to resume an aborted arm.
