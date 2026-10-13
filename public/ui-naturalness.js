@@ -94,6 +94,54 @@
       detail('Frozen evidence packet and coverage', review.packet || {}, panel);
       parent.appendChild(panel);
     }
+    function renderWriting() {
+      const panel = section('Writing canary / controls');
+      const writing = snapshot.writing;
+      const triggerLabel = trigger => ({ scheduled: 'Scheduled', manual: 'Manual', burst: 'Burst' })[trigger] || 'Unknown';
+      panel.appendChild(node('p', 'Read-only writing attribution. Refreshing reads saved evidence; it does not change assignments, collect writing, or start a model call.'));
+      const rollout = snapshot.writingRollout;
+      if (rollout) {
+        const selected = (Array.isArray(rollout.profileIds) ? rollout.profileIds : []).slice(0, 10);
+        panel.appendChild(node('p', `Current saved assignment: ${selected.length} accessible profiles selected for v${value(rollout.canaryVersion)}; released default v${value(rollout.releasedVersion)}. Selection limit: ${value(rollout.maxProfiles)}. An empty selection uses the released default.`));
+        detail('Accessible profiles currently selected for the writing canary', selected.map(id => ({ id,
+          name: (rollout.profiles || []).find(profile => profile.id === id)?.name || 'Unknown profile' })), panel);
+      }
+      if (!writing) { panel.appendChild(node('p', 'Writing attribution is unavailable in this snapshot.')); return; }
+      const coverage = writing.coverage || {};
+      panel.appendChild(node('p', `${value(coverage.records)} recorded outputs from ${value(coverage.profiles)} profiles: ${value(coverage.published)} confirmed publications and ${value(coverage.simulated)} rehearsals.`));
+      for (const warning of coverage.warnings || []) panel.appendChild(node('p', warning));
+      if (!(writing.groups || []).length) panel.appendChild(node('p', 'No instrumented writing in this window. Historical activity has no inferred writing version.'));
+      const table = node('table'), thead = node('thead'), head = node('tr');
+      ['Profile / public bot', 'Mode', 'Trigger', 'Contract', 'Kind / reply depth', 'Outputs', 'Median words / title words / characters', 'Inspection flags'].forEach(label => {
+        const th = node('th', label); th.scope = 'col'; head.appendChild(th);
+      });
+      thead.appendChild(head); table.appendChild(thead);
+      const tbody = node('tbody');
+      for (const group of (writing.groups || []).slice(0, 200)) {
+        const row = node('tr'), flags = group.flags || {};
+        [group.profileId + ' / ' + (group.bot || 'unknown'), group.mode, triggerLabel(group.trigger), 'v' + group.contractVersion,
+          group.kind + (group.kind === 'comment' ? ' / ' + group.replyDepth : ''), value(group.records),
+          [group.medianWords, group.medianTitleWords, group.medianChars].map(value).join(' / '),
+          `No terminal punctuation: ${value(flags.missingTerminalPunctuation)}; output limit: ${value(flags.outputLimitReached)} (${value(flags.outputLimitUnknown)} unknown); shared sequence with parent / ancestors / memory: ${value(flags.parentOverlap)} / ${value(flags.ancestorOverlap)} / ${value(flags.memoryOverlap)}`]
+          .forEach(content => row.appendChild(node('td', content)));
+        tbody.appendChild(row);
+      }
+      table.appendChild(tbody); panel.appendChild(table);
+      detail('Writing coverage and screening bounds', coverage, panel);
+      const examples = node('details'); examples.appendChild(node('summary', 'Recent recorded writing and public links'));
+      for (const example of (writing.recent || []).slice(0, 30)) {
+        const entry = node('details');
+        entry.appendChild(node('summary', `${example.at || 'Unknown time'} | ${example.bot || example.profileId} | ${triggerLabel(example.trigger)} | v${example.contractVersion} ${example.kind} | ${example.status}`));
+        if (example.status === 'published' && /^\/f\/[a-zA-Z0-9_-]{1,100}\/comments\/[1-9][0-9]*(?:#comment-[1-9][0-9]*)?$/.test(example.path || '')) {
+          const link = node('a', 'Inspect published ' + example.kind);
+          link.href = 'https://feddit.dabblelabs.uk' + example.path;
+          link.target = '_blank'; link.rel = 'noopener noreferrer'; entry.appendChild(link);
+        } else entry.appendChild(node('p', 'No confirmed public output link is available.'));
+        detail('Content-free attribution and screening details', example, entry);
+        examples.appendChild(entry);
+      }
+      panel.appendChild(examples);
+    }
     function renderEcology() {
       const ecology = snapshot.ecology;
       const overview = section('Whole ecology overview');
@@ -153,6 +201,7 @@
       if (!snapshot || !visible) return;
       body.replaceChildren();
       renderEcology();
+      renderWriting();
       const coverage = section('Coverage and interpretation');
       coverage.className = 'naturalness-warnings';
       const warnings = node('ul');

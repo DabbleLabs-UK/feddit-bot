@@ -29,6 +29,7 @@ function replyHarness(options = {}) {
     postsPerHour: 0, commentsPerHour: 1, temperature: 0.63, numPredict: 237 });
   Object.assign(profile.sched, { nextPostAt: null, nextCommentAt: 0 });
   const h = harness({ ...options, profiles: [profile] });
+  h.store.getSettings().writingCanary = { version: 1, profileIds: [profile.id] };
   h.reads = [];
   h.feddit.comments = async (id) => {
     h.reads.push(id);
@@ -99,6 +100,7 @@ async function newPosts() {
       profile.mode = 'post';
     }
     const h = harness({ profiles: [profile] });
+    h.store.getSettings().writingCanary = { version: 1, profileIds: [profile.id] };
     try {
       const runtime = h.scheduler();
       await runtime.runTick();
@@ -430,9 +432,12 @@ async function burstWriting() {
   renewed(h);
   h.feddit.comments = async () => { throw new Error('Fixture Burst ancestry unavailable'); };
   try {
-    const started = h.scheduler().startBurstSession(h.profiles[0].id, 'claude-plan');
+    const frozen = h.turnStore.create({ profileId: h.profiles[0].id, profile: h.profiles[0],
+      rehearsal: false, trigger: 'burst', input: { mode: 'burst', provider: 'claude-plan',
+        decisionContractVersion: 2, continuationVersion: 2, publicWritingVersion: 3 } }).turn;
+    h.scheduler().reconcileDurableTurns();
     await settle();
-    assert.equal(h.turnStore.get(started.turnId).status, 'completed', 'Burst read failure preserves usable known context');
+    assert.equal(h.turnStore.get(frozen.id).status, 'completed', 'admitted v3 Burst read failure preserves usable known context');
     assert.deepEqual(h.writes, []);
   } finally { h.cleanup(); }
 }

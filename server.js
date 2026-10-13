@@ -18,8 +18,7 @@ const secrets = require('./lib/secrets');
 const cost = require('./lib/cost');
 const speed = require('./lib/speed');
 const burst = require('./lib/burst');
-const publicWriting = require('./lib/public-writing');
-const replyBranch = require('./lib/reply-branch');
+const writingRollout = require('./lib/writing-rollout');
 const feddit = require('./lib/feddit');
 const gdelt = require('./lib/gdelt');
 const feeds = require('./lib/feeds');
@@ -94,6 +93,7 @@ async function naturalnessSnapshot(hours, owner) {
     snapshot.ecology = buildEcology({ ...source, since, until, events, votingSnapshot: snapshot });
     snapshot.reviewer = await ecologyReviewer.status();
     snapshot.reviews = ecologyReviewer.list(ecologyScope(owner));
+    snapshot.writingRollout = writingCanaryView(owner);
     return snapshot;
   };
   const promise = run().finally(() => ecologySnapshots.delete(key));
@@ -321,6 +321,18 @@ function canManageProfile(profile, owner) {
   if (!owner) return true;
   if (profile.ownerId === owner.id) return true;
   return profile.botOrigin === 'system' && isPopulationAdmin(owner);
+}
+
+function writingCanaryView(owner) {
+  const profiles = store.listProfiles().filter((profile) => canManageProfile(profile, owner));
+  const manageable = new Set(profiles.map((profile) => profile.id));
+  return {
+    profileIds: writingRollout.normalize(store.getSettings().writingCanary).profileIds.filter((id) => manageable.has(id)),
+    releasedVersion: writingRollout.RELEASED_VERSION,
+    canaryVersion: writingRollout.CANARY_VERSION,
+    maxProfiles: writingRollout.MAX_PROFILES,
+    profiles: profiles.map((profile) => ({ id: profile.id, name: store.referenceName(profile) })),
+  };
 }
 
 function recordHostedOwnerActivity(req, res, owner, allowIssue) {
@@ -884,6 +896,43 @@ async function handleApi(req, res, urlPath, query) {
 
   // Developer visibility is not authorization. Hosted diagnostics additionally
   // require the existing population operator and never expose other owners.
+  if (urlPath === '/api/naturalness/writing-canary') {
+    if (!naturalnessObserver.authorised(PLACEMENT, isPopulationAdmin(requestOwner))) return sendJson(res, 404, { error: 'Not found' });
+    if (method === 'GET') return sendJson(res, 200, writingCanaryView(requestOwner));
+    if (method !== 'PUT') return sendJson(res, 404, { error: 'Not found' });
+    if (req.headers['sec-fetch-site'] === 'cross-site' || (req.headers.origin && !['http://' + req.headers.host, 'https://' + req.headers.host].includes(req.headers.origin))) {
+      return sendJson(res, 403, { error: 'Change writing enrollment from this private workspace.' });
+    }
+    if (String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase() !== 'application/json') {
+      return sendJson(res, 415, { error: 'Use the explicit JSON writing enrollment action.' });
+    }
+    let profileIds;
+    try {
+      const body = await readBody(req);
+      if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 1 || !Object.hasOwn(body, 'profileIds')) {
+        return sendJson(res, 400, { error: 'Provide only profileIds.' });
+      }
+      profileIds = writingRollout.validateProfileIds(body.profileIds);
+    } catch {
+      return sendJson(res, 400, { error: 'Provide up to ' + writingRollout.MAX_PROFILES + ' unique valid profile IDs.' });
+    }
+    if (profileIds.some((id) => !canManageProfile(store.getProfile(id), requestOwner))) {
+      return sendJson(res, 404, { error: 'Bot not found' });
+    }
+    // Replace only this operator's membership. Other owners' enrollment remains
+    // private and still counts towards the runner-wide cap. Deleted profiles
+    // have no membership to preserve and must not consume a slot.
+    const previous = writingRollout.normalize(store.getSettings().writingCanary).profileIds;
+    const preserved = previous.filter((id) => {
+      const profile = store.getProfile(id);
+      return profile && !canManageProfile(profile, requestOwner);
+    });
+    if (preserved.length + profileIds.length > writingRollout.MAX_PROFILES) {
+      return sendJson(res, 409, { error: 'The runner-wide writing canary limit is ' + writingRollout.MAX_PROFILES + ' profiles.' });
+    }
+    store.updateSettings({ writingCanary: { version: 1, profileIds: [...preserved, ...profileIds] } });
+    return sendJson(res, 200, writingCanaryView(requestOwner));
+  }
   if (urlPath === '/api/naturalness') {
     if (method !== 'GET' || !naturalnessObserver.authorised(PLACEMENT, isPopulationAdmin(requestOwner))) {
       return sendJson(res, 404, { error: 'Not found' });
@@ -1296,6 +1345,9 @@ async function handleApi(req, res, urlPath, query) {
     }
     const body = await readBody(req);
     const patch = {};
+    if (Object.hasOwn(body, 'writingCanary')) {
+      return sendJson(res, 400, { error: 'Use the private writing canary endpoint to change enrollment.' });
+    }
     if (typeof body.paused === 'boolean') patch.paused = body.paused;
     if (typeof body.dryRun === 'boolean') patch.dryRun = body.dryRun;
     if (body.monthlyCapUsd != null && Number.isFinite(Number(body.monthlyCapUsd))) {
@@ -2002,8 +2054,13 @@ async function handleApi(req, res, urlPath, query) {
       const body = await readBody(req);
       const title = (body.title || '').trim();
       const post = (body.body || '').trim();
-      const task = publicWriting.comment({ version: publicWriting.VERSION,
-        target: { commentId: null, replyBranch: replyBranch.forPost({ title, body: post, kind: 'text' }) } });
+      // Manual previews retain the released prompt, independent of enrollment.
+      const task =
+        'You are browsing a forum called Feddit. Write a single reply to this post. ' +
+        'Reply in character, plain text, no preamble, no quotes around it.\n\n' +
+        'POST TITLE: ' + title + '\n' +
+        (post ? 'POST BODY: ' + post + '\n' : '') +
+        '\nYour reply:';
 
       const model = scheduler.modelOf(existing, store.DEFAULT_MODEL);
       try {

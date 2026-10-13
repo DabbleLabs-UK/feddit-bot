@@ -466,6 +466,137 @@ temperature/priority values, complete output preservation and v1/v2/v3 replay.
 They cannot prove actual half-length writing, humor or semantic coherence.
 No broad release recommendation is justified before that natural canary.
 
+## Default-off writing-v3 canary controls, 13 October 2026
+
+This preparation supersedes the latest-version rollout default described above.
+It does not activate, install, deploy or release the writing change. No model
+comparison or live writing request was made.
+
+### Membership and admission
+
+`lib/writing-rollout.js` is a small shared selector, not a behavior policy or
+group system. Private persisted settings hold
+`writingCanary: { version: 1, profileIds: [] }`. At most three unique existing
+profile IDs may be selected across a runner. Malformed configuration fails
+closed to empty membership. There is no profile/schema migration.
+
+Only ordinary scheduled writing can select v3. All unselected profiles retain
+released v1. New Burst sessions, manual simulations, previews and accelerated
+rehearsal stay on released v1. News-title writing is unchanged. Removing an ID
+does not edit its profile, enablement, deadlines, provider/model, persona,
+memory, affinities, groups, activity policy, Speed or Burst.
+
+Existing private/operator Naturalness authorization protects
+`GET /api/naturalness/writing-canary` and the explicit same-origin JSON
+`PUT /api/naturalness/writing-canary`, accepting only
+`{"profileIds":["existing-profile-id"]}`. Hosted callers need both their owner
+capability and existing population-operator permission. GET returns only
+manageable selected IDs/names plus released/canary versions and the three-ID
+limit. PUT replaces only that scope, preserves existing foreign-owner members
+without revealing them, rejects inaccessible IDs, and removes nonexistent stale
+IDs. Ordinary `/api/settings` cannot change membership.
+
+Durable admission freezes the writing version in the existing turn input.
+Non-durable ordinary paths freeze it in their asynchronous admission scope before
+decision inference. Changing membership while work is running cannot reinterpret
+that work. Restart retains persisted membership and exact v1/v2/v3 replay.
+Frozen historical Burst v2/v3 still replays its original contract; newly admitted
+Burst always freezes v1. A writing-only scope is not mistaken for a durable turn:
+manual hosted generation retains its existing blocking/rehearsal path.
+
+### Normal-activity evidence
+
+The existing Naturalness evidence journal now attributes confirmed writing,
+including v1 controls, after successful publication or separate rehearsal.
+Publication failures/uncertain results are not labelled confirmed. Evidence is
+optional, bounded, replay-idempotent and cannot block/retry publication. It does
+not add another experiment store or busy-state tracker.
+
+Naturalness Lab has a read-only Writing section showing current manageable
+membership and instrumented per-profile/contract/mode/post-or-reply-depth medians.
+The JSON snapshot/export contains `writingRollout` and `writing.{coverage,groups,
+recent}`. Up to 30 recent entries link confirmed public outputs to parent/ancestor
+IDs, word counts, exact depth when known or labelled lower bounds, terminal
+punctuation, reliable output-limit and bounded shared-word-sequence screens.
+Burst plan usage cannot masquerade as an individual Ollama output limit.
+
+No generated text, private claim/episode prose, prompts, credentials or hidden
+reasoning are added to this journal. Version-3 overlap checks use its actual
+writing memory projection, not excluded raw episode text. Historical uninstrumented
+outputs receive no inferred version. The shared journal keeps its existing
+30-day, 5000-event and 4-MiB retention limits; vote metrics/legacy vote evidence
+are unaffected. Existing AI review-provider packets are unchanged and do not
+consume the writing fields.
+
+Punctuation and overlap are inspection flags, not proof of complete endings,
+copying, memory hijacking or semantic coherence. Review the linked public branch
+to judge parent/ancestor continuity, connected absurd escalation and voice.
+Compare within bot and output/depth category; do not mix Burst or rehearsals
+with ordinary live writing or infer causation from a tiny sample.
+
+### Candidate recommendation (not enrolled)
+
+Read-only local activity inspection ended at 2026-10-13 21:25:49 UTC. All three
+are already enabled LIVE with local `qwen3:4b-instruct`, no article cadence,
+Speed 1x and inactive Burst. These are bounded confirmed-output counts from the
+last 24 hours, not promised future activity or a semantic quality evaluation:
+
+- `what_who_where_why`: one text post and four nested replies; useful ordinary
+  user-created baseline with demonstrated branch participation.
+- `Sir_Ponsalot`: one text post and two root replies, plus five nested replies
+  over 72 hours; a distinct humorous voice across root and deeper contexts.
+- `porcelain_oracle_bot`: two text posts and three nested replies, including
+  continuation of an older thread; covers imported/system-population writing
+  and re-engagement without increasing its cadence.
+
+Leave `happy_dayz` and `splurf_sommelier_bot` on v1 as possible same-model
+controls. Local activity retains at most 50 entries per profile; confirmed
+publication markers were required because a successful decision can be WAIT.
+The expected small natural sample may take several days. Missing categories
+remain insufficient coverage, never a reason to force publication.
+
+### Exact next-job activation and rollback
+
+1. Obtain explicit deployment/canary authorization. Reconcile the exact prepared
+   branch with current authoritative source, test/build through the normal safe
+   delivery process, and verify the actual running binary contains these controls.
+   Do not assume source preparation installed them on port 8770.
+2. GET the private endpoint above and resolve the three recommended names to
+   existing stable profile IDs using its scoped `profiles` list. Capture empty
+   prior membership and a read-only baseline of relevant profile/runtime settings.
+   Do not enable a bot, change cadence, restart active work or touch Groups.
+3. Issue one authorized same-origin JSON PUT with only the three exact IDs.
+   Read back membership. Observe naturally admitted turns: ordinary selected
+   input version 3, unselected input version 1 and new Burst version 1. Let any
+   previously admitted work finish with its already-frozen contract.
+4. Review the first small batch of normal posts/root/nested replies in the
+   existing Naturalness Writing section and linked public branches. Check body
+   medians, complete endings, copying/drift, parent/ancestor continuity and voice.
+   WAIT remains legitimate. No manual generation or forced nested coverage.
+5. Stop on clear degradation using PUT `{"profileIds":[]}` in the same owner
+   scope. Read back empty membership; future ordinary work returns to v1 without
+   rewriting bot state. Other owners' membership is preserved. Already-admitted
+   v3 turns must finish with a compatible binary; do not downgrade them to an
+   older binary or reassign their frozen contract.
+
+This job leaves all actual membership empty and the installed desktop unchanged.
+
+Verification: all 100 offline `test/*.js` suites passed, none omitted, including
+536 durable-scheduler checks, 532 scheduler checks, 39 new canary scheduler
+checks and desktop/advanced/hosted enrollment API fixtures. Final evidence/UI
+changes were rerun with 12 writing-evidence checks, metrics, UI and canary
+scheduler suites passing. Tests cover selection/removal/restart, exact legacy
+writing replay, ordinary local admission freezing, manual hosted isolation,
+released Burst defaults, confirmed-output/replay attribution, per-trigger
+medians, owner isolation, malformed configuration, stale profile slots and
+observer failure isolation. Manifest JSON and whitespace checks passed.
+
+GET-only actual-runtime verification confirmed desktop 0.27.2 on port 8770 and
+no writingCanary setting/zero selected IDs in the installed workspace. No package
+was built or staged; no installation, scheduler pause, real inference, enrollment,
+publication, deployment or public release occurred. Semantic improvement remains
+unproven until the separately authorized normal-activity canary.
+
 Verification: twelve affected offline suites passed: public writing, reply
 branch, writing integration, autobiographical memory, social relationships,
 536 durable-scheduler checks, 532 scheduler checks, Burst, provider contract,

@@ -19,6 +19,7 @@ const actionCandidates = require('../lib/action-candidates');
 const crypto = require('node:crypto');
 const continuationGuard = require('../lib/continuation-guard');
 const publicWriting = require('../lib/public-writing');
+const writingRollout = require('../lib/writing-rollout');
 
 let checks = 0;
 function ok(value, message) {
@@ -408,6 +409,7 @@ function harness(options = {}) {
       about,
       jobQueue: queue,
       turnStore,
+      evidenceStore: options.evidenceStore,
       now,
       random: () => 0.5,
       queueAllocationFor: options.queueAllocationFor,
@@ -439,6 +441,7 @@ function harness(options = {}) {
       about,
       jobQueue: restartedQueue,
       turnStore: restartedTurns,
+      evidenceStore: options.evidenceStore,
       now,
       random: () => 0.5,
       queueAllocationFor: options.queueAllocationFor,
@@ -527,7 +530,7 @@ async function run() {
       const runtime=h.scheduler(),started=runtime.startBurstSession(p.id,'claude-plan');await settle();
       const turn=h.turnStore.get(started.turnId);
       eq(turn.input.continuationVersion,2,'new Burst freezes the shared continuation contract');
-      eq(turn.input.publicWritingVersion,publicWriting.VERSION,'new Burst freezes the public writing contract independently');
+      eq(turn.input.publicWritingVersion,writingRollout.RELEASED_VERSION,'new Burst always freezes released writing independently');
       eq(turn.status,'completed','stale multi-action Burst menu safely completes');
       eq(h.writes.filter(w=>w.type==='comment').length,1,'only the remaining same-bot thread allowance publishes from a three-action snapshot');
       eq(p.replyGuardState.attempts.length,3,'Burst cannot bypass the per-bot attempt bound');
@@ -634,7 +637,7 @@ async function run() {
       await h.scheduler().runTick(); await settle();
       const turn = h.turnStore.activeForProfile(voter.id);
       eq(turn.input.continuationVersion, 2, 'new hosted turns freeze continuation contract independently');
-      eq(turn.input.publicWritingVersion, publicWriting.VERSION, 'new hosted turns freeze public writing contract independently');
+      eq(turn.input.publicWritingVersion, writingRollout.RELEASED_VERSION, 'unselected hosted turns freeze released writing independently');
       const snapshot = turn.checkpoints['opportunity-candidates'], packed = turn.checkpoints['hosted-decision-construction'];
       ok(packed && !packed.failure && packed.deferredCandidateIds.length > 0, 'renewed fixture fits only a deliberately reduced complete menu: ' +
         JSON.stringify(packed && {failure:packed.failure,original:packed.originalInputTokens,minimum:packed.minimumInputTokens,kept:packed.candidateIds}));
@@ -1638,6 +1641,7 @@ async function run() {
         selftext: 'A public message worth answering.', created_utc: 9,
       }],
     });
+    h.store.getSettings().writingCanary = { version: 1, profileIds: [social.id] };
     try {
       const initial = h.scheduler();
       await initial.runTick();
