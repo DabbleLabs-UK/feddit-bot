@@ -108,6 +108,10 @@ function run() {
   const ownerPhase = diagnostics.failure('PAUSE_ABORTED', { phase: 'abort-read', ownershipStage: 'post', now });
   assert.equal(diagnostics.snapshot(ownerPhase, { guardStage: 'transport-final', now }).ownershipStage, 'post');
   assert.equal(Object.hasOwn(diagnostics.snapshot({}, { ownershipStage: 'PRIVATE', now }), 'ownershipStage'), false);
+  let ownershipReads = 0;
+  const changingOwnership = { get ownershipStage() { return ++ownershipReads === 1 ? 'pre' : 'PRIVATE'; }, now };
+  assert.equal(diagnostics.snapshot({}, changingOwnership).ownershipStage, 'pre');
+  assert.equal(ownershipReads, 1, 'validate and retain the same safe value from a changing getter');
   assert.equal(diagnostics.failure('PRIVATE_CODE', { now }).code, 'GUARD_UNKNOWN');
   const fallback = diagnostics.attach({ name: 'TimeoutError', code: 'PRIVATE' },
     { fallbackCode: 'PAUSE_API_UNAVAILABLE', phase: 'settings-fetch', now });

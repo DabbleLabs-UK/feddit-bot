@@ -94,9 +94,10 @@ function classify(error, details = {}) {
     transportClass: transportClass(error) };
   const endpoint = get(details, 'endpoint');
   const guardStage = get(details, 'guardStage');
+  const ownershipStage = get(details, 'ownershipStage');
   if (ENDPOINTS.has(endpoint)) record.endpoint = endpoint;
   if (PHASES.has(guardStage)) record.guardStage = guardStage;
-  if (OWNERSHIP_STAGES.has(get(details, 'ownershipStage'))) record.ownershipStage = get(details, 'ownershipStage');
+  if (OWNERSHIP_STAGES.has(ownershipStage)) record.ownershipStage = ownershipStage;
   for (const [key, limits] of Object.entries(NUMBERS)) {
     const value = clamp(get(details, key), ...limits);
     if (value !== undefined) record[key] = value;
