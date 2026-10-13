@@ -1,19 +1,21 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const writing = require('../lib/public-writing');
 const replyBranch = require('../lib/reply-branch');
 
-assert.equal(writing.VERSION, 2);
+assert.equal(writing.VERSION, 3);
 assert.equal(writing.version(), 1);
 assert.equal(writing.version(null), 1);
 assert.equal(writing.version(undefined, 2), 2);
 assert.equal(writing.version(1), 1);
 assert.equal(writing.version(2), 2);
-for (const value of [0, 3, -1, '1', '2', '', false, true, {}, NaN]) {
+assert.equal(writing.version(3), 3);
+for (const value of [0, 4, -1, '1', '2', '3', '', false, true, {}, NaN]) {
   assert.throws(() => writing.version(value), { code: 'UNSUPPORTED_PUBLIC_WRITING_CONTRACT' });
 }
-assert.throws(() => writing.version(null, 3), { code: 'UNSUPPORTED_PUBLIC_WRITING_CONTRACT' });
+assert.equal(writing.version(null, 3), 3);
 
 const options = {
   feddit: 'botlife', communityGuidance: 'COMMUNITY RULES\n\n',
@@ -57,6 +59,11 @@ const target = {
   ),
 };
 const comment = writing.comment({ ...options, target, version: 2 });
+const digest = (value) => crypto.createHash('sha256').update(value).digest('hex');
+assert.equal(digest(post), 'c01f277e3bb9804302517dafb0021d5f19dddb20c63b6d6ede08d33666220bb3',
+  'exact post v2 bytes match implementation 831727c');
+assert.equal(digest(comment), '8cbb21ef08bf5d12f498b69512ea183836a8bd62ebc4f1b4e9dcadb288a215ef',
+  'exact branch reply v2 bytes match implementation 831727c');
 assert.match(comment, /about 40-70 words in the comment/);
 assert.match(comment, /Prioritize the immediate parent/);
 assert.match(comment, /Preserve established relevant facts and jokes/);
@@ -90,5 +97,47 @@ assert.match(writing.contentGuidance('comment'), /REPLY TO THIS BRANCH/);
 assert.doesNotMatch(writing.contentGuidance('post'), /REPLY TO THIS BRANCH/);
 assert.throws(() => writing.post({ ...options, version: 20 }), { code: 'UNSUPPORTED_PUBLIC_WRITING_CONTRACT' });
 assert.throws(() => writing.comment({ ...options, version: 20 }), { code: 'UNSUPPORTED_PUBLIC_WRITING_CONTRACT' });
+
+const prose = 'UNIQUE OLD ANSWER TO COPY VERBATIM. It brings an unrelated broom into the socks discussion.';
+const memory = { relevant: true, prompt: prose, writingContext: { version: 1,
+  claims: [{ slot: 'preference', value: 'darkroom printing', polarity: 'negative', status: 'tentative', summary: prose }],
+  episodes: [{ kind: 'reply', direction: 'outgoing', account: 'old_voice', community: 'botlife',
+    topics: ['camera', 'repair'], summary: prose }], preoccupations: ['camera'], raw: prose } };
+const projected = writing.renderMemory(memory);
+assert.match(projected, /OPTIONAL REMEMBERED BACKGROUND/);
+assert.match(projected, /"polarity":"negative"/);
+assert.match(projected, /"status":"tentative"/);
+assert.match(projected, /owner-written persona remains stronger/);
+assert.doesNotMatch(projected, /UNIQUE OLD ANSWER|broom|summary|raw/);
+assert.ok(projected.length <= writing.MEMORY_CHARS);
+assert.equal(writing.renderMemory({ relevant: true, prompt: prose }), '', 'old opaque prose is never salvaged');
+assert.equal(writing.renderMemory({ ...memory, relevant: false }), '');
+assert.equal(writing.renderMemory({ ...memory, writingContext: { version: 99 } }), '');
+const largeMemory = { ...memory, writingContext: { version: 1,
+  claims: Array(30).fill({ slot: 'job', value: 'x'.repeat(240), polarity: 'positive', status: 'established' }),
+  episodes: Array(30).fill({ topics: Array(20).fill('camera'), summary: prose }),
+  preoccupations: Array(30).fill('camera') } };
+assert.ok(writing.renderMemory(largeMemory).length <= writing.MEMORY_CHARS, 'whole cues are omitted rather than clipping a fact');
+assert.doesNotMatch(writing.renderMemory(largeMemory), /excerpt|UNIQUE OLD ANSWER/);
+const compactPost = writing.post({ ...options, memoryGuidance: prose, memory, version: 3 });
+const compactReply = writing.comment({ ...options, target, memoryGuidance: prose, memory, version: 3 });
+for (const prompt of [compactPost, compactReply]) {
+  assert.match(prompt, /Default to one compact paragraph/);
+  assert.match(prompt, /finish the sentence and stop/);
+  assert.match(prompt, /longer answer is an exception for necessary substance/);
+  assert.match(prompt, /remembered public sentences are not templates/i);
+  assert.doesNotMatch(prompt, /UNIQUE OLD ANSWER|soft target|use more space/);
+}
+assert.match(compactReply, /For nested replies, the immediate parent is the target and the root is background/);
+assert.match(writing.comment({ ...options, version: 3, target: { replyBranch: replyBranch.forPost({
+  id: 7, title: 'A root question', selftext: 'This is the actual target.' }) } }),
+  /for top-level replies, the post itself is the target/);
+assert.match(compactReply, /Memory and preoccupations are optional background/);
+assert.match(compactReply, /Disagreement, absurd escalation/);
+assert.ok(compactReply.indexOf('OPTIONAL REMEMBERED BACKGROUND') < compactReply.indexOf('IMMEDIATE PARENT YOU ARE REPLYING TO'));
+assert.ok(compactReply.endsWith(selectedBody + '\n\nYour reply:'));
+assert.match(compactPost, /one premise and one development or payoff/);
+assert.match(writing.contentGuidance('comment', 2), /soft target/);
+assert.doesNotMatch(writing.contentGuidance('comment', 2), /Default to one compact paragraph/);
 
 console.log('public-writing: passed');

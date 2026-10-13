@@ -8,6 +8,7 @@ global.fetch = async () => { throw new Error('Unexpected live fetch in writing i
 const { harness, makeProfile, completeJob, queueContentGeneration, settle } = require('./durable-scheduler');
 const publicWriting = require('../lib/public-writing');
 const burst = require('../lib/burst');
+const memory = require('../lib/autobiographical-memory');
 
 const listing = (comments) => ({ data: { children: comments.map((data) => ({ data })) } });
 const post = { id: 73, feddit: 'general', author: 'alice', title: 'The garden rota',
@@ -61,7 +62,7 @@ async function begin(h, key) {
   await settle();
   const turn = h.turnStore.activeForProfile(h.profiles[0].id);
   assert.ok(turn, 'scheduled reply accepts a durable turn');
-  assert.equal(turn.input.publicWritingVersion, 2);
+  assert.equal(turn.input.publicWritingVersion, publicWriting.VERSION);
   assert.equal(turn.input.continuationVersion, 2);
   assert.equal(turn.input.decisionContractVersion, 2);
   const candidates = turn.checkpoints['opportunity-candidates'].candidates;
@@ -104,7 +105,7 @@ async function newPosts() {
       await settle();
       const turn = h.turnStore.activeForProfile(profile.id);
       assert.equal(turn.input.mode, mode);
-      assert.equal(turn.input.publicWritingVersion, 2, 'new turns freeze writing v2 even for old profile shapes');
+      assert.equal(turn.input.publicWritingVersion, publicWriting.VERSION, 'new turns freeze latest writing even for old profile shapes');
       let generation = turn.generations[0];
       if (mode === 'capabilities') {
         completeJob(h.queue, generation.jobId, '{"choice":"C1","reason":"A fitting discussion.","votes":[]}');
@@ -265,6 +266,64 @@ async function legacy() {
   }
 }
 
+async function memoryPresentation() {
+  const h = replyHarness({ feedPosts: [post] });
+  const oldProse = 'UNIQUE_OLD_PUBLIC_PROSE: The garden kettle sings three absurd verses instead of answering the cucumber question.';
+  h.profiles[0].memoryState = memory.recordEvent(memory.defaults(), {
+    id: 'past-garden', kind: 'reply', direction: 'outgoing', account: 'carol', threadKey: 't3_73',
+    community: 'general', importance: 3, summary: oldProse, text: 'I hate garden.',
+  }, { nowMs: h.now() }).state;
+  h.profiles[0].repliedTo = ['t1_101', 't1_102'];
+  try {
+    const started = await begin(h, 't1_103');
+    assert.match(started.turn.generations[0].request.prompt, /UNIQUE_OLD_PUBLIC_PROSE/,
+      'candidate decision retains its existing full relevant memory');
+    const generation = await select(h, started);
+    assert.doesNotMatch(generation.request.prompt, /UNIQUE_OLD_PUBLIC_PROSE|Past event:/);
+    assert.doesNotMatch(generation.request.prompt, /"kettle"|"sings"/,
+      'same-thread memory does not introduce unmatched topic detours into public writing');
+    assert.match(generation.request.prompt, /OPTIONAL REMEMBERED BACKGROUND/);
+    assert.match(generation.request.prompt, /"polarity":"negative"/);
+    assert.match(generation.request.prompt, /"status":"tentative"/);
+    assert.match(generation.request.prompt, /Admiral Sprout now demands a parking permit/);
+    assert.ok(generation.request.prompt.endsWith(target.body + '\n\nYour reply:'));
+    const frozen = JSON.parse(JSON.stringify(generation.request));
+    h.feddit.comments = async () => { throw new Error('No additional replay context fetch'); };
+    const restarted = h.restartRuntime();
+    restarted.scheduler.reconcileDurableTurns();
+    await settle();
+    assert.deepEqual(restarted.turnStore.get(started.turn.id).generations[1].request, frozen);
+    completeJob(restarted.queue, generation.jobId, 'Admiral Sprout needs a permit, not a pickle sermon.');
+    restarted.scheduler.reconcileDurableTurns();
+    await settle();
+    assert.equal(h.writes.length, 1);
+    assert.equal(h.writes[0].request.parentCommentId, 103);
+  } finally { h.cleanup(); }
+
+  // Version 2 remains usable through restart, including its original quoted memory.
+  const old = replyHarness();
+  attention(old);
+  try {
+    const turn = old.turnStore.create({ profileId: old.profiles[0].id, profile: old.profiles[0],
+      rehearsal: false, trigger: 'scheduled', input: { mode: 'legacy', action: 'comment',
+        decisionContractVersion: 1, continuationVersion: 1, publicWritingVersion: 2 } }).turn;
+    old.scheduler().reconcileDurableTurns();
+    await settle();
+    const generation = old.turnStore.get(turn.id).generations[0];
+    assert.match(generation.request.prompt, /soft target, not a hard limit/);
+    assert.match(generation.request.prompt, /RELEVANT AUTOBIOGRAPHICAL MEMORY/);
+    assert.doesNotMatch(generation.request.prompt, /OPTIONAL REMEMBERED BACKGROUND|Default to one compact paragraph/);
+    const restarted = old.restartRuntime();
+    completeJob(restarted.queue, generation.jobId, 'A complete old-contract reply.');
+    restarted.scheduler.reconcileDurableTurns();
+    await settle();
+    const saved = restarted.turnStore.get(turn.id);
+    assert.equal(saved.status, 'completed');
+    assert.equal(JSON.stringify(saved.generations[0].request), JSON.stringify(generation.request));
+    assert.equal(saved.generations[0].signature, generation.signature);
+  } finally { old.cleanup(); }
+}
+
 async function burstWriting() {
   const oldCandidate = { id: 'C1', action: 'comment', candidateType: 'renewed_thread',
     structuralReason: 'A new reply.', context: 'POST TITLE: A garden\nFRESH COMMENT: Keep the gate closed.',
@@ -281,8 +340,22 @@ async function burstWriting() {
     'MEMORY: The latch was repaired.\n\nVOTE CANDIDATES:\nV1 [comment] A reply\nClose the gate.';
   assert.equal(burst.prompt([oldCandidate], [oldVote], { publicWritingVersion: 1 }), oldPrompt,
     'legacy Burst preserves exact old prompt, memory placement, action cap and vote wording');
+  assert.equal(crypto.createHash('sha256').update(burst.prompt([oldCandidate], [oldVote],
+    { publicWritingVersion: 2 })).digest('hex'),
+  '623cd3ed476ffb20af11a798561795e38acc3db7b74bcebfe20b7c7de8adcbc3',
+  'Burst v2 matches the exact historical builder at 831727c');
+  const rawMemory = 'DO NOT REUSE THIS OLD ANSWER PROSE.';
+  const typed = { ...oldCandidate, memory: { relevant: true, prompt: rawMemory, writingContext: {
+    version: 1, claims: [], episodes: [{ kind: 'reply', direction: 'incoming', account: 'alice',
+      community: 'general', topics: ['gate'] }], preoccupations: [] } } };
+  const compact = burst.prompt([typed], [oldVote], { publicWritingVersion: 3 });
+  assert.doesNotMatch(compact, /DO NOT REUSE THIS OLD ANSWER PROSE/);
+  assert.match(compact, /OPTIONAL REMEMBERED BACKGROUND/);
+  assert.match(compact, /zero to 3 ordered actions/);
+  assert.match(compact, /Votes are independent secondary reactions/);
+  assert.ok(compact.endsWith('V1 [comment] A reply\nClose the gate.'), 'offered vote evidence remains unchanged');
 
-  for (const version of [undefined, 1, 2]) {
+  for (const version of [undefined, 1, 2, 3]) {
     let calls = 0;
     const requests = [];
     const h = replyHarness({ providerGenerate: async (request) => {
@@ -317,9 +390,9 @@ async function burstWriting() {
       assert.equal(calls, 1);
       const snapshot = h.turnStore.get(turn.id).checkpoints['burst-candidates'];
       assert.equal(snapshot.candidates.length, 2);
-      if (version === 2) {
+      if (version >= 2) {
         assert.deepEqual(h.reads, [73], 'Burst shares one ancestry read across candidates in the same thread');
-        assert.ok(requests[0].prompt.includes(publicWriting.contentGuidance('comment')));
+        assert.ok(requests[0].prompt.includes(publicWriting.contentGuidance('comment', version)));
         assert.ok(requests[0].prompt.includes(root.body));
         assert.ok(requests[0].prompt.includes(target.body));
         assert.doesNotMatch(requests[0].prompt, /UNRELATED_SIBLING/);
@@ -369,6 +442,7 @@ async function burstWriting() {
   await ordinary();
   await hydration();
   await legacy();
+  await memoryPresentation();
   await burstWriting();
   console.log('writing-integration: ordinary branch reuse, selected hydration, frozen replay, legacy compatibility and Burst checks passed');
 })().catch((error) => {

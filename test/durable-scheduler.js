@@ -18,6 +18,7 @@ const { DEFAULT_MODEL } = require('../lib/providers/ollama');
 const actionCandidates = require('../lib/action-candidates');
 const crypto = require('node:crypto');
 const continuationGuard = require('../lib/continuation-guard');
+const publicWriting = require('../lib/public-writing');
 
 let checks = 0;
 function ok(value, message) {
@@ -526,7 +527,7 @@ async function run() {
       const runtime=h.scheduler(),started=runtime.startBurstSession(p.id,'claude-plan');await settle();
       const turn=h.turnStore.get(started.turnId);
       eq(turn.input.continuationVersion,2,'new Burst freezes the shared continuation contract');
-      eq(turn.input.publicWritingVersion,2,'new Burst freezes the public writing contract independently');
+      eq(turn.input.publicWritingVersion,publicWriting.VERSION,'new Burst freezes the public writing contract independently');
       eq(turn.status,'completed','stale multi-action Burst menu safely completes');
       eq(h.writes.filter(w=>w.type==='comment').length,1,'only the remaining same-bot thread allowance publishes from a three-action snapshot');
       eq(p.replyGuardState.attempts.length,3,'Burst cannot bypass the per-bot attempt bound');
@@ -633,7 +634,7 @@ async function run() {
       await h.scheduler().runTick(); await settle();
       const turn = h.turnStore.activeForProfile(voter.id);
       eq(turn.input.continuationVersion, 2, 'new hosted turns freeze continuation contract independently');
-      eq(turn.input.publicWritingVersion, 2, 'new hosted turns freeze public writing contract independently');
+      eq(turn.input.publicWritingVersion, publicWriting.VERSION, 'new hosted turns freeze public writing contract independently');
       const snapshot = turn.checkpoints['opportunity-candidates'], packed = turn.checkpoints['hosted-decision-construction'];
       ok(packed && !packed.failure && packed.deferredCandidateIds.length > 0, 'renewed fixture fits only a deliberately reduced complete menu: ' +
         JSON.stringify(packed && {failure:packed.failure,original:packed.originalInputTokens,minimum:packed.minimumInputTokens,kept:packed.candidateIds}));
@@ -1642,11 +1643,14 @@ async function run() {
       await initial.runTick();
       await settle();
       const turn = h.turnStore.activeForProfile('social-live-bot');
+      ok(turn.generations[0].request.prompt.includes('analogue camera'),
+        'candidate selection retains the relevant account-linked memory');
       chooseFirstCandidate(h.queue, turn);
       const restarted = h.restartRuntime();
       const content = await queueContentGeneration(restarted, turn.id);
-      ok(restarted.queue.get(content.jobId, true).payload.prompt.includes('RELEVANT AUTOBIOGRAPHICAL MEMORY'),
-        'bounded relevant memory reaches reply generation context');
+      const writingPrompt = restarted.queue.get(content.jobId, true).payload.prompt;
+      ok(!writingPrompt.includes('analogue camera') && writingPrompt.includes('POST YOU ARE REPLYING TO'),
+        'writing omits unrelated remembered camera prose without losing its current reply target');
       completeJob(restarted.queue, content.jobId, 'A successful public reply.');
       restarted.scheduler.reconcileDurableTurns();
       await settle();

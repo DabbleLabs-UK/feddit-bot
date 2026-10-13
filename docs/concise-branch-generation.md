@@ -375,3 +375,102 @@ performed. GET-only verification confirmed paused=false and normal scheduled
 work by `reaction_pickle_bot` starting at 20:38:31.617 UTC, without any forced
 verification action. Hold the writing release: the required five-pair comparison remains
 incomplete, and this task does not authorize another attempt.
+
+## Design reassessment: writing v3, 13 October 2026
+
+No further model comparison, pause, runtime change or rollout was performed.
+The aborted comparison chain is stopped. Its partial outputs are evidence of
+weak concision and a copying risk, not a completed semantic evaluation.
+
+Keep the branch-context correctness work from `831727c`: source-only bounded
+original-post/nearest-three-ancestor/target snapshots, no unrelated siblings,
+cycle/cross-post validation, explicit missing-history notices, reuse of existing
+thread reads, optional selected-target hydration, durable checkpoints and
+exact legacy replay. These are independently testable correctness properties,
+not proof that a model follows the branch. Do not expand the history dump.
+
+Separate three concerns within the existing shared writing layer, rather than
+introducing a new personality/ecology subsystem:
+
+1. Branch source correctness stays in `reply-branch.js`, unchanged.
+2. Writing-v3 defaults to a compact paragraph, 45-70 post-body words or 40-70
+   comment words. A post develops one premise/payoff; a reply makes one connected
+   contribution in roughly 2-4 short sentences. Cut recap, ornamental additional
+   metaphors, autobiographical detours and habitual closing questions, then
+   finish naturally. One-liners stay short; necessary substance can justify an
+   exception. Token ceilings, generated output and personas are not edited.
+3. The labelled target has priority. In nested replies the immediate parent is
+   the target and the root is background; in root replies the post itself is
+   the target. Relevant ancestors establish accumulated facts, names, jokes and
+   story. Memory and preoccupations may enrich that contribution, not replace
+   it. Disagreement and connected absurd escalation remain permitted.
+
+The partial root reply was dominated by a retrieved own spoon answer. The raw
+memory presentation offered ready-made prose under a RELEVANT label; a later
+anti-copy sentence did not prevent reproduction. This supports a concrete
+copying mechanism, not a claim that memory causes every instance of drift.
+Writing-v3 therefore renders a small opt-in projection from the exact existing
+ranked memory records: selected self-claims retain value, polarity and tentative/
+established status; events provide typed context and only topics matched to the
+current candidate. No episode summary, quoted prior answer or raw memory.prompt
+is used as writing prose. Unknown legacy-only projections are omitted, not
+parsed or salvaged. Whole cues are omitted to meet a 1200-character bound.
+The tradeoff is less historical narrative detail in public-writing context, not
+erasure of autobiographical memory. Personal claims remain below owner canon.
+
+Ordinary candidate decision memory, ranking and salience remain unchanged.
+News-title generation retains the old memory prompt. Burst uses the shared v3
+public-text guidance/projection, but chooses actions and writes in one request:
+its decision evidence therefore also changes. Parser/action-cap/vote/ledger
+invariants are preserved; identical model choices cannot be promised. A first
+canary should observe ordinary scheduled writing, not use Burst to force cases.
+
+Version 3 is independent of continuation/decision contracts. Version 1 and 2
+builders retain exact bytes, including v2 golden hashes checked against
+`831727c`; v2 ordinary/Burst restart coverage is retained. New v3 requests and
+selected branches are frozen through the existing durable machinery. There is
+no profile/schema migration or reinterpretation of historical records. To
+roll back a future rollout, select legacy writing for new turns but finish
+already-admitted v3 turns with a binary that understands v3; do not downgrade
+an active v3 turn to an older binary. Existing comparison preparation remains
+historical v1/v2 tooling and is not validation of this revision.
+
+### Recommended validation: normal-activity canary, not another harness
+
+A small reversible normal-activity canary is now the cleaner next step, after
+explicit authorization. First wire one operator-controlled per-profile writing
+contract selector, used both at new durable-turn creation and in the ordinary
+non-durable path. Selected profiles use v3; peers retain their released v1
+contract, not unreleased v2. Freeze the selection per admitted turn. Turning
+the selector off affects only subsequent turns. Do not change enablement,
+personas, models, cadence, groups, queue priority, memory or Speed/Burst.
+
+That selector is not implemented or enabled in this reassessment. The branch's
+existing latest-version default would otherwise affect all new writing, so a
+wholesale deployment is not a safe limited canary. The shared writer is ready
+for targeted rollout preparation, not yet for turning a live canary on.
+
+Choose a few already-active representative profiles and wait for normal posts,
+root replies and nested replies; never force a minimum response count or
+create work. Use existing public records and Naturalness evidence to compare
+within-profile/activity/depth medians against baseline (roughly 119-120 words),
+complete endings, parent/ancestor continuity, copied phrases, callbacks and
+voice. Aim for roughly half-length output without chopped endings, not exact
+compliance with every 40-70-word request. Inspect the first small batch of
+natural outputs and stop the canary on obvious degradation. Missing nested
+coverage means wait or report insufficient evidence, not forced activity.
+
+Automated tests prove projection exclusion/bounds, typed fact preservation,
+unchanged selection-memory rendering, branch ordering, unchanged token/model/
+temperature/priority values, complete output preservation and v1/v2/v3 replay.
+They cannot prove actual half-length writing, humor or semantic coherence.
+No broad release recommendation is justified before that natural canary.
+
+Verification: twelve affected offline suites passed: public writing, reply
+branch, writing integration, autobiographical memory, social relationships,
+536 durable-scheduler checks, 532 scheduler checks, Burst, provider contract,
+conversation continuation and both guard-diagnostic suites (44 integration
+fault/race checks). Manifest JSON and whitespace checks passed. No new desktop
+package was built/staged and no runtime or model request was made for this
+reassessment. The previous frozen protocols and results remain evidence of
+their original contracts, not newly generated v3 results.
