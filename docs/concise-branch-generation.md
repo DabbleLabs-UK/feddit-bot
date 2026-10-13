@@ -320,3 +320,58 @@ new clean bounded comparison, with fresh cases/evidence and unchanged safety
 checks. That comparison was not run by this diagnosis; the behavioral release
 decision remains held. No model call, bot pause, installation, deployment or
 public release occurred.
+
+## Final bounded attempt: stopped safely, 13 October 2026
+
+One new protocol was frozen from `2228febd663484c1a98ff37fb2b710f342a82ccc`,
+without changing writing implementation `831727c` or either failed ledger.
+Protocol ID: `e2ad8994-4983-4be9-85d9-294664bbbb54`; cases SHA-256:
+`a20e3e9d7ef4106b4ea04b297903785d44e597d99e3a8b691e9688b18894a221`.
+All five required categories were frozen with current profiles and identical
+within-pair context/model/temperature/output settings: local
+`qwen3:4b-instruct`, temperature 0.8, 200 output tokens.
+
+Only desktop admission was paused, 20:30:18.128 to 20:35:17.803 UTC
+(4 minutes 59.675 seconds; lease-to-restoration 5 minutes 1.416 seconds).
+Normal admitted work was idle/drained before inference. The independent
+watchdog was armed before the pause and exited after verified restoration.
+The held-state hashes matched for profiles excluding only pause, secrets,
+population, durable turns and importer workspaces (jobs absent).
+
+Three calls completed, before a between-call `PAUSE_ABORTED` stop:
+
+| Case / arm | Total words | Post body words | Seconds | Output tokens |
+| --- | ---: | ---: | ---: | ---: |
+| Text post / old | 129 | 110 | 115.462 | 200 |
+| Text post / new | 106 | 87 | 65.278 | 167 |
+| Root reply / new (unpaired) | 115 | - | 117.318 | 169 |
+
+The old post ends mid-sentence at the unchanged 200-token cap. The new post
+has a complete ending, retains the distinctive absurd vocabulary, but is
+only about 21 percent shorter in body words and remains above 40-70 words.
+The unpaired new root reply also exceeds that range and closely reproduces a
+prior own spoon comment available through retained memory context. This is a
+copying warning, not evidence that treatment worsened copying versus control.
+Neither root control nor any deep/drift/copying pair was attempted, so there
+is no basis for a population-level writing or branch-coherence conclusion.
+
+The abort marker was written by main cleanup after the third completed call,
+not by an inference status/ownership check. The exclusive marker contains
+`PAUSE_ABORTED`, not `PAUSE_INTERRUPTED` or a watchdog stale/deadline code.
+Together with the loop's predicates this narrows the stop to the latched
+heartbeat-publication error. That separate timer catch retains only a boolean,
+so the underlying filesystem exception is unknown. No transport
+`guard-diagnostic.json` exists: all three transport guards completed; the
+fourth call was never admitted. Retained lease, heartbeat, abort, restoration,
+watchdog, three completed results and isolated telemetry remain untouched in
+ignored `artifacts/concise-final-20261013-2030`.
+
+Following the user's stop rule, no new protocol, retry, harness repair or
+additional experimental inference was attempted. Both earlier failed ledgers
+still match their hashes. The repaired harness preflight suites passed and
+application/provider/writing files remain unchanged. No hosted/Cy stop,
+publication, social/memory/persona/cadence change, installation or release was
+performed. GET-only verification confirmed paused=false and normal scheduled
+work by `reaction_pickle_bot` starting at 20:38:31.617 UTC, without any forced
+verification action. Hold the writing release: the required five-pair comparison remains
+incomplete, and this task does not authorize another attempt.
