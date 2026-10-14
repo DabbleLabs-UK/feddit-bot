@@ -18,6 +18,7 @@ const { DEFAULT_MODEL } = require('../lib/providers/ollama');
 const actionCandidates = require('../lib/action-candidates');
 const crypto = require('node:crypto');
 const continuationGuard = require('../lib/continuation-guard');
+const hostedDecisionBudget = require('../lib/hosted-decision-budget');
 
 let checks = 0;
 function ok(value, message) {
@@ -586,16 +587,18 @@ async function run() {
       ok(p.repliedTo.includes('t3_98'),'uncertain target remains handled before terminalization');
     }finally{h.cleanup();}
   }
-  {
-    const voter = makeProfile('renewed-budget-receipt', false);
-    Object.assign(voter, { canReply: true, canStartDiscussions: false, canVote: true, postsPerHour: 0, commentsPerHour: 1 });
+  for (const validPrimary of [false, true]) {
+    const voter = makeProfile('renewed-budget-receipt-' + validPrimary, false);
+    voter.persona += ' ' + Array(80).fill('Specific, thoughtful and sharply observant.').join(' ');
+    // Isolate primary discovery receipts from independent valid vote receipts.
+    Object.assign(voter, { canReply: true, canStartDiscussions: false, canVote: false, postsPerHour: 0, commentsPerHour: 1 });
     Object.assign(voter.sched, { nextPostAt: null, nextCommentAt: 0 });
     const text = Array(60).fill('A photograph with careful lighting documents a different public workshop.').join(' ');
     const h = harness({ profiles: [voter] });
     h.feddit.activeThreads = async () => ({ ok: true, data: { threads: [0,1,2].map(i => ({
       event_id: 'active:t1_' + (601+i), community: 'general',
       post: { id: 173+i, author: 'carol', feddit: 'general', title: 'Complete pressure target '+i,
-        selftext: i === 0 ? 'A short complete public workshop opening.' : Array(500).fill('42? 43! 44? 45!').join(' '),
+        selftext: i === 1 ? 'A short complete public workshop opening.' : Array(500).fill('42? 43! 44? 45!').join(' '),
         kind: 'text', created_utc: 9 },
       fresh_comment: { id: 601+i, author: 'carol', body: 'A fresh specific contribution.', created_utc: 9 },
     })) } });
@@ -606,19 +609,31 @@ async function run() {
       const snapshot = turn.checkpoints['opportunity-candidates'], packed = turn.checkpoints['hosted-decision-construction'];
       ok(packed && !packed.failure && packed.deferredCandidateIds.length > 0, 'renewed fixture fits only a deliberately reduced complete menu: ' +
         JSON.stringify(packed && {failure:packed.failure,original:packed.originalInputTokens,minimum:packed.minimumInputTokens,kept:packed.candidateIds}));
+      ok(packed.candidateIds.includes(snapshot.candidates[1].id) &&
+        packed.deferredCandidateIds.includes(snapshot.candidates[0].id),
+        'a later complete renewed candidate survives an impossible leading target without renumbering: ' +
+        JSON.stringify({ kept: packed.candidateIds, deferred: packed.deferredCandidateIds,
+          targets: snapshot.candidates.map(c => ({ id: c.id, key: c.target.key })) }));
       eq(voter.activeThreadState && voter.activeThreadState.consideredEventIds || [], [],
         'fetch and generation admission do not consume renewed events');
       const restarted = h.restartRuntime();
-      completeJob(restarted.queue, turn.generations[0].jobId, JSON.stringify({ choice:'WAIT', reason:'Nothing fits now.',
-        votes:packed.voteIds.map(id=>({id,direction:'nil',reason:''})) }));
+      completeJob(restarted.queue, turn.generations[0].jobId, validPrimary ?
+        JSON.stringify({ choice:'WAIT', reason:'Nothing fits now.', votes:[] }) : 'A malformed decision.');
       restarted.scheduler.reconcileDurableTurns(); await settle();
+      if (!validPrimary) {
+        const repair = restarted.turnStore.get(turn.id).generations[1];
+        completeJob(restarted.queue, repair.jobId, 'Still not a valid decision.');
+        restarted.scheduler.reconcileDurableTurns(); await settle();
+      }
       const final = restarted.turnStore.get(turn.id);
-      eq(final.status, 'completed', 'valid reduced-menu WAIT completes after restart');
+      eq(final.status, 'completed', 'reduced-menu decision terminalizes safely after restart');
+      eq(final.result.ok, validPrimary, 'malformed primary stays technical failure, never invented WAIT');
       const kept = snapshot.candidates.filter(c=>packed.candidateIds.includes(c.id));
       const deferred = snapshot.candidates.filter(c=>packed.deferredCandidateIds.includes(c.id));
-      eq(voter.activeThreadState.consideredEventIds, kept.map(c=>c.target.activeThread.eventId),
-        'receipt consumes actual retained renewed targets only');
-      ok(deferred.every(c=>!voter.activeThreadState.consideredEventIds.includes(c.target.activeThread.eventId)),
+      const considered = voter.activeThreadState && voter.activeThreadState.consideredEventIds || [];
+      eq(considered, validPrimary ? kept.map(c=>c.target.activeThread.eventId) : [],
+        'only a valid handled primary consumes actual retained renewed targets');
+      ok(deferred.every(c=>!considered.includes(c.target.activeThread.eventId)),
         'budget-deferred renewed IDs are not acknowledged');
       eq(h.writes.length, 0, 'WAIT fixture never publishes');
       h.advance(voter.sched.nextCommentAt-h.now()+1);
@@ -627,6 +642,8 @@ async function run() {
         .filter(t=>t.profileId===voter.id && t.id!==turn.id).sort((a,b)=>b.createdAt-a.createdAt)[0];
       const nextKeys = next.checkpoints['opportunity-candidates'].candidates.map(c=>c.target && c.target.key);
       ok(deferred.every(c=>nextKeys.includes(c.target.key)), 'deferred renewed conversations surface on a later ordinary opportunity');
+      if (!validPrimary) ok(kept.every(c=>nextKeys.includes(c.target.key)),
+        'malformed decisions leave even genuinely offered renewed candidates eligible later');
       eq(final.generations[0].signature, turn.generations[0].signature, 'receipt fix does not rewrite a frozen inference request');
     } finally { h.cleanup(); }
   }
@@ -641,8 +658,8 @@ async function run() {
       eq(h.writes.length, 0, 'blocked future contract is nonpublishing');
     } finally { h.cleanup(); }
   }
-  {
-    const voter = makeProfile('budget-pressure', false);
+  for (const constructionVersion of [1, 2]) {
+    const voter = makeProfile('budget-pressure-v' + constructionVersion, false);
     Object.assign(voter, { canReply: true, canStartDiscussions: false, canVote: true,
       postsPerHour: 0, commentsPerHour: 1 });
     Object.assign(voter.sched, { nextPostAt: null, nextCommentAt: 0 });
@@ -652,11 +669,19 @@ async function run() {
       selftext: text, created_utc: 9,
     })) });
     try {
-      const runtime = h.scheduler();
+      if (constructionVersion === 1) {
+        h.turnStore.create({ profileId: voter.id, profile: structuredClone(voter), rehearsal: false,
+          trigger: 'scheduled', input: { mode: 'capabilities', choices: [{ key: 'reply' }],
+            decisionContractVersion: 2, continuationVersion: 2, hostedDecisionBudgetVersion: 1 } });
+      }
+      const admitted = constructionVersion === 1 ? h.restartRuntime() :
+        { scheduler: h.scheduler(), turnStore: h.turnStore };
+      const runtime = admitted.scheduler;
       await runtime.runTick();
       await settle();
-      const turn = h.turnStore.activeForProfile(voter.id);
-      eq(turn.input.hostedDecisionBudgetVersion, 1, 'new turns freeze hosted prompt construction version');
+      const turn = admitted.turnStore.activeForProfile(voter.id);
+      eq(turn.input.hostedDecisionBudgetVersion, constructionVersion,
+        'new turns freeze v2 while existing pre-construction v1 turns retain their contract');
       const snapshot = turn.checkpoints['opportunity-candidates'];
       const packed = turn.checkpoints['hosted-decision-construction'];
       ok(packed && !packed.failure, 'a complete minimum decision slate fits the pressure fixture: ' +
@@ -669,10 +694,24 @@ async function run() {
         ok(budget.inputTokens + budget.outputTokens + budget.safetyTokens <= budget.contextTokens,
           'both initial and repair reserve their entire response and safety headroom');
       }
-      eq(packed.candidateIds, snapshot.candidates.slice(0, packed.candidateIds.length).map((item) => item.id),
-        'action packing preserves the original ordered prefix and stable IDs');
-      eq(packed.voteIds, snapshot.voteCandidates.slice(0, packed.voteIds.length).map((item) => item.id),
-        'independent vote packing preserves its own ordered prefix and stable IDs');
+      eq(packed.version, constructionVersion, 'the immutable checkpoint records its frozen construction contract');
+      if (constructionVersion === 1) {
+        eq(packed, hostedDecisionBudget.construct({ model: voter.model, system: voter.persona,
+          candidates: snapshot.candidates, voteCandidates: snapshot.voteCandidates,
+          voteAllowance: snapshot.voteAllowance, decisionAt: turn.createdAt,
+          decisionContractVersion: 2, constructionVersion: 1 }),
+        'pre-construction v1 replay reproduces every legacy prompt, token and request-hash field exactly');
+        eq(packed.candidateIds, snapshot.candidates.slice(0, packed.candidateIds.length).map((item) => item.id),
+          'legacy action packing retains its exact ordered prefix');
+        eq(packed.voteIds, snapshot.voteCandidates.slice(0, packed.voteIds.length).map((item) => item.id),
+          'legacy vote packing retains its exact ordered prefix');
+      } else {
+        eq(packed.numPredict, 640, 'v2 retains the complete 640-token output reservation');
+        ok(packed.candidateIds.every(id => snapshot.candidates.some(item => item.id === id)),
+          'v2 action packing preserves stable IDs from the original snapshot');
+        ok(packed.voteIds.every(id => snapshot.voteCandidates.some(item => item.id === id)),
+          'v2 vote packing preserves stable IDs from the original snapshot');
+      }
       const frozenFirst = structuredClone(turn.generations[0]);
       eq(frozenFirst.request.prompt, packed.prompt, 'initial request uses the frozen budgeted prompt');
       eq(frozenFirst.request.decisionBudget, packed.budget, 'initial request carries its frozen budget evidence');
@@ -938,6 +977,8 @@ async function run() {
       await settle();
       const turn = h.turnStore.activeForProfile(h.profiles[0].id);
       const slate = turn.checkpoints['opportunity-candidates'].voteCandidates;
+      const construction = turn.checkpoints['hosted-decision-construction'];
+      eq(construction.version, 2, 'partial valid votes use the new construction contract');
       completeJob(h.queue, turn.generations[0].jobId, JSON.stringify({
         choice: 'UNKNOWN', reason: 'The primary choice is invalid.',
         votes: [{ id: slate[0].id, direction: 'up', reason: 'The original valid reason must remain pinned.' }],
@@ -962,6 +1003,8 @@ async function run() {
       const recordedVotes = h.profiles[0].activity.find((entry) => entry.kind === 'vote').votes;
       eq(recordedVotes.map((vote) => vote.direction), ['up', 'nil'], 'repair fills unresolved votes without rerolling valid votes');
       eq(recordedVotes[0].reason, 'The original valid reason must remain pinned.', 'repair retains the first valid reason');
+      eq(finished.checkpoints['hosted-decision-construction'], construction,
+        'repair with partial valid votes cannot reconstruct or expand the frozen offered slate');
       eq(finished.generations.length, 3, 'restart retains exactly decision, repair and content');
       eq(h.writes.filter((write) => write.type === 'vote').length, 1, 'pinned vote executes once');
     } finally {

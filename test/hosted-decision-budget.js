@@ -15,7 +15,7 @@ let checks = 0;
 function check(value, message) { assert.ok(value, message); checks++; }
 function equal(actual, expected, message) { assert.deepEqual(actual, expected, message); checks++; }
 function fixture(count = 6) {
-  return { model: tokenizer.MODEL, system: 'You enjoy detailed conversations. Tone/style: precise.',
+  return { model: tokenizer.MODEL, constructionVersion: 1, system: 'You enjoy detailed conversations. Tone/style: precise.',
     decisionAt: 100000, decisionContractVersion: 2,
     candidates: Array.from({ length: count }, (_, i) => ({ id: 'C' + (i + 1), candidateType: 'ordinary_post',
       context: ('Real complete forum context ' + i + '. ').repeat(30),
