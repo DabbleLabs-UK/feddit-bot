@@ -99,11 +99,79 @@ the shared arbiter was healthy with no expired Feddit leases.
 
 ## Natural observation boundary
 
-Post-deployment natural v2 outcomes will be appended after the next ordinary
-scheduled opportunity. No forced post, comment, preview, paid inference or
-experimental model request is part of this deployment. A successful packed
-menu is not proof of valid model JSON, a reply, or improved conversation density.
-The known structured-output validity problem remains separate.
+The first ordinary post-deployment turn was
+`t_31d6d075072bda4412846dc4bf6fa12a`, fedditfoolish, admitted at 14:22:25.306 UTC
+with construction v2 and unchanged continuation v2. It gathered ten primary
+candidates and seven independent votes. Its full menu measured 10886 tokens.
+The actual packed menu retained C1 (reply to own comment) and C5 (renewed
+thread), deferring eight whole primary candidates and all seven votes. Initial
+input was 2291 tokens, repair input 2334, each with the full 640 output plus 64
+safety reserve inside 3072. Independent verification of the actual frozen
+requests passed. The old v1 constructor would have succeeded with C1 alone
+on THIS snapshot: the live example proves broader renewed-thread exposure,
+not a live reproduction/recovery of the former failing C1/V1 pair.
+
+The compatible worker completed its initial generation at 14:29:10 UTC. Ollama
+reported exactly 2291 input tokens, matching the measured request; output was
+37 tokens. No input truncation was observed. Its decision was malformed and
+entered the existing repair path, not valid abstention. The repair's first
+claim again encountered the existing lost/late claim-response pattern. Normal
+lease expiry recovered the SAME job `j_9fa888021c49f761c7afc40cea4f25e7` at
+14:40:11.968 UTC, attempt 2, without a manual retry. It completed at approximately
+14:41:51 UTC and reported exactly 2334 input tokens, matching the frozen repair
+request, with 34 output tokens. Both actual calls therefore match the exact
+budget; neither silently truncated its input.
+
+The repair was also malformed. The logical turn completed at 14:42:39.337 UTC
+as a technical no-publication outcome, not genuine WAIT/abstention. No primary
+publication or secondary vote-effect checkpoint exists. Its persisted discovery
+receipt exactly matches independent reconstruction using only actually offered
+targets and explicit valid decisions. Unexpected deferred-target receipts: 0.
+The deferred votes were not offered and no vote decision/effect was created.
+
+Observation cutoff: 14:43:31 UTC, beginning with deployment at 14:14:19 UTC.
+One natural v2 opportunity constructed successfully; zero construction failures
+or occurrences of the old failing-pair signature were observed. This denominator
+is far too small to claim the production signature has disappeared generally.
+No genuinely impossible live request occurred; fail-explicit/zero-inference
+behavior is verified by deterministic tests, not by manufactured production work.
+
+The deployed constructor was also rechecked in a separate, read-only process
+against the SAME frozen overnight corpus after deployment: 49/49 legacy
+reconstructions remained exact; 20 old construction failures became zero;
+all 20 recovered a fitting primary; all 49 initial/repair pairs independently
+verified. Max initial/repair inputs remain 2324/2367 tokens. This is a
+construction counterfactual, not 49 live model calls.
+
+Post-deployment protected-field comparison against the verified private backup
+found identical profile IDs, enabled/rehearsal settings, personas, tone,
+cadences, provider/model selections, community configuration, groups, global
+settings and secret-store bytes. At 14:44:43 UTC the completed natural turn's
+voting state remained identical to the predeployment backup: deferred votes
+did not become considered. Both services were healthy, one worker was online,
+the queue was empty, and Cy's original PID 25164 had a fresh running
+acknowledgement. There was no shared maintenance request.
+
+No forced post, comment, preview, paid inference or experimental model request
+is part of this deployment. A successful packed menu is not proof of valid
+model JSON, a reply, or improved conversation density. The known structured
+output validity problem and claim HTTP delays remain separate.
+
+## Separate desktop preservation
+
+The local desktop remained 0.27.3 at `a41b691`; it was not rebuilt, installed,
+restarted or updated. Its persisted canary IDs remain exactly
+`p_swb8djuqg1y4`, `p_7gc83gbxvjpc`, `p_e4l36dfw9wrl`.
+Global pause was found ON again during read-only checks. After explicit user
+confirmation, only `paused:false` was PUT at 14:20:37 UTC; every other setting
+and the three canary IDs were verified identical before/after. The next natural
+desktop attempt reported local Ollama ECONNREFUSED; a read-only availability
+check confirmed the local endpoint unavailable. No provider/model or local
+Ollama process/configuration was changed to hide this separate issue.
+
+The public desktop manifest remains 0.27.2, minimum launcher 0.2.2, SHA-256
+`863b165a312393820f985a270de5c2ca710258b92bfc071869d1e14864b802da`.
+No updater/release files, tags or public artifacts were changed.
 
 ## Rollback
 
