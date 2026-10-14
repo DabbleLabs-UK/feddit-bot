@@ -1,6 +1,9 @@
 # Hosted construction v2: whole-block fitting without prefix blocking
 
-Status: implementation and offline validation only. No deployment or release.
+Status: controlled hosted deployment completed on 14 October 2026. See
+`hosted-budget-packing-deployment-2026-10-14.md` for exact worker/runner builds,
+preservation checks, observation limits and rollback constraints. No desktop
+release or writing-canary update is included.
 Base: authoritative `0d1200c` / 0.27.2, inspected against local and actual remote
 `progressive-bot-platform` on 14 October 2026. The separate installed writing-v3
 canary at `a41b691` / 0.27.3 is not merged into this fix.
