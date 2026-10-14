@@ -168,6 +168,9 @@ and the three canary IDs were verified identical before/after. The next natural
 desktop attempt reported local Ollama ECONNREFUSED; a read-only availability
 check confirmed the local endpoint unavailable. No provider/model or local
 Ollama process/configuration was changed to hide this separate issue.
+At 14:45:24 UTC the local Ollama metadata endpoint was reachable again without
+intervention by this deployment; desktop version, unpaused state and all three
+canary IDs were reverified unchanged.
 
 The public desktop manifest remains 0.27.2, minimum launcher 0.2.2, SHA-256
 `863b165a312393820f985a270de5c2ca710258b92bfc071869d1e14864b802da`.
