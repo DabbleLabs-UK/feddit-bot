@@ -309,6 +309,12 @@ class SupervisorTests(unittest.TestCase):
         with patch.object(worker.subprocess, "run", side_effect=inventory):
             host.snapshot_path = None
             self.assertEqual(host.inventory(), [])
+        launch = commands[0]
+        for token in ("CreateProcessW", "0x00000010", "STARTF_USESHOWWINDOW", "startup.wShowWindow = 0",
+                      "IntPtr.Zero, IntPtr.Zero, false", "CloseHandle(process.hThread)", "CloseHandle(process.hProcess)",
+                      "Child.Handle", "[FedditNativeWorker]::Child"):
+            self.assertIn(token, launch)
+        self.assertNotIn("Start-Process -FilePath", launch)
         commands.append((ROOT / "deploy/dell/identity-probe.ps1").read_text())
         parser = r"""
 $ErrorActionPreference='Stop'
@@ -318,6 +324,10 @@ foreach ($script in $scripts) {
     $null = [System.Management.Automation.Language.Parser]::ParseInput($script, [ref]$tokens, [ref]$errors)
     if ($errors.Count -gt 0) { $errors | ForEach-Object { $_.Message }; exit 1 }
 }
+$nativeType = [regex]::Match($scripts[0], "(?s)Add-Type @'\r?\n(.*?)\r?\n'@").Groups[1].Value
+if ([string]::IsNullOrWhiteSpace($nativeType)) { throw 'Native launch type missing' }
+Add-Type -TypeDefinition $nativeType
+if (-not ('FedditNativeWorker' -as [type])) { throw 'Native launch type did not compile' }
 $utc = [datetimeoffset]::Parse('2026-10-15T18:00:00Z').UtcDateTime
 $offset = [datetimeoffset]::Parse('2026-10-15T19:00:00+01:00').UtcDateTime
 if ($utc -ne $offset) { throw 'UTC birth comparison is not timezone-independent' }
@@ -364,6 +374,12 @@ try {
                                 capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("native-atomic-replace-passed", result.stdout)
+
+    def test_native_helper_uses_process_local_policy_not_machine_policy(self):
+        command = worker.ps_command("'fixed-probe'")
+        self.assertIn("-ExecutionPolicy", command)
+        self.assertEqual(command[command.index("-ExecutionPolicy") + 1], "Bypass")
+        self.assertNotIn("Set-ExecutionPolicy", base64.b64decode(command[-1]).decode("utf-16le"))
 
     def snapshot_fixture(self, transform=lambda value: value):
         host = object.__new__(worker.Host)

@@ -71,7 +71,9 @@ def ps_quote(value):
 def ps_command(script):
     prefix = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=New-Object System.Text.UTF8Encoding; "
     encoded = base64.b64encode((prefix + script).encode("utf-16le")).decode("ascii")
-    return [POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded]
+    # Process-local policy only: the only script file invoked is the separately
+    # hash-verified fixed Ctrl+C helper. Never change the machine policy.
+    return [POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded]
 
 
 def same_path(left, right):
@@ -221,12 +223,63 @@ class Host:
         # child gets a separate hidden console; the guarded Ctrl+C helper will
         # refuse any console shared with another process.
         script = RECORD_FUNCTION + r"""
+Add-Type @'
+using System;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class FedditNativeWorker {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct StartupInfo {
+        public int cb;
+        public string lpReserved, lpDesktop, lpTitle;
+        public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+        public short wShowWindow, cbReserved2;
+        public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProcessInformation {
+        public IntPtr hProcess, hThread;
+        public uint dwProcessId, dwThreadId;
+    }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    private static extern bool CreateProcessW(string application, StringBuilder commandLine,
+        IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, uint creationFlags,
+        IntPtr environment, string directory, ref StartupInfo startup, out ProcessInformation process);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
+    public static Process Child { get; private set; }
+    public static int Launch(string executable, string worker, string directory) {
+        StartupInfo startup = new StartupInfo();
+        startup.cb = Marshal.SizeOf(typeof(StartupInfo));
+        startup.dwFlags = 0x00000001; // STARTF_USESHOWWINDOW
+        startup.wShowWindow = 0; // SW_HIDE: hide the new console, do not remove it.
+        ProcessInformation process;
+        StringBuilder command = new StringBuilder("\"" + executable + "\" \"" + worker + "\"");
+        if (!CreateProcessW(executable, command, IntPtr.Zero, IntPtr.Zero, false,
+                0x00000010, IntPtr.Zero, directory, ref startup, out process)) { // CREATE_NEW_CONSOLE
+            throw new InvalidOperationException("Native worker creation failed.");
+        }
+        try {
+            // Pin the original child before releasing the creation handles, so
+            // the subsequent CIM birth check cannot adopt a reused native PID.
+            Child = Process.GetProcessById((int)process.dwProcessId);
+            IntPtr pinnedHandle = Child.Handle;
+            if (pinnedHandle == IntPtr.Zero) throw new InvalidOperationException("Native worker identity unavailable.");
+            return (int)process.dwProcessId;
+        } finally {
+            CloseHandle(process.hThread);
+            CloseHandle(process.hProcess);
+        }
+    }
+}
+'@
 $mutex = New-Object System.Threading.Mutex($false, 'Local\FedditWorkerSupervisor-v1')
 try { $owned = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $owned = $true }
 if (-not $owned) { exit 78 }
 try {
     $nodes = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'")
-""" + guard + "\n$p = Start-Process -FilePath " + ps_quote(NODE) + " -ArgumentList " + ps_quote('"' + self.expected + '"') + " -WorkingDirectory " + ps_quote(ntpath.dirname(self.expected)) + " -WindowStyle Hidden -PassThru\n" + r"""
+""" + guard + "\n$nativePid = [FedditNativeWorker]::Launch(" + ps_quote(NODE) + ", " + ps_quote(self.expected) + ", " + ps_quote(ntpath.dirname(self.expected)) + ")\n$p = [FedditNativeWorker]::Child\n" + r"""
     $native = Get-CimInstance Win32_Process -Filter "ProcessId=$($p.Id)"
     if (-not $native -or $p.HasExited -or [math]::Abs(($native.CreationDate.ToUniversalTime() - $p.StartTime.ToUniversalTime()).TotalMilliseconds) -ge 1) { exit 1 }
     Record $native | ConvertTo-Json -Compress
