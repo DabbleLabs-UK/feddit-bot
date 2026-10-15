@@ -37,7 +37,10 @@ scan begun after the request; stale/replayed evidence fails closed.
 
 Install the task using a fixed action pointing to the immutable release's
 `deploy/dell/identity-probe.ps1`, Interactive logon, highest run level, hidden
-window and restart-on-failure. Do not substitute an unrestricted command broker.
+window and restart-on-failure. Pin its SHA-256 in the fixed task action: read
+the bytes once, verify them, then execute only those verified in-memory bytes.
+Do not substitute an unrestricted command broker or reopen a mutable source
+file for execution after verification.
 The unit sets `FEDDIT_IDENTITY_SNAPSHOT` to the snapshot location.
 
 Native absence permits only the owned WSL launch proxy to be cleaned up and the
