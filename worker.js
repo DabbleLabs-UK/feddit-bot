@@ -185,6 +185,9 @@ function createWorker(options = {}) {
 }
 
 if (require.main === module) {
+  const logger = process.env.FEDDIT_WORKER_LOG_FILE
+    ? require('./lib/worker-operational-log').createLogger(process.env.FEDDIT_WORKER_LOG_FILE, process.env.FEDDIT_WORKER_KEY)
+    : console;
   let worker;
   try {
     worker = createWorker({
@@ -193,16 +196,17 @@ if (require.main === module) {
       workerId: process.env.FEDDIT_WORKER_ID || os.hostname(),
       allowedModels: process.env.FEDDIT_WORKER_MODELS,
       maintenanceDir: process.env.FEDDIT_MAINTENANCE_DIR,
+      logger,
     });
   } catch (err) {
-    console.error(err.message);
+    logger.error(err.message);
     process.exitCode = 1;
     return;
   }
   process.on('SIGINT', () => worker.stop());
   process.on('SIGTERM', () => worker.stop());
   worker.run().catch((err) => {
-    console.error('Worker stopped: ' + err.message);
+    logger.error('Worker stopped: ' + err.message);
     process.exitCode = 1;
   });
 }

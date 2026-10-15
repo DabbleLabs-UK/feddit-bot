@@ -1,0 +1,2 @@
+deploy/dell/*.sh text eol=lf
+deploy/dell/*.py text eol=lf

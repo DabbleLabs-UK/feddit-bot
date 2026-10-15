@@ -5,21 +5,27 @@ After=network-online.target feddit-ollama.service shared-ollama-arbiter.service
 PartOf=feddit-bots.target
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
 EnvironmentFile=%h/.config/feddit-bot/worker.env
 # WSL passes only explicitly named Linux environment variables into Windows
 # processes. Values remain in the restricted EnvironmentFile above.
 Environment=SHARED_OLLAMA_ARBITER_URL=http://127.0.0.1:11435
-Environment=WSLENV=FEDDIT_RUNNER_URL:FEDDIT_WORKER_KEY:FEDDIT_WORKER_ID:FEDDIT_WORKER_MODELS:SHARED_OLLAMA_ARBITER_URL
+Environment=OLLAMA_BASE=http://127.0.0.1:11434
+Environment=FEDDIT_MAINTENANCE_DIR=C:/dev/inference-maintenance
+Environment=FEDDIT_IDENTITY_SNAPSHOT=C:/dev/feddit-worker-ops/identity.json
+Environment=FEDDIT_WORKER_LOG_FILE=C:/dev/feddit-worker-ops/worker.jsonl
+Environment=WSLENV=FEDDIT_RUNNER_URL:FEDDIT_WORKER_KEY:FEDDIT_WORKER_ID:FEDDIT_WORKER_MODELS:SHARED_OLLAMA_ARBITER_URL:FEDDIT_MAINTENANCE_DIR:OLLAMA_BASE:FEDDIT_WORKER_LOG_FILE
 WorkingDirectory=%h/.local/lib/feddit-bot/current
-ExecStartPre=/bin/bash -lc 'for attempt in {1..60}; do "/mnt/c/Windows/System32/curl.exe" -fsS --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1'
-ExecStartPre=/bin/bash -lc 'for attempt in {1..60}; do "/mnt/c/Windows/System32/curl.exe" -fsS --max-time 2 http://127.0.0.1:11435/health >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1'
-# Resolve the Linux release symlink before crossing into Windows. Windows Node
-# can read a real WSL path, but it cannot traverse a Linux symlink over the WSL
-# UNC bridge.
-ExecStart=/bin/bash -lc 'exec "/mnt/c/Program Files/nodejs/node.exe" "$(readlink -f %h/.local/lib/feddit-bot/current)/worker.js"'
+ExecStart=/usr/bin/python3 %h/.local/lib/feddit-bot/current/deploy/dell/supervised-worker.py
 Restart=always
+RestartPreventExitStatus=78
 RestartSec=10
+TimeoutStartSec=3min
+# Only the Python supervisor receives systemd signals. It uses the identity-
+# guarded Windows Ctrl+C helper; uncertain ownership prohibits replacement.
+KillMode=process
+SendSIGKILL=no
 # A claimed durable job can legitimately run for up to 30 minutes. An explicit
 # service stop asks the worker to finish that one job and must never kill it at
 # systemd's default 90-second stop timeout.

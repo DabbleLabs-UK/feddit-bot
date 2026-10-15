@@ -7,6 +7,7 @@ Type=simple
 ExecStart=/bin/bash %h/.local/lib/feddit-bot/ops/feddit-ollama-supervisor.sh
 Restart=always
 RestartSec=5
+RestartPreventExitStatus=78
 
 [Install]
 WantedBy=feddit-bots.target
