@@ -245,3 +245,76 @@ At 21:22 UTC the shared arbiter had no active or queued lease, privileged native
 inventory found zero remaining validation processes, both original production
 PIDs were alive, and the hosted source pointer still resolved to
 /home/dabblela/feddit-bot-runner/releases/caa4c6d-budget-v2.
+
+## Approved reason refinement: first targeted check failed, stop without retry
+
+Jody subsequently authorized the exact existing non-nil reason constraint and
+at most two targeted checks. Runner implementation c3033b0 and compatible
+non-streaming worker 212ceec introduce independent response-format v2. Up/down
+uses a three-word canonical single-space pattern and formal minLength 15; nil
+may retain an empty reason. Whitespace characters are excluded explicitly,
+without unsupported lookaround/shorthand. The unchanged application validator
+still controls acceptance. The native converter's pattern/minLength conjunction
+remains a limitation; this is not a claim that native length is guaranteed.
+
+Format v0 stays unformatted. Frozen v1 schemas retain their exact serialization,
+while new ordinary hosted turns freeze v2. Replay, restart and the single
+existing repair preserve their original format version. Construction-v2,
+decision-contract v2, voting, parsing, tokenization and provider transport are
+unchanged. The worker must be compatible BEFORE a runner emits either native
+format version; keep compatible binaries while such turns remain active.
+
+The fresh private reason-refinement protocol has SHA-256
+635592bebc6169acaa01499283d75365e5639d7c96f851e04223637442672062.
+It contains only the unchanged two- and three-vote requests from the first run,
+schema-only, maxCalls 2, and cannot continue/reuse a ledger. It stops on the first
+failed native-schema or semantic check. All earlier evidence and its protocol
+hash remain unchanged. Raw v2 schema attribution additionally checks the actual
+canonical pattern/length, separately from semantic whitespace normalization.
+
+Exactly ONE additional inference occurred, through the actual compatible
+non-streaming worker module and verified model/runtime with mocked private
+completion delivery. It used normal background/synthetic shared admission:
+
+| Case | Input | Output | Queue | Inference | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| syntax-two-votes, format v2 | 2133 | 56 | 54.445s | 21.606s | valid primary; V1 explicit; V2 missing |
+
+The returned raw JSON has exactly choice/reason/votes, but its votes array has
+only V1, not the required V1,V2 tuple. V1 is down with a 29-character, five-word
+reason. Thus the old two-word reason failure was absent in this sample, but full
+contract validity is 0/1 and native-schema exactness is 0/1. V2 remains missing,
+unresolved and unconsidered. No missing nil was invented. Native finish was stop,
+not length, and the input exactly matches the frozen request. With output 640
+reserved plus safety 64, 2837 tokens fit inside the unchanged 3072 context.
+The worker/provider passed the v2 schema; the native result nevertheless violated
+its tuple cardinality. The evidence establishes this refined schema is not
+reliable on this runtime, not which native conversion detail caused that breach.
+Do not attribute this to truncation or claim oneOf causality from one sample.
+
+The validation process exited with failure immediately; the second approved call
+was NOT made, no new ledger was created, and there was no retry. Private result
+and summary remain owner-protected/ignored, separate from Naturalness evidence.
+There was no live-store access, publication, registration, settings write,
+maintenance hold, deployment, desktop update, release or Cy restart.
+
+Regression checks: runner format 157, validation 84, durable scheduler 631;
+worker format 105, worker 20, maintenance 62, operational logging 107. Additional
+voting, decision-contract 91, candidates 48, budget 32, packing-v2 239, frozen
+budget 26, continuation 37, anti-loop 135, provider-contract, tokenizer, attention,
+DELL 22, runner worker 22, queue 55, Naturalness decision shapes 27 and scheduler,
+Speed 44 and Burst 39 checks pass. Temp-file suites were rerun successfully with
+an owned writable TEMP after Windows sandbox rename errors; no assertion was
+weakened. A content-free missing-second-vote regression preserves fail-closed
+schema attribution and independent valid-vote semantics.
+
+At 21:38:59 UTC production worker PID 7836 and Cy PID 14988 remained alive with
+fresh ready/running acknowledgements, supervisor PID 28346 and zero restarts,
+Ollama 0.34.1, no maintenance owner, no remaining validation processes and no
+active or queued arbiter lease. Desktop pause was false and the same three-bot
+canary was retained on read-only checks. Production code was not changed.
+
+Final decision: HOLD. Formal reason alignment alone did not establish robust
+native full-contract validity. Do not deploy or claim the hosted failure problem
+is fixed. Any further native compatibility investigation or inference needs a
+separately bounded plan; the template question also remains unresolved.

@@ -109,6 +109,15 @@ eq(score(JSON.stringify(normalized), refinedItem).fullValid, true);
 normalized.votes[0].reason = 'A useful explanation here.\n';
 eq(score(JSON.stringify(normalized), refinedItem).nativeSchemaExact, false);
 eq(score(JSON.stringify(valid), refinedItem).votes[1].direction, 'nil');
+// Content-free shape of the first real v2 check: compliant V1 reason but V2
+// absent, despite a native tuple schema. Never attribute this as schema success.
+const missingRefined = { ...valid, votes: valid.votes.slice(0, 1) };
+const missingScore = score(JSON.stringify(missingRefined), refinement.cases[0]);
+eq(missingScore.nativeSchemaExact, false);
+eq(missingScore.fullValid, false);
+eq(missingScore.explicit, 1);
+eq(missingScore.unresolved, 1);
+eq(missingScore.votes[1], { id: 'V2', direction: null, decisionKind: 'missing' });
 // Version 1 attribution remains structural; the unchanged semantic validator
 // still rejects the same short non-nil reason independently.
 eq(score(JSON.stringify(wrongReason), item).nativeSchemaExact, true);
