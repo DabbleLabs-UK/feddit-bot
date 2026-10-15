@@ -32,6 +32,7 @@ const valid = { choice: 'C7', reason: 'This fits the actual branch.', votes: [
 eq(score(JSON.stringify(valid), item).fullValid, true);
 eq(score(JSON.stringify(valid), item).tupleExact, true);
 eq(score(JSON.stringify(valid), item).nativeSchemaExact, true);
+eq(score('```json\n' + JSON.stringify(valid) + '\n```', item).nativeSchemaExact, false);
 eq(score(JSON.stringify({ ...valid, extra: true }), item).nativeSchemaExact, false);
 eq(score(JSON.stringify({ ...valid, reason: 1 }), item).nativeSchemaExact, false);
 eq(score(JSON.stringify({ ...valid, votes: valid.votes.map(v => ({ ...v, extra: true })) }), item).nativeSchemaExact, false);

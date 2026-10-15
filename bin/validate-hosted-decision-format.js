@@ -65,13 +65,15 @@ function score(text, item) {
   const decision = actions.parseDecision(text, item.candidates, {
     voteCandidates: item.voteCandidates, decisionContractVersion: 2 });
   const parsed = contract.parseObject(text);
+  let rawJSON = false;
+  try { JSON.parse(String(text || '').trim()); rawJSON = true; } catch { /* no salvage for native attribution */ }
   const fullValid = decision.valid && decision.votes.every(vote => vote.decisionKind === 'explicit');
   const expected = item.descriptor ? item.descriptor.voteIds : item.construction.voteIds;
   const tupleExact = !!parsed && Array.isArray(parsed.votes) && parsed.votes.length === expected.length &&
     parsed.votes.every((vote, index) => vote && vote.id === expected[index]);
   const exactKeys = (object, keys) => object && typeof object === 'object' && !Array.isArray(object) &&
     Object.keys(object).length === keys.length && keys.every(key => Object.hasOwn(object, key));
-  const nativeSchemaExact = !!parsed && exactKeys(parsed, ['choice', 'reason', 'votes']) &&
+  const nativeSchemaExact = rawJSON && !!parsed && exactKeys(parsed, ['choice', 'reason', 'votes']) &&
     typeof parsed.reason === 'string' && ['WAIT', ...item.candidates.map(c => c.id)].includes(parsed.choice) &&
     tupleExact && parsed.votes.every(vote => exactKeys(vote, ['id', 'direction', 'reason']) &&
       ['up', 'down', 'nil'].includes(vote.direction) && typeof vote.reason === 'string');
