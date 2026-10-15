@@ -498,6 +498,7 @@ async function run() {
       const runtime=h.scheduler(),started=runtime.startBurstSession(p.id,'claude-plan');await settle();
       const turn=h.turnStore.get(started.turnId);
       eq(turn.input.continuationVersion,2,'new Burst freezes the shared continuation contract');
+      eq(turn.input.hostedDecisionFormatVersion, undefined, 'Burst is not enrolled in hosted native response framing');
       eq(turn.status,'completed','stale multi-action Burst menu safely completes');
       eq(h.writes.filter(w=>w.type==='comment').length,1,'only the remaining same-bot thread allowance publishes from a three-action snapshot');
       eq(p.replyGuardState.attempts.length,3,'Burst cannot bypass the per-bot attempt bound');
@@ -658,6 +659,67 @@ async function run() {
       eq(h.writes.length, 0, 'blocked future contract is nonpublishing');
     } finally { h.cleanup(); }
   }
+  {
+    const h = harness({ profiles: [makeProfile('future-response-format', false)] });
+    try {
+      const before = structuredClone(h.profiles[0].sched);
+      const { turn } = h.turnStore.create({ profileId: h.profiles[0].id,
+        profile: h.profiles[0], rehearsal: false, trigger: 'scheduled',
+        input: { mode: 'capabilities', decisionContractVersion: 2, hostedDecisionBudgetVersion: 2,
+          hostedDecisionFormatVersion: 99, choices: [{ key: 'discussion' }] } });
+      const restarted = h.restartRuntime();
+      restarted.scheduler.reconcileDurableTurns();
+      await settle();
+      eq(restarted.turnStore.get(turn.id).status, 'blocked', 'unknown response format holds durable ownership');
+      eq(restarted.turnStore.get(turn.id).generations.length, 0, 'unsupported framing sends no inference');
+      eq(h.profiles[0].sched, before, 'unsupported framing cannot consume deadlines');
+      eq(h.writes.length, 0, 'unsupported framing cannot publish');
+    } finally { h.cleanup(); }
+  }
+  for (const repaired of [false, true]) {
+    const h = votingHarness('legacy-construction-v2-format-' + repaired, 1);
+    try {
+      const first = h.scheduler();
+      await first.runTick();
+      await settle();
+      const turn = h.turnStore.activeForProfile(h.profiles[0].id);
+      const input = { ...turn.input };
+      delete input.hostedDecisionFormatVersion;
+      const request = { ...turn.generations[0].request };
+      delete request.hostedDecisionFormat;
+      const signature = crypto.createHash('sha256').update(JSON.stringify(request)).digest('hex');
+      h.turnStore.update(turn.id, { input });
+      h.turnStore.generation(turn.id, 0, { request, signature });
+      const queueData = JSON.parse(fs.readFileSync(h.queueFile, 'utf8'));
+      const job = queueData.jobs.find(item => item.id === turn.generations[0].jobId);
+      delete job.payload.hostedDecisionFormat;
+      fs.writeFileSync(h.queueFile, JSON.stringify(queueData));
+      const restarted = h.restartRuntime();
+      restarted.scheduler.reconcileDurableTurns();
+      await settle();
+      eq(restarted.turnStore.get(turn.id).generations[0].signature, signature,
+        'in-flight construction-v2 request keeps its original unformatted signature');
+      const packed = turn.checkpoints['hosted-decision-construction'];
+      const abstention = JSON.stringify({ choice: 'WAIT', reason: 'No fitting reply at present.',
+        votes: packed.voteIds.map(id => ({ id, direction: 'nil', reason: '' })) });
+      completeJob(restarted.queue, job.id, repaired ? 'An unreadable choice.' : abstention);
+      restarted.scheduler.reconcileDurableTurns();
+      await settle();
+      if (repaired) {
+        const pending = restarted.turnStore.get(turn.id);
+        eq(pending.generations[1].request.hostedDecisionFormat, undefined,
+          'old construction-v2 repair also remains unformatted');
+        completeJob(restarted.queue, pending.generations[1].jobId, abstention);
+        restarted.scheduler.reconcileDurableTurns();
+        await settle();
+      }
+      const finished = restarted.turnStore.get(turn.id);
+      eq(finished.status, 'completed', 'old construction-v2 decision/repair finishes without reinterpretation');
+      eq(finished.checkpoints['hosted-decision-construction'], packed, 'legacy construction-v2 checkpoint remains exact');
+      eq(finished.generations.length, repaired ? 2 : 1, 'framing does not add repair calls to legacy replay');
+      eq(h.writes.length, 0, 'legacy replay fixture never publishes');
+    } finally { h.cleanup(); }
+  }
   for (const constructionVersion of [1, 2]) {
     const voter = makeProfile('budget-pressure-v' + constructionVersion, false);
     Object.assign(voter, { canReply: true, canStartDiscussions: false, canVote: true,
@@ -713,6 +775,16 @@ async function run() {
           'v2 vote packing preserves stable IDs from the original snapshot');
       }
       const frozenFirst = structuredClone(turn.generations[0]);
+      if (constructionVersion === 2) {
+        eq(turn.input.hostedDecisionFormatVersion, 1, 'new hosted turn freezes response format independently');
+        eq(frozenFirst.request.hostedDecisionFormat, { version: 1,
+          candidateIds: packed.candidateIds, voteIds: packed.voteIds },
+        'native schema sees only complete actually offered stable IDs');
+        eq(queueJobs(h.queueFile)[0].payload.hostedDecisionFormat, frozenFirst.request.hostedDecisionFormat,
+          'durable queue carries exactly the frozen response descriptor');
+      } else {
+        eq(frozenFirst.request.hostedDecisionFormat, undefined, 'old pre-construction turn keeps unconstrained generation');
+      }
       eq(frozenFirst.request.prompt, packed.prompt, 'initial request uses the frozen budgeted prompt');
       eq(frozenFirst.request.decisionBudget, packed.budget, 'initial request carries its frozen budget evidence');
       eq(queueJobs(h.queueFile)[0].payload.decisionBudget, packed.budget,
@@ -731,6 +803,8 @@ async function run() {
       ok(repair, 'packed decision retains one normal primary repair');
       eq(repair.request.prompt, packed.repair, 'repair uses the already-budgeted complete repair prompt');
       eq(repair.request.decisionBudget, packed.repairBudget, 'repair retains its distinct frozen budget');
+      eq(repair.request.hostedDecisionFormat, frozenFirst.request.hostedDecisionFormat,
+        'the single existing repair retains the same response descriptor or its legacy absence');
       const afterRepairRestart = h.restartRuntime();
       afterRepairRestart.scheduler.reconcileDurableTurns();
       await settle();
@@ -805,12 +879,14 @@ async function run() {
       const snapshot = turn.checkpoints['opportunity-candidates'];
       const input = { ...turn.input };
       delete input.hostedDecisionBudgetVersion;
+      delete input.hostedDecisionFormatVersion;
       const checkpoints = { ...turn.checkpoints };
       delete checkpoints['hosted-decision-construction'];
       const request = { ...turn.generations[0].request, prompt: actionCandidates.prompt(
         snapshot.candidates, turn.createdAt, { voteCandidates: snapshot.voteCandidates,
           voteAllowance: snapshot.voteAllowance, decisionContractVersion: 2 }) };
       delete request.decisionBudget;
+      delete request.hostedDecisionFormat;
       const signature = crypto.createHash('sha256').update(JSON.stringify(request)).digest('hex');
       h.turnStore.update(turn.id, { input, checkpoints });
       h.turnStore.generation(turn.id, 0, { request, signature });
@@ -818,6 +894,7 @@ async function run() {
       const job = queueData.jobs.find((item) => item.id === turn.generations[0].jobId);
       job.payload.prompt = request.prompt;
       delete job.payload.decisionBudget;
+      delete job.payload.hostedDecisionFormat;
       fs.writeFileSync(h.queueFile, JSON.stringify(queueData));
       const restarted = h.restartRuntime();
       completeJob(restarted.queue, job.id, JSON.stringify({ choice: 'WAIT', reason: 'A valid legacy v2 abstention.',
