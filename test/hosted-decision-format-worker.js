@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
@@ -17,6 +18,30 @@ function equal(actual, expected, message) { assert.deepEqual(actual, expected, m
 async function run() {
   const descriptor = { version: 1, candidateIds: ['C7', 'C11'], voteIds: ['V2', 'V8'] };
   const schema = format.schema(descriptor);
+  equal(crypto.createHash('sha256').update(JSON.stringify(schema)).digest('hex'),
+    '8c59e767e01b424472b9f9aa5eee49a82a4887759eebc2e26824a8c8aec15573', 'frozen v1 schema serialization stays exact');
+  const constrainedDescriptor = { ...descriptor, version: 2 };
+  equal(format.validate(constrainedDescriptor), constrainedDescriptor, 'frozen v2 descriptor retains version and stable IDs');
+  const constrainedSchema = format.schema(constrainedDescriptor);
+  for (const [index, item] of constrainedSchema.properties.votes.items.entries()) {
+    const [reaction, abstention] = item.oneOf;
+    equal(reaction.properties.id.enum, [descriptor.voteIds[index]], 'v2 reaction fixes offered stable vote ID');
+    equal(abstention.properties.id.enum, [descriptor.voteIds[index]], 'v2 abstention fixes offered stable vote ID');
+    equal(reaction.properties.direction.enum, ['up', 'down'], 'v2 separates non-nil reasons');
+    equal(abstention.properties.direction.enum, ['nil'], 'nil remains independently available');
+    equal(abstention.properties.reason, { type: 'string' }, 'nil explanation may be empty');
+    const rule = reaction.properties.reason;
+    equal(rule.minLength, 15, 'non-nil reason declares normalized minimum length');
+    const fits = (reason) => reason.length >= rule.minLength && new RegExp(rule.pattern, 'u').test(reason);
+    for (const reason of ['A fitting point', 'Specific useful target evidence']) check(fits(reason), 'canonical valid reason fits formal schema');
+    for (const reason of ['Seventeen letters', 'a b c', 'a             b c', ' A fitting point',
+      'A fitting point ', 'A\tfitting point', 'A\u000bfitting point', 'A\u000cfitting point',
+      'A\u00a0fitting point', 'A\ufefffitting point']) {
+      check(!fits(reason), 'invalid length/word count cannot hide behind padding');
+    }
+    check(!rule.pattern.includes('(?') && !rule.pattern.includes('\\s') && !rule.pattern.includes('\\S'),
+      'pattern avoids unsupported native converter lookaround/shorthand');
+  }
   equal(schema.properties.choice.enum, ['WAIT', 'C7', 'C11'], 'native schema permits only offered action IDs or WAIT');
   equal(schema.properties.votes.items.map((item) => item.properties.id.enum), [['V2'], ['V8']], 'tuple permits every offered vote exactly once in stable order');
   equal([schema.properties.votes.minItems, schema.properties.votes.maxItems], [2, 2], 'native tuple is bounded to offered slate');
@@ -27,8 +52,10 @@ async function run() {
   equal(format.schema({ version: 1, candidateIds: ['C7'], voteIds: [] }).properties.votes.maxItems, 0, 'action-only slate cannot invent votes');
   for (const legacyVersion of [null, undefined, 0]) equal(format.version(legacyVersion), 0, 'legacy version remains supported');
   equal(format.version(1), 1, 'new format version supported');
-  assert.throws(() => format.version(2), (error) => error.code === 'UNSUPPORTED_HOSTED_DECISION_FORMAT'); checks++;
-  for (const invalid of [null, {}, { ...descriptor, version: 0 }, { ...descriptor, version: 2 }, { ...descriptor, schema: {} },
+  equal(format.version(2), 2, 'reason-constrained format version supported');
+  equal(format.VERSION, 2, 'latest native format uses reason constraints');
+  assert.throws(() => format.version(3), (error) => error.code === 'UNSUPPORTED_HOSTED_DECISION_FORMAT'); checks++;
+  for (const invalid of [null, {}, { ...descriptor, version: 0 }, { ...descriptor, version: 3 }, { ...descriptor, schema: {} },
     { ...descriptor, candidateIds: ['C13'] }, { ...descriptor, voteIds: ['V9'] },
     { ...descriptor, candidateIds: ['C7', 'C7'] }, { ...descriptor, voteIds: ['V2', 'V2'] },
     { ...descriptor, candidateIds: ['C01'] }, { ...descriptor, voteIds: ['V0'] },
@@ -77,6 +104,8 @@ async function run() {
       'context, output budget and shared threads are unchanged');
     equal(result.finishReason, 'stop', 'known native finish reason retained');
     equal(result.text, content, 'provider does not synthesize missing semantic votes');
+    await ollama.generate({ ...generation, hostedDecisionFormat: constrainedDescriptor });
+    equal(lastBody.format, constrainedSchema, 'nonstreaming worker forwards v2 native schema without transport changes');
     finishReason = 'length';
     equal((await ollama.generate(generation)).finishReason, 'length', 'native output-limit signal retained');
     finishReason = 'sensitive unrecognized upstream detail';
@@ -120,7 +149,7 @@ async function run() {
   equal(workerPayload.hostedDecisionFormat, descriptor, 'worker forwards canonical descriptor');
   for (const invalid of [{ ...job, kind: 'scheduled-generation' }, { ...job, kind: 'burst-session' },
     { ...job, payload: { ...job.payload, hostedDecisionFormat: null } },
-    { ...job, payload: { ...job.payload, hostedDecisionFormat: { ...descriptor, version: 2 } } },
+    { ...job, payload: { ...job.payload, hostedDecisionFormat: { ...descriptor, version: 3 } } },
     { ...job, payload: { ...job.payload, decisionBudget: undefined } }]) {
     check(!await worker.runJob(invalid), 'inapplicable or malformed descriptor rejected before inference');
     equal(reported.retryable, false, 'unsupported format never enters repeated retries');
