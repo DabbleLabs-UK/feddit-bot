@@ -5,6 +5,7 @@
 
 const os = require('node:os');
 const ollama = require('./lib/providers/ollama');
+const decisionFormat = require('./lib/hosted-decision-format');
 const { createMaintenanceGate } = require('./lib/worker-maintenance');
 
 const VERSION = '1';
@@ -123,6 +124,12 @@ function createWorker(options = {}) {
       payload.legacyTimeouts = true;
       payload.hostedDecision = /^(scheduled|simulation-now)-decision(?:-retry)?$/.test(String(job.kind || '')) || !!job.payload.decisionBudget;
       if (job.payload.decisionBudget) payload.decisionBudget = job.payload.decisionBudget;
+      if (Object.hasOwn(job.payload, 'hostedDecisionFormat')) {
+        if (!/^(scheduled|simulation-now)-decision(?:-retry)?$/.test(String(job.kind || '')) || !payload.decisionBudget) {
+          throw decisionFormat.failure('Hosted decision format requires a budgeted decision job. No inference was sent.');
+        }
+        payload.hostedDecisionFormat = decisionFormat.validate(job.payload.hostedDecisionFormat);
+      }
       payload.priorityClass = sharedPriority(job);
       renewTimer = setInterval(() => {
         request('api/worker/jobs/' + encodeURIComponent(job.id) + '/renew', workerDetails(true))
@@ -141,7 +148,7 @@ function createWorker(options = {}) {
       await request('api/worker/jobs/' + encodeURIComponent(job.id) + '/fail', {
         ...workerDetails(false),
         error: err.message,
-        retryable: err.code !== 'UNSUPPORTED_MODEL' && !String(err.code || '').startsWith('HOSTED_DECISION') && !String(err.code || '').startsWith('HOSTED_TOKENIZER'),
+        retryable: err.code !== 'UNSUPPORTED_MODEL' && !String(err.code || '').startsWith('HOSTED_DECISION') && !String(err.code || '').startsWith('HOSTED_TOKENIZER') && err.code !== 'UNSUPPORTED_HOSTED_DECISION_FORMAT',
       }).catch((reportErr) => {
         logger.error('Could not report failed job ' + job.id + ': ' + reportErr.message);
       });
