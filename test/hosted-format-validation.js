@@ -1,6 +1,9 @@
 'use strict';
 const assert = require('node:assert/strict');
-const { prepare, score, boundedAdmission, continuation, receiptKind } = require('../bin/validate-hosted-decision-format');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { prepare, prepareReasonRefinement, validatePacket, freshOutput, score, boundedAdmission, continuation, receiptKind } = require('../bin/validate-hosted-decision-format');
 const budget = require('../lib/hosted-decision-budget');
 let checks = 0;
 function eq(actual, expected) { assert.deepEqual(actual, expected); checks++; }
@@ -12,8 +15,8 @@ const corpus = { version: 1, cases: ids.map((id, index) => {
   request.decisionBudget = budget.measure(request.system, request.prompt, 640, 2);
   return { id, generations: [{ request, result: { text: 'An unreadable decision.' } }],
     candidates: [{ id: 'C7', candidateType: 'ordinary_comment' }],
-    voteCandidates: Array.from({ length: index }, (_, i) => ({ id: 'V' + (i + 1), targetType: 'post', targetId: i + 1 })),
-    construction: { candidateIds: ['C7'], voteIds: Array.from({ length: index }, (_, i) => 'V' + (i + 1)) } };
+    voteCandidates: Array.from({ length: index ? index + 1 : 0 }, (_, i) => ({ id: 'V' + (i + 1), targetType: 'post', targetId: i + 1 })),
+    construction: { candidateIds: ['C7'], voteIds: Array.from({ length: index ? index + 1 : 0 }, (_, i) => 'V' + (i + 1)) } };
 }) };
 const packet = prepare(corpus);
 eq(packet.maxCalls, 6);
@@ -28,6 +31,7 @@ const item = packet.cases[2];
 const valid = { choice: 'C7', reason: 'This fits the actual branch.', votes: [
   { id: 'V1', direction: 'up', reason: 'This is a specific useful explanation.' },
   { id: 'V2', direction: 'nil', reason: '' },
+  { id: 'V3', direction: 'nil', reason: '' },
 ] };
 eq(score(JSON.stringify(valid), item).fullValid, true);
 eq(score(JSON.stringify(valid), item).tupleExact, true);
@@ -37,7 +41,7 @@ eq(score(JSON.stringify({ ...valid, extra: true }), item).nativeSchemaExact, fal
 eq(score(JSON.stringify({ ...valid, reason: 1 }), item).nativeSchemaExact, false);
 eq(score(JSON.stringify({ ...valid, votes: valid.votes.map(v => ({ ...v, extra: true })) }), item).nativeSchemaExact, false);
 eq(score(JSON.stringify(valid) + '|im_end|>', item).fullValid, false);
-eq(score(JSON.stringify({ ...valid, votes: valid.votes.slice(0, 1) }), item).unresolved, 1);
+eq(score(JSON.stringify({ ...valid, votes: valid.votes.slice(0, 1) }), item).unresolved, 2);
 eq(score(JSON.stringify({ ...valid, choice: 'C8' }), item).primaryValid, false);
 eq(score(JSON.stringify({ ...valid, votes: valid.votes.slice().reverse() }), item).tupleExact, false);
 const wrongReason = structuredClone(valid);
@@ -56,6 +60,58 @@ for (const files of [[], [firstLabel + '-admitted.json', 'another-attempt.json']
   assert.throws(() => continuation(packet, files, marker)); checks++;
 }
 assert.throws(() => continuation(packet, [firstLabel + '-admitted.json'], { ...marker, frozenHash: 'changed' })); checks++;
+
+const refinement = prepareReasonRefinement(corpus);
+eq(refinement.version, 2);
+eq(refinement.maxCalls, 2);
+eq(refinement.cases.map(value => value.id), ids.slice(1));
+eq(refinement.cases.map(value => value.order), [['schema'], ['schema']]);
+eq(refinement.cases.map(value => value.descriptor.version), [2, 2]);
+for (let i = 0; i < refinement.cases.length; i++) {
+  eq(refinement.cases[i].request, packet.cases[i + 1].request);
+  eq(refinement.cases[i].frozenHash, packet.cases[i + 1].frozenHash);
+  eq(refinement.cases[i].candidates, packet.cases[i + 1].candidates);
+  eq(refinement.cases[i].voteCandidates, packet.cases[i + 1].voteCandidates);
+}
+validatePacket(packet); checks++;
+validatePacket(refinement); checks++;
+for (const malformed of [
+  { ...refinement, maxCalls: 3 },
+  { ...refinement, cases: [...refinement.cases, refinement.cases[0]] },
+  { ...refinement, cases: refinement.cases.map(value => ({ ...value, order: ['schema', 'control'] })) },
+  { ...refinement, cases: refinement.cases.slice().reverse() },
+  { ...refinement, cases: refinement.cases.map(value => ({ ...value, descriptor: { ...value.descriptor, version: 1 } })) },
+]) {
+  assert.throws(() => validatePacket(malformed)); checks++;
+}
+assert.throws(() => validatePacket(refinement, true)); checks++;
+assert.throws(() => continuation(refinement, [firstLabel + '-admitted.json'], marker)); checks++;
+const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'feddit-format-fixture-'));
+try {
+  const output = path.join(directory, 'fresh-ledger');
+  freshOutput(output); checks++;
+  assert.throws(() => freshOutput(output), /never retry a ledger/); checks++;
+} finally { fs.rmSync(directory, { recursive: true, force: true }); }
+const refinedItem = refinement.cases[1];
+eq(score(JSON.stringify(valid), refinedItem).nativeSchemaExact, true);
+eq(score(JSON.stringify(valid), refinedItem).fullValid, true);
+for (const reason of ['Seventeen letters', 'a b c', 'A                    B']) {
+  const invalid = structuredClone(valid);
+  invalid.votes[0].reason = reason;
+  eq(score(JSON.stringify(invalid), refinedItem).nativeSchemaExact, false);
+  eq(score(JSON.stringify(invalid), refinedItem).fullValid, false);
+  eq(score(JSON.stringify(invalid), refinedItem).unresolved, 1);
+}
+const normalized = structuredClone(valid);
+normalized.votes[0].reason = '  A\tuseful\nexplanation here.  ';
+eq(score(JSON.stringify(normalized), refinedItem).nativeSchemaExact, false);
+eq(score(JSON.stringify(normalized), refinedItem).fullValid, true);
+normalized.votes[0].reason = 'A useful explanation here.\n';
+eq(score(JSON.stringify(normalized), refinedItem).nativeSchemaExact, false);
+eq(score(JSON.stringify(valid), refinedItem).votes[1].direction, 'nil');
+// Version 1 attribution remains structural; the unchanged semantic validator
+// still rejects the same short non-nil reason independently.
+eq(score(JSON.stringify(wrongReason), item).nativeSchemaExact, true);
 
 (async () => {
   const options = { deadline: Date.now() + 1000, reserveMs: 0, maintenanceExists: () => false, pollMs: 1 };

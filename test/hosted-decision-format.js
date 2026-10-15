@@ -46,14 +46,16 @@ async function run() {
   const descriptor = { version: 1, candidateIds: ['C7', 'C11'], voteIds: ['V2', 'V8'] };
   for (const value of [undefined, null, 0]) equal(format.version(value), 0, 'legacy format version remains exact');
   equal(format.version(1), 1, 'native format version recognized');
-  for (const value of ['1', 2, false, -1, {}]) {
+  equal(format.version(2), 2, 'reason-constrained format version recognized');
+  equal(format.VERSION, 2, 'new turns select reason-constrained version');
+  for (const value of ['1', 3, false, -1, {}]) {
     assert.throws(() => format.version(value), (error) => error.code === 'UNSUPPORTED_HOSTED_DECISION_FORMAT'); checks++;
   }
   equal(format.validate(descriptor), descriptor, 'descriptor retains offered stable IDs and order');
   const clone = format.validate(descriptor);
   clone.candidateIds.push('C12');
   equal(descriptor.candidateIds, ['C7', 'C11'], 'canonical descriptor does not share input arrays');
-  for (const invalid of [undefined, null, [], {}, { ...descriptor, version: 2 }, { ...descriptor, version: '1' },
+  for (const invalid of [undefined, null, [], {}, { ...descriptor, version: 3 }, { ...descriptor, version: '1' },
     { ...descriptor, schema: {} }, { ...descriptor, voteIds: undefined }, { ...descriptor, candidateIds: 'C1' },
     { ...descriptor, candidateIds: ['C1', 'C1'] }, { ...descriptor, voteIds: ['V2', 'V2'] },
     { ...descriptor, candidateIds: ['C0'] }, { ...descriptor, candidateIds: ['C01'] },
@@ -67,6 +69,37 @@ async function run() {
     { version: 1, candidateIds: [], voteIds: [] }]) rejected(invalid);
 
   const schema = format.schema(descriptor);
+  equal(crypto.createHash('sha256').update(JSON.stringify(schema)).digest('hex'),
+    '8c59e767e01b424472b9f9aa5eee49a82a4887759eebc2e26824a8c8aec15573', 'frozen v1 schema serialization stays exact');
+  const constrainedDescriptor = { ...descriptor, version: 2 };
+  equal(format.validate(constrainedDescriptor), constrainedDescriptor, 'canonical descriptor preserves frozen v2 version');
+  const constrained = format.schema(constrainedDescriptor);
+  for (const [index, item] of constrained.properties.votes.items.entries()) {
+    const [reaction, abstention] = item.oneOf;
+    equal(reaction.properties.id.enum, [descriptor.voteIds[index]], 'v2 reaction keeps exact stable vote ID');
+    equal(abstention.properties.id.enum, [descriptor.voteIds[index]], 'v2 abstention keeps exact stable vote ID');
+    equal(reaction.properties.direction.enum, ['up', 'down'], 'only non-nil reasons require meaningful explanation');
+    equal(abstention.properties.direction.enum, ['nil'], 'nil remains a separate explicit abstention');
+    equal(abstention.properties.reason, { type: 'string' }, 'nil may retain empty reason');
+    equal(reaction.properties.reason.minLength, 15, 'native schema declares existing minimum normalized length');
+    const rule = reaction.properties.reason;
+    const fits = (reason) => reason.length >= rule.minLength && new RegExp(rule.pattern, 'u').test(reason);
+    for (const reason of ['A fitting point', 'Specific useful target evidence', 'One two three four']) {
+      check(fits(reason), 'valid canonical non-nil reason satisfies formal schema');
+    }
+    for (const reason of ['Seventeen letters', 'one two', 'a b c', 'a             b c', ' A fitting point',
+      'A fitting point ', 'A\tfitting point', 'A\u000bfitting point', 'A\u000cfitting point',
+      'A\u00a0fitting point', 'A\ufefffitting point']) {
+      check(!fits(reason), 'short, two-word and whitespace-padded reasons fail formal schema');
+    }
+    check(!rule.pattern.includes('(?') && !rule.pattern.includes('\\s') && !rule.pattern.includes('\\S'),
+      'reason pattern avoids unsupported lookarounds and whitespace shorthands');
+  }
+  const invalidReason = actions.parseDecision(JSON.stringify({ ...valid,
+    votes: [{ id: 'V1', direction: 'down', reason: 'Seventeen letters' }] }), menu,
+  { voteCandidates: slate, decisionContractVersion: 2 });
+  equal(invalidReason.votes[0].decisionKind, 'invalid', 'app validator still rejects two-word native output');
+  equal(voting.record({}, invalidReason.votes).considered, [], 'native format cannot turn invalid reason into considered abstention');
   equal(schema.properties.choice.enum, ['WAIT', 'C7', 'C11'], 'only actual offered primary IDs and explicit WAIT allowed');
   equal(schema.required, ['choice', 'reason', 'votes'], 'complete top-level structural fields required');
   equal(schema.additionalProperties, false, 'arbitrary top-level keys disallowed');
@@ -168,7 +201,7 @@ async function run() {
   equal(workerPayload.hostedDecisionFormat, descriptor, 'worker forwards validated descriptor');
   for (const invalid of [{ ...job, kind: 'scheduled-generation' },
     { ...job, payload: { ...job.payload, hostedDecisionFormat: null } },
-    { ...job, payload: { ...job.payload, hostedDecisionFormat: { ...descriptor, version: 2 } } },
+    { ...job, payload: { ...job.payload, hostedDecisionFormat: { ...descriptor, version: 3 } } },
     { ...job, payload: { ...job.payload, decisionBudget: undefined } }]) {
     check(!await worker.runJob(invalid), 'worker refuses malformed or inapplicable format before generation');
     equal(reported.retryable, false, 'descriptor failure is deterministic and nonretryable');

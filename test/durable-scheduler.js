@@ -720,8 +720,8 @@ async function run() {
       eq(h.writes.length, 0, 'legacy replay fixture never publishes');
     } finally { h.cleanup(); }
   }
-  for (const constructionVersion of [1, 2]) {
-    const voter = makeProfile('budget-pressure-v' + constructionVersion, false);
+  for (const [constructionVersion, formatVersion] of [[1, 0], [2, 1], [2, 2]]) {
+    const voter = makeProfile('budget-pressure-v' + constructionVersion + '-format' + formatVersion, false);
     Object.assign(voter, { canReply: true, canStartDiscussions: false, canVote: true,
       postsPerHour: 0, commentsPerHour: 1 });
     Object.assign(voter.sched, { nextPostAt: null, nextCommentAt: 0 });
@@ -731,12 +731,13 @@ async function run() {
       selftext: text, created_utc: 9,
     })) });
     try {
-      if (constructionVersion === 1) {
+      if (constructionVersion === 1 || formatVersion === 1) {
         h.turnStore.create({ profileId: voter.id, profile: structuredClone(voter), rehearsal: false,
           trigger: 'scheduled', input: { mode: 'capabilities', choices: [{ key: 'reply' }],
-            decisionContractVersion: 2, continuationVersion: 2, hostedDecisionBudgetVersion: 1 } });
+            decisionContractVersion: 2, continuationVersion: 2, hostedDecisionBudgetVersion: constructionVersion,
+            ...(formatVersion ? { hostedDecisionFormatVersion: formatVersion } : {}) } });
       }
-      const admitted = constructionVersion === 1 ? h.restartRuntime() :
+      const admitted = constructionVersion === 1 || formatVersion === 1 ? h.restartRuntime() :
         { scheduler: h.scheduler(), turnStore: h.turnStore };
       const runtime = admitted.scheduler;
       await runtime.runTick();
@@ -776,8 +777,8 @@ async function run() {
       }
       const frozenFirst = structuredClone(turn.generations[0]);
       if (constructionVersion === 2) {
-        eq(turn.input.hostedDecisionFormatVersion, 1, 'new hosted turn freezes response format independently');
-        eq(frozenFirst.request.hostedDecisionFormat, { version: 1,
+        eq(turn.input.hostedDecisionFormatVersion, formatVersion, 'new hosted turns freeze v2; existing v1 format replays unchanged');
+        eq(frozenFirst.request.hostedDecisionFormat, { version: formatVersion,
           candidateIds: packed.candidateIds, voteIds: packed.voteIds },
         'native schema sees only complete actually offered stable IDs');
         eq(queueJobs(h.queueFile)[0].payload.hostedDecisionFormat, frozenFirst.request.hostedDecisionFormat,

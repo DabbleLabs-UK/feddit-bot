@@ -1,6 +1,6 @@
 'use strict';
 
-// Explicit six-call frozen validation. No scheduler, live stores, registration,
+// Explicit bounded frozen validation. No scheduler, live stores, registration,
 // publication routes or provider fallback. Reuse the actual non-stream worker.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -61,6 +61,35 @@ function prepare(corpus) {
   return { version: 1, createdAt: new Date().toISOString(), maxCalls: 6, cases };
 }
 
+function prepareReasonRefinement(corpus) {
+  const packet = prepare(corpus);
+  return { ...packet, version: 2, maxCalls: 2, cases: packet.cases.slice(1).map(item => ({
+    ...item, descriptor: format.validate({ ...item.descriptor, version: 2 }), order: ['schema'],
+  })) };
+}
+
+function validatePacket(packet, continueUntouched = false) {
+  assert([1, 2].includes(packet.version), 'Unsupported private validation protocol');
+  const refinement = packet.version === 2;
+  assert.equal(packet.maxCalls, refinement ? 2 : 6);
+  assert.equal(packet.cases.length, refinement ? 2 : 3);
+  if (refinement) {
+    assert(!continueUntouched, 'Reason refinement requires a fresh ledger; continuation is not allowed');
+    assert.deepEqual(packet.cases.map(item => item.id), chosen.slice(1).map(([id]) => id));
+    for (const [index, item] of packet.cases.entries()) {
+      assert.equal(item.descriptor.version, 2);
+      assert.equal(item.descriptor.voteIds.length, index + 2);
+      assert.deepEqual(item.order, ['schema']);
+    }
+  }
+  assert.equal(packet.cases.reduce((sum, item) => sum + item.order.length, 0), packet.maxCalls);
+}
+
+function freshOutput(output) {
+  assert(!fs.existsSync(output), 'Fresh private run directory required; never retry a ledger');
+  fs.mkdirSync(output);
+}
+
 function score(text, item) {
   const decision = actions.parseDecision(text, item.candidates, {
     voteCandidates: item.voteCandidates, decisionContractVersion: 2 });
@@ -73,10 +102,17 @@ function score(text, item) {
     parsed.votes.every((vote, index) => vote && vote.id === expected[index]);
   const exactKeys = (object, keys) => object && typeof object === 'object' && !Array.isArray(object) &&
     Object.keys(object).length === keys.length && keys.every(key => Object.hasOwn(object, key));
+  const reasonSchema = item.descriptor?.version === 2
+    ? format.schema(item.descriptor).properties.votes.items[0]?.oneOf[0].properties.reason : null;
+  const refinedReason = vote => vote.direction === 'nil' ||
+    (reasonSchema && Array.from(vote.reason).length >= reasonSchema.minLength &&
+      new RegExp(reasonSchema.pattern, 'u').exec(vote.reason)?.[0] === vote.reason &&
+      decision.votes.find(value => value.id === vote.id)?.decisionKind === 'explicit');
   const nativeSchemaExact = rawJSON && !!parsed && exactKeys(parsed, ['choice', 'reason', 'votes']) &&
     typeof parsed.reason === 'string' && ['WAIT', ...item.candidates.map(c => c.id)].includes(parsed.choice) &&
     tupleExact && parsed.votes.every(vote => exactKeys(vote, ['id', 'direction', 'reason']) &&
-      ['up', 'down', 'nil'].includes(vote.direction) && typeof vote.reason === 'string');
+      ['up', 'down', 'nil'].includes(vote.direction) && typeof vote.reason === 'string' &&
+      (item.descriptor?.version !== 2 || refinedReason(vote)));
   const isolated = voting.record({}, decision.votes).considered;
   for (const vote of decision.votes.filter(vote => vote.decisionKind !== 'explicit')) {
     assert(!isolated.includes(voting.targetKey(vote)), 'Unresolved target cannot become considered');
@@ -89,6 +125,7 @@ function score(text, item) {
 }
 
 function continuation(packet, files, first) {
+  assert.equal(packet.version, 1, 'Reason refinement cannot resume or reuse a ledger');
   const label = packet.cases[0].label + '-control';
   assert.deepEqual(files, [label + '-admitted.json'], 'Only the single known lost-receipt attempt may be continued');
   assert.equal(first.label, label);
@@ -105,19 +142,16 @@ function receiptKind(url) {
 }
 
 async function run(packet, output, workerRoot, continueUntouched = false) {
+  validatePacket(packet, continueUntouched);
   assert.equal(process.platform, 'win32');
   assert.equal(os.hostname().toUpperCase(), 'DELL');
-  assert.equal(packet.version, 1);
-  assert.equal(packet.maxCalls, 6);
-  assert.equal(packet.cases.length, 3);
   assert(path.isAbsolute(output));
   let previous = null;
   if (continueUntouched) {
     const files = fs.readdirSync(output);
     previous = continuation(packet, files, read(path.join(output, files[0])));
   } else {
-    assert(!fs.existsSync(output), 'Fresh private run directory required; never retry a ledger');
-    fs.mkdirSync(output);
+    freshOutput(output);
   }
   process.env.OLLAMA_BASE = 'http://127.0.0.1:11434';
   process.env.SHARED_OLLAMA_ARBITER_URL = 'http://127.0.0.1:11435';
@@ -157,7 +191,7 @@ async function run(packet, output, workerRoot, continueUntouched = false) {
       assert.deepEqual(workerFormat.schema(item.descriptor), format.schema(item.descriptor));
       for (const arm of item.order) {
         if (previous && item.label + '-' + arm === previous.label) continue;
-        assert(calls < 6 && Date.now() - started < 30 * 60 * 1000, 'Bounded experiment window exhausted');
+        assert(calls < packet.maxCalls && Date.now() - started < 30 * 60 * 1000, 'Bounded experiment window exhausted');
         assert(!fs.existsSync('C:/dev/inference-maintenance/request.json'), 'Another maintenance owner must not be disturbed');
         calls++;
         reported = null;
@@ -179,10 +213,19 @@ async function run(packet, output, workerRoot, continueUntouched = false) {
           input: result.usage.inputTokens, frozenInput: item.request.decisionBudget.inputTokens,
           output: result.usage.outputTokens, finishReason: result.finishReason || 'legacy-not-recorded',
           decision: score(result.text, item) };
+        if (packet.version === 2) {
+          const parsed = contract.parseObject(result.text);
+          summary.reasonLengths = item.descriptor.voteIds.map(id => {
+            const vote = Array.isArray(parsed?.votes) ? parsed.votes.find(value => value?.id === id) : null;
+            const reason = String(vote?.reason || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+            return { id, characters: reason.length, words: reason.split(/\s+/).filter(Boolean).length };
+          });
+        }
         results.push(summary); save(label + '-summary', summary);
         console.log(JSON.stringify(summary));
         assert.equal(summary.input, summary.frozenInput, 'Native token mismatch: stop without retry');
         if (arm === 'schema') assert(summary.decision.nativeSchemaExact, 'Native schema was not enforced; stop without retry');
+        if (packet.version === 2) assert(summary.decision.fullValid, 'Reason refinement did not satisfy the unchanged decision contract; stop without retry');
       }
     }
     save('summary', { calls, results, elapsedMs: Date.now() - started,
@@ -192,14 +235,14 @@ async function run(packet, output, workerRoot, continueUntouched = false) {
 
 if (require.main === module) {
   (async () => {
-    if (process.argv[2] === '--prepare') {
-      const packet = prepare(read(process.argv[3]));
+    if (['--prepare', '--prepare-reason-refinement'].includes(process.argv[2])) {
+      const packet = (process.argv[2] === '--prepare' ? prepare : prepareReasonRefinement)(read(process.argv[3]));
       fs.writeFileSync(process.argv[4], JSON.stringify(packet), { flag: 'wx' });
       console.log(JSON.stringify(packet.cases.map(item => ({ id: item.id, label: item.label,
         input: item.request.decisionBudget.inputTokens, votes: item.voteCandidates.length, historical: item.historical }))));
     } else if (process.argv[2] === '--run') await run(read(process.argv[3]), process.argv[4], process.argv[5],
       process.argv[6] === '--continue-unattempted');
-    else throw new Error('Explicit --prepare or --run required');
+    else throw new Error('Explicit --prepare, --prepare-reason-refinement or --run required');
   })().catch(() => { console.error('Frozen native-format validation stopped; no retry. See private evidence.'); process.exitCode = 1; });
 }
-module.exports = { prepare, score, boundedAdmission, continuation, receiptKind };
+module.exports = { prepare, prepareReasonRefinement, validatePacket, freshOutput, score, boundedAdmission, continuation, receiptKind };
