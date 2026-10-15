@@ -334,6 +334,37 @@ Write-Output '5 native scripts parsed without execution'
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("5 native scripts parsed", result.stdout)
 
+    @unittest.skipUnless(shutil.which("powershell.exe"), "Windows PowerShell is unavailable")
+    def test_native_snapshot_replaces_repeatedly_on_windows_powershell(self):
+        replacement = next(line.strip() for line in (ROOT / "deploy/dell/identity-probe.ps1").read_text().splitlines()
+                           if line.strip().startswith("[System.IO.File]::Replace("))
+        fixture_root = ROOT / "artifacts" / "reliability"
+        fixture_root.mkdir(parents=True, exist_ok=True)
+        script = "$ErrorActionPreference='Stop'; $directory=Join-Path " + worker.ps_quote(str(fixture_root)) + " ('native-replace-'+[guid]::NewGuid()); "
+        script += r"""
+New-Item -ItemType Directory -Path $directory | Out-Null
+$temporaryPath=Join-Path $directory 'new.json'
+$snapshotPath=Join-Path $directory 'identity.json'
+try {
+    [IO.File]::WriteAllText($snapshotPath,'0')
+    foreach($sequence in @(1,2,3)) {
+        [IO.File]::WriteAllText($temporaryPath,[string]$sequence)
+""" + replacement + r"""
+        if([IO.File]::ReadAllText($snapshotPath) -cne [string]$sequence){throw 'Atomic snapshot did not advance'}
+    }
+    'native-atomic-replace-passed'
+} finally {
+    if(Test-Path -LiteralPath $temporaryPath){Remove-Item -LiteralPath $temporaryPath}
+    if(Test-Path -LiteralPath $snapshotPath){Remove-Item -LiteralPath $snapshotPath}
+    Remove-Item -LiteralPath $directory
+}
+"""
+        result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand",
+                                 base64.b64encode(script.encode("utf-16le")).decode("ascii")],
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("native-atomic-replace-passed", result.stdout)
+
     def snapshot_fixture(self, transform=lambda value: value):
         host = object.__new__(worker.Host)
         host.last_observation = None

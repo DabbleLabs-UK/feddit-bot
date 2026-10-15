@@ -49,7 +49,9 @@ try {
                        observedAt = $observedAt; completedAt = [datetime]::UtcNow.ToString('o'); processes = $records }
         [System.IO.File]::WriteAllText($temporaryPath, ($snapshot | ConvertTo-Json -Depth 4 -Compress), (New-Object System.Text.UTF8Encoding($false)))
         if (Test-Path -LiteralPath $snapshotPath) {
-            [System.IO.File]::Replace($temporaryPath, $snapshotPath, $null)
+            # Windows PowerShell 5 coerces $null to an empty string for this
+            # overload. NullString preserves the intended no-backup argument.
+            [System.IO.File]::Replace($temporaryPath, $snapshotPath, [System.Management.Automation.Language.NullString]::Value)
         } else {
             [System.IO.File]::Move($temporaryPath, $snapshotPath)
         }
