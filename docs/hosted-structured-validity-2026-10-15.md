@@ -1,5 +1,11 @@
 # Hosted structured decision validity: native validation completed, candidate held
 
+The final authorized two-call follow-up is recorded in
+[hosted-native-final-pair-2026-10-16.md](hosted-native-final-pair-2026-10-16.md).
+Both control and native primary decisions succeeded; the comparison is closed
+and deployment remains held for unestablished incremental primary benefit,
+not for imperfect independent vote completeness.
+
 Date: 2026-10-15. No deployment or public release. Six explicitly authorized
 frozen inference calls were completed; the bounded results are below.
 
