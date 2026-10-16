@@ -39,12 +39,13 @@ async function checkDrain(phase, fail = false) {
   const calls = [];
   let generated = 0;
   const worker = createWorker({
+    stateDir: path.join(f.directory, 'delivery'),
     runnerUrl: 'https://example.invalid/', key: 'private-test-key', maintenanceDir: f.directory, logger,
     fetchImpl: async (url) => {
       const route = url.pathname.split('/').pop();
       calls.push(route);
       if (route === phase) { entered.resolve(); await resume.promise; }
-      if (route === 'claim') return response({ job: { id: 'private-job', payload: { prompt: 'private-prompt' } } });
+      if (route === 'claim') return response({ job: { id: 'private-job', status: 'claimed', payload: { prompt: 'private-prompt' } } });
       return response({ ok: true });
     },
     generate: async () => {
@@ -131,11 +132,12 @@ async function run() {
 
   const rejected = fixture();
   const failedClaim = createWorker({
+    stateDir: path.join(rejected.directory, 'delivery'),
     runnerUrl: 'https://example.invalid/', key: 'secret', maintenanceDir: rejected.directory, logger,
     fetchImpl: async () => { rejected.hold(); throw new Error('connection failed'); },
   });
   try {
-    await assert.rejects(failedClaim.pollOnce(), /connection failed/); checks++;
+    await assert.rejects(failedClaim.pollOnce(), /request failed \(connection\)/); checks++;
     eq(rejected.status().state, 'held', 'failed claim clears admission normally');
     eq(rejected.status().active, 0, 'failed claim leaves no active unit');
   } finally { failedClaim.maintenance.close(); rejected.cleanup(); }
@@ -146,6 +148,7 @@ async function run() {
     stopped.hold();
     let claims = 0;
     worker = createWorker({
+      stateDir: path.join(stopped.directory, 'delivery'),
       runnerUrl: 'https://example.invalid/', key: 'secret', maintenanceDir: stopped.directory, logger,
       fetchImpl: async () => { claims++; return response({}); },
       sleep: async () => worker.stop(),

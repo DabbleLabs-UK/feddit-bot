@@ -15,7 +15,8 @@ Environment=OLLAMA_BASE=http://127.0.0.1:11434
 Environment=FEDDIT_MAINTENANCE_DIR=C:/dev/inference-maintenance
 Environment=FEDDIT_IDENTITY_SNAPSHOT=C:/dev/feddit-worker-ops/identity.json
 Environment=FEDDIT_WORKER_LOG_FILE=C:/dev/feddit-worker-ops/worker.jsonl
-Environment=WSLENV=FEDDIT_RUNNER_URL:FEDDIT_WORKER_KEY:FEDDIT_WORKER_ID:FEDDIT_WORKER_MODELS:SHARED_OLLAMA_ARBITER_URL:FEDDIT_MAINTENANCE_DIR:OLLAMA_BASE:FEDDIT_WORKER_LOG_FILE
+Environment=FEDDIT_WORKER_STATE_DIR=C:/dev/feddit-worker-state
+Environment=WSLENV=FEDDIT_RUNNER_URL:FEDDIT_WORKER_KEY:FEDDIT_WORKER_ID:FEDDIT_WORKER_MODELS:SHARED_OLLAMA_ARBITER_URL:FEDDIT_MAINTENANCE_DIR:OLLAMA_BASE:FEDDIT_WORKER_LOG_FILE:FEDDIT_WORKER_STATE_DIR
 WorkingDirectory=%h/.local/lib/feddit-bot/current
 ExecStart=/usr/bin/python3 %h/.local/lib/feddit-bot/current/deploy/dell/supervised-worker.py
 Restart=always

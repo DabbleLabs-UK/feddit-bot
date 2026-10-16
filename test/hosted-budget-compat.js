@@ -1,8 +1,9 @@
 'use strict';
 // Mock server only. Preserve the deployed non-streaming transport and timeout.
-const assert=require('node:assert/strict'),http=require('node:http'),fs=require('node:fs'),zlib=require('node:zlib'),path=require('node:path');
+const assert=require('node:assert/strict'),http=require('node:http'),fs=require('node:fs'),zlib=require('node:zlib'),path=require('node:path'),os=require('node:os');
 let checks=0;const eq=(a,b,m)=>{assert.deepEqual(a,b,m);checks++;};
 async function run(){
+  const stateDir=fs.mkdtempSync(path.join(os.tmpdir(),'feddit-budget-compat-'));
   const calls=[];const server=http.createServer(async(req,res)=>{let s='';for await(const b of req)s+=b;calls.push({path:req.url,body:s?JSON.parse(s):null});res.setHeader('Content-Type','application/json');res.end(JSON.stringify({message:{content:'{"choice":"WAIT","votes":[]}'},prompt_eval_count:12,eval_count:10}));});
   await new Promise(r=>server.listen(0,'127.0.0.1',r));process.env.OLLAMA_BASE='http://127.0.0.1:'+server.address().port;
   const ollama=require('../lib/providers/ollama'),budget=require('../lib/hosted-decision-budget'),tokenizer=require('../lib/hosted-tokenizer');
@@ -21,10 +22,10 @@ async function run(){
     eq(released,acquired,'leases released on success and refusal');eq(ollama.isBusy(),false,'busy state clears');
     const before=metadata;await ollama.generate({...request,hostedDecision:false});eq(metadata,before,'ordinary content path unchanged');eq(calls[1].body.stream,false,'ordinary transport unchanged');
     const {createWorker}=require('../worker');let payload,reported;
-    const worker=createWorker({runnerUrl:'https://fixture.invalid',key:'fixture',generate:async p=>{payload=p;throw budget.failure('Fixture refusal');},fetchImpl:async(_,opts)=>{reported=JSON.parse(opts.body);return{ok:true,text:async()=>'{}'};},logger:{log(){},error(){}}});
+    const worker=createWorker({stateDir,runnerUrl:'https://fixture.invalid',key:'fixture',generate:async p=>{payload=p;throw budget.failure('Fixture refusal');},fetchImpl:async(_,opts)=>{reported=JSON.parse(opts.body);return{ok:true,status:200,text:async()=>'{"ok":true}'};},logger:{log(){},error(){}}});
     await worker.runJob({id:'fixture',kind:'scheduled-decision',payload:{model:tokenizer.MODEL,system:request.system,prompt:request.prompt,decisionBudget:request.decisionBudget}});
     eq(payload.hostedDecision,true,'decision guard routed');eq(payload.decisionBudget,request.decisionBudget,'frozen budget delivered');eq(payload.timeoutMs,300000,'deployed five-minute hosted deadline retained');eq(reported.retryable,false,'deterministic refusal is not retried');
     console.log('hosted worker budget compatibility: '+checks+' checks passed');
-  }finally{await new Promise(r=>server.close(r));}
+  }finally{await new Promise(r=>server.close(r));fs.rmSync(stateDir,{recursive:true,force:true});}
 }
 run().catch(e=>{console.error(e);process.exitCode=1;});

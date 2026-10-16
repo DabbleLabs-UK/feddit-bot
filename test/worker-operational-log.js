@@ -44,6 +44,16 @@ try {
   eq(classify('Completed inference job ' + jobId + '.', 'a'.repeat(32)).jobId, undefined);
   eq(classify('Completed inference job j_123.', secret).jobId, undefined);
   eq(classify('Worker poll failed: private-prompt ' + jobId, secret).jobId, undefined);
+  const diagnostic = { event: 'request_failed', operation: 'complete', phase: 'body', reason: 'http5xx',
+    status: 503, elapsedMs: 42.6, prompt: 'private-prompt', credentials: secret, body: 'private-response' };
+  eq(classify(diagnostic, secret), { event: 'request_failed', reason: 'http5xx', operation: 'complete', phase: 'body', status: 503, elapsedMs: 43 });
+  eq(classify({ ...diagnostic, operation: secret, phase: secret, reason: secret, status: secret, elapsedMs: -1 }, secret),
+    { event: 'request_failed', reason: 'unknown' });
+  eq(classify({ event: 'delivery_quarantined', operation: 'complete', reason: 'conflict', jobId, leaseToken: secret }, secret),
+    { event: 'delivery_quarantined', reason: 'conflict', operation: 'complete', jobId });
+  eq(classify({ event: 'delivery_quarantined', operation: 'fail', reason: 'auth', jobId }, jobId).jobId, undefined);
+  logger.error(diagnostic);
+  logger.error({ event: 'delivery_quarantined', operation: 'complete', reason: 'conflict', jobId, body: secret });
   let content = fs.readFileSync(file, 'utf8');
   eq(/private|https:|WORKER_KEY|private-response/.test(content), false);
   for (const line of content.trim().split('\n')) {
@@ -51,7 +61,7 @@ try {
     eq(record.severity, 'error');
     eq(Number.isFinite(Date.parse(record.timestamp)), true);
     eq(Buffer.byteLength(line) <= MAX_RECORD_BYTES, true);
-    eq(Object.keys(record).every((key) => ['timestamp', 'severity', 'event', 'reason', 'jobId'].includes(key)), true);
+    eq(Object.keys(record).every((key) => ['timestamp', 'severity', 'event', 'reason', 'jobId', 'operation', 'phase', 'status', 'elapsedMs'].includes(key)), true);
   }
   for (let index = 0; index < 5000; index++) logger.log('Completed inference job ' + jobId + '.');
   eq(fs.readdirSync(directory).sort(), ['worker.jsonl', 'worker.jsonl.previous']);

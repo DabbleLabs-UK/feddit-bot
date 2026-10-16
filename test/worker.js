@@ -1,6 +1,9 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const ollama = require('../lib/providers/ollama');
 const {
   cleanRunnerUrl,
@@ -30,6 +33,8 @@ function response(status, body) {
 }
 
 async function run() {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'feddit-worker-test-'));
+  try {
   eq(bearerToken('Bearer abc123'), 'abc123', 'bearer token parsed');
   ok(authorised('Bearer correct', 'correct'), 'matching worker key accepted');
   ok(!authorised('Bearer wrong', 'correct'), 'wrong worker key refused');
@@ -59,6 +64,7 @@ async function run() {
       return response(200, {
         job: {
           id: 'j_test',
+          status: 'claimed',
           priority: 'background',
           allocationClass: 'synthetic',
           payload: { prompt: 'Say hi.', model: ollama.DEFAULT_MODEL },
@@ -70,6 +76,7 @@ async function run() {
   };
   const logs = [];
   const worker = createWorker({
+    stateDir,
     runnerUrl: 'https://feddit.example/bots',
     key: 'worker-secret',
     workerId: 'dell-test',
@@ -102,6 +109,7 @@ async function run() {
   ok(logs.every((message) => !message.includes('worker-secret')), 'worker key never logged');
 
   console.log('worker: ' + checks + ' checks passed');
+  } finally { fs.rmSync(stateDir, { recursive: true, force: true }); }
 }
 
 run().catch((err) => {

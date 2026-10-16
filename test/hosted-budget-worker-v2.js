@@ -4,6 +4,9 @@
 // the reviewed budget verifier before the runner begins sending v2 metadata.
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const budget = require('../lib/hosted-decision-budget');
 const tokenizer = require('../lib/hosted-tokenizer');
 const { createWorker } = require('../worker');
@@ -26,6 +29,8 @@ const profile = { num_ctx: 3072, num_thread: 4 };
 const logger = { log() {}, warn() {}, error() {} };
 
 async function run() {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'feddit-budget-worker-'));
+  try {
   eq(budget.VERSION, 2, 'compatible worker recognizes construction v2');
   eq([budget.CONTEXT_TOKENS, budget.SAFETY_TOKENS], [3072, 64], 'execution limits unchanged');
   for (const version of [1, 2]) {
@@ -49,10 +54,11 @@ async function run() {
     let inferenceCalls = 0;
     let forwarded;
     const worker = createWorker({
+      stateDir: path.join(stateDir, String(version)),
       runnerUrl: 'https://fixture.invalid/', key: 'fixture-only', allowedModels: tokenizer.MODEL, logger,
       fetchImpl: async (url, options) => {
         reports.push({ path: url.pathname, body: JSON.parse(options.body) });
-        return { ok: true, text: async () => '{}' };
+        return { ok: true, status: 200, text: async () => '{"ok":true}' };
       },
       generate: async (payload) => {
         forwarded = payload;
@@ -92,10 +98,11 @@ async function run() {
   const request = { model: tokenizer.MODEL, system: 'Persona', prompt: 'Frozen admitted decision', numPredict: 640 };
   request.decisionBudget = budget.measure(request.system, request.prompt, 640, 1);
   const worker = createWorker({
+    stateDir: path.join(stateDir, 'admitted'),
     runnerUrl: 'https://fixture.invalid/', key: 'fixture-only', allowedModels: tokenizer.MODEL, logger,
     fetchImpl: async (url, options) => {
       delivered.push({ path: url.pathname, body: JSON.parse(options.body) });
-      return { ok: true, text: async () => '{}' };
+      return { ok: true, status: 200, text: async () => '{"ok":true}' };
     },
     generate: async (payload) => {
       budget.verifyRequest({ ...payload, budget: payload.decisionBudget }, profile);
@@ -114,6 +121,7 @@ async function run() {
   eq(delivered[0].path, '/api/worker/jobs/already-active-v1/complete', 'active result retains original job identity');
   eq(delivered[0].body.result.text, 'existing admitted result', 'active result not discarded or replaced');
   console.log('hosted-budget-worker-v2: ' + checks + ' checks passed');
+  } finally { fs.rmSync(stateDir, { recursive: true, force: true }); }
 }
 
 run().catch((error) => { console.error(error); process.exitCode = 1; });

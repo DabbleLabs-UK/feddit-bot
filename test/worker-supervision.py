@@ -208,6 +208,20 @@ class SupervisorTests(unittest.TestCase):
                 self.assertTrue(any(item["ready"] for item in self.host.health))
                 self.assertEqual(self.host.stops, 0)
 
+    def test_delivery_quarantine_is_not_ready_or_restarted(self):
+        self.host.heartbeat_state = "error"
+        self.host.active = 1
+        status = self.host.heartbeat()
+        status["deliveryBlocked"] = "WORKER_DELIVERY_CONFLICT"
+        self.host.beat = status
+        self.host.on_sleep = lambda: None
+        self.assertFalse(worker.valid_heartbeat(status, self.host.record, self.host.now))
+        self.assert_quarantined()
+        self.assertEqual(self.host.stops, 0)
+        self.assertEqual(self.host.launches, 1)
+        self.assertEqual(self.host.cleaned, 0)
+        self.assertFalse(any(item["ready"] for item in self.host.health))
+
     def test_provider_drift_uses_guarded_stop_and_waits_for_native_exit(self):
         def change():
             if self.host.stops:
@@ -432,8 +446,11 @@ try {
     def test_unit_keeps_quarantine_and_non_destructive_stop(self):
         unit = (ROOT / "deploy/dell/feddit-worker.service").read_text()
         for setting in ("Type=notify", "NotifyAccess=main", "RestartPreventExitStatus=78", "KillMode=process",
-                        "SendSIGKILL=no", "TimeoutStopSec=35min", "FEDDIT_MAINTENANCE_DIR"):
+                        "SendSIGKILL=no", "TimeoutStopSec=35min", "FEDDIT_MAINTENANCE_DIR",
+                        "Environment=FEDDIT_WORKER_STATE_DIR=C:/dev/feddit-worker-state"):
             self.assertIn(setting, unit)
+        forwarded = next(line for line in unit.splitlines() if line.startswith("Environment=WSLENV="))
+        self.assertIn("FEDDIT_WORKER_STATE_DIR", forwarded.split(":"))
 
     def test_probe_metadata_contract_and_failure_modes(self):
         script = r"""
