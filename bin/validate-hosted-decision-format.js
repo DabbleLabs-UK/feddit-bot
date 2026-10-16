@@ -41,6 +41,7 @@ const chosen = [
   ['t_13d085fcb8842d1cf5715047cc7abe2d', 'syntax-two-votes'],
   ['t_3ad4b07b8d044593d7c3a596912d5f23', 'missing-three-votes'],
 ];
+const finalPairId = 't_80a68191c5055cdd1ffe390c31955d19';
 
 function prepare(corpus) {
   assert.equal(corpus.version, 1);
@@ -68,8 +69,50 @@ function prepareReasonRefinement(corpus) {
   })) };
 }
 
+function prepareFinalPair(corpus) {
+  assert.equal(corpus.version, 1);
+  const original = corpus.cases.find(item => item.id === finalPairId);
+  assert(original && original.generations.length >= 2, 'Untested retained framing-failure case missing');
+  assert(!chosen.some(([id]) => id === original.id));
+  const request = original.generations[0].request;
+  assert.equal(request.numPredict, 640);
+  const measured = budget.measure(request.system, request.prompt, 640, 2);
+  assert.deepEqual(request.decisionBudget, measured);
+  assert(budget.fits(measured));
+  const descriptor = format.validate({ version: 1,
+    candidateIds: original.construction.candidateIds, voteIds: original.construction.voteIds });
+  assert(descriptor.voteIds.length > 0, 'Final framing case must include votes');
+  const item = { id: original.id, label: 'final-framing-pair', request, descriptor,
+    candidates: original.candidates, voteCandidates: original.voteCandidates,
+    historical: score(original.generations[0].result.text, original),
+    historicalFinal: score(original.generations.at(-1).result.text, original),
+    order: ['control', 'schema'], frozenHash: hash(request) };
+  assert(!item.historical.primaryValid && !item.historicalFinal.primaryValid,
+    'Final comparison requires retained initial and final primary failures');
+  return { version: 3, createdAt: new Date().toISOString(), maxCalls: 2, cases: [item] };
+}
+
 function validatePacket(packet, continueUntouched = false) {
-  assert([1, 2].includes(packet.version), 'Unsupported private validation protocol');
+  assert([1, 2, 3].includes(packet.version), 'Unsupported private validation protocol');
+  if (packet.version === 3) {
+    assert(!continueUntouched, 'Final pair requires a fresh ledger; continuation is not allowed');
+    assert.equal(packet.maxCalls, 2);
+    assert.equal(packet.cases.length, 1);
+    const item = packet.cases[0];
+    assert.equal(item.id, finalPairId);
+    assert.equal(item.label, 'final-framing-pair');
+    assert.equal(item.descriptor.version, 1);
+    format.validate(item.descriptor);
+    assert(item.descriptor.voteIds.length > 0);
+    assert.deepEqual(item.order, ['control', 'schema']);
+    assert.equal(hash(item.request), item.frozenHash);
+    assert.equal(item.request.numPredict, 640);
+    assert.deepEqual(item.request.decisionBudget, budget.measure(item.request.system, item.request.prompt, 640, 2));
+    assert(budget.fits(item.request.decisionBudget));
+    assert.deepEqual(item.candidates.map(value => value.id), item.descriptor.candidateIds);
+    assert.deepEqual(item.voteCandidates.map(value => value.id), item.descriptor.voteIds);
+    return;
+  }
   const refinement = packet.version === 2;
   assert.equal(packet.maxCalls, refinement ? 2 : 6);
   assert.equal(packet.cases.length, refinement ? 2 : 3);
@@ -117,11 +160,71 @@ function score(text, item) {
   for (const vote of decision.votes.filter(vote => vote.decisionKind !== 'explicit')) {
     assert(!isolated.includes(voting.targetKey(vote)), 'Unresolved target cannot become considered');
   }
-  return { fullValid, primaryValid: decision.valid, waited: decision.waited, tupleExact, nativeSchemaExact,
+  return { fullValid, primaryValid: decision.valid, waited: decision.waited,
+    validWait: decision.valid && decision.waited, tupleExact, nativeSchemaExact, rawJSON,
     strictObject: !!parsed, choice: decision.candidate?.id || (decision.valid ? 'WAIT' : null),
     explicit: decision.votes.filter(vote => vote.decisionKind === 'explicit').length,
+    invalid: decision.votes.filter(vote => vote.decisionKind === 'invalid').length,
+    missing: decision.votes.filter(vote => vote.decisionKind === 'missing').length,
     unresolved: decision.votes.filter(vote => vote.decisionKind !== 'explicit').length,
     votes: decision.votes.map(({ id, direction, decisionKind }) => ({ id, direction, decisionKind })) };
+}
+
+// Final-pair-only observation of the actual non-stream worker transport. Never
+// change provider options, request bodies, response objects or legacy metadata.
+// Only an allowlisted content-free projection of the cloned response survives.
+async function observeFinalPair(callback, target = globalThis) {
+  const original = target.fetch;
+  let active = null;
+  let calls = 0;
+  let frozenBodyHash = null;
+  const observer = {
+    start(arm, descriptor) {
+      assert(!active && ['control', 'schema'].includes(arm));
+      active = { arm, descriptor, calls: 0, completion: null };
+    },
+    finish() {
+      assert(active && active.calls === 1, 'Exactly one inference per final-pair arm is required');
+      const completion = active.completion;
+      active = null;
+      assert(completion, 'Actual completion metadata missing');
+      return completion;
+    },
+  };
+  target.fetch = async function(url, options) {
+    const location = new URL(url);
+    const chat = location.pathname === '/api/chat';
+    if (chat) {
+      assert.equal(location.origin, 'http://127.0.0.1:11434', 'Unexpected inference destination');
+      assert(active && calls < 2 && active.calls === 0, 'No additional inference or retry is authorized');
+      const body = JSON.parse(options.body);
+      assert.equal(body.stream, false, 'Final pair requires the production non-streaming transport');
+      if (active.arm === 'control') assert(!Object.hasOwn(body, 'format'), 'Control must not request a native format');
+      else assert.deepEqual(body.format, format.schema(active.descriptor));
+      const { format: ignored, ...unchangedBody } = body;
+      const bodyHash = hash(unchangedBody);
+      if (frozenBodyHash === null) frozenBodyHash = bodyHash;
+      else assert.equal(bodyHash, frozenBodyHash, 'Frozen chat request changed between arms');
+      active.bodyHash = bodyHash;
+      active.calls++; calls++;
+    }
+    const response = await original.call(target, url, options);
+    if (chat) {
+      const record = await response.clone().json();
+      const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
+      active.completion = { done: record.done === true,
+        finishReason: ['stop', 'length'].includes(record.done_reason) ? record.done_reason : 'unknown',
+        inputTokens: count(record.prompt_eval_count), outputTokens: count(record.eval_count),
+        requestHashWithoutFormat: active.bodyHash };
+    }
+    return response;
+  };
+  try {
+    const result = await callback(observer);
+    assert.equal(calls, 2, 'Exactly two final-pair inference calls must complete');
+    assert.equal(active, null);
+    return result;
+  } finally { target.fetch = original; }
 }
 
 function continuation(packet, files, first) {
@@ -185,7 +288,7 @@ async function run(packet, output, workerRoot, continueUntouched = false) {
       classification: 'private-completion-callback-failed', retried: false };
     results.push(lost); save(previous.label + '-unrecoverable', lost);
   }
-  try {
+  const execute = async observer => {
     for (const item of packet.cases) {
       assert.equal(hash(item.request), item.frozenHash);
       assert.deepEqual(workerFormat.schema(item.descriptor), format.schema(item.descriptor));
@@ -200,6 +303,7 @@ async function run(packet, output, workerRoot, continueUntouched = false) {
         console.log(JSON.stringify({ state: 'waiting-for-normal-synthetic-lease', label, calls, input: item.request.decisionBudget.inputTokens }));
         const payload = { ...item.request, timeoutMs: 300000,
           ...(arm === 'schema' ? { hostedDecisionFormat: item.descriptor } : {}) };
+        if (observer) observer.start(arm, item.descriptor);
         await worker.runJob({ id: 'frozen-' + calls, kind: 'scheduled-decision', payload,
           priority: 'background', allocationClass: 'synthetic' });
         assert(reported, 'Isolated completion receipt missing');
@@ -209,10 +313,11 @@ async function run(packet, output, workerRoot, continueUntouched = false) {
           throw new Error('Frozen worker request failed; private diagnostic retained, no retry');
         }
         const result = reported.result;
+        const completion = observer ? observer.finish() : null;
         const summary = { label, id: item.id, arm, ms: result.ms, queueMs: result.queueMs,
           input: result.usage.inputTokens, frozenInput: item.request.decisionBudget.inputTokens,
           output: result.usage.outputTokens, finishReason: result.finishReason || 'legacy-not-recorded',
-          decision: score(result.text, item) };
+          ...(completion ? { completion } : {}), decision: score(result.text, item) };
         if (packet.version === 2) {
           const parsed = contract.parseObject(result.text);
           summary.reasonLengths = item.descriptor.voteIds.map(id => {
@@ -224,25 +329,36 @@ async function run(packet, output, workerRoot, continueUntouched = false) {
         results.push(summary); save(label + '-summary', summary);
         console.log(JSON.stringify(summary));
         assert.equal(summary.input, summary.frozenInput, 'Native token mismatch: stop without retry');
-        if (arm === 'schema') assert(summary.decision.nativeSchemaExact, 'Native schema was not enforced; stop without retry');
+        if (completion) {
+          assert.equal(completion.inputTokens, summary.input, 'Completion token mismatch: stop without retry');
+          assert.equal(completion.outputTokens, summary.output, 'Completion output mismatch: stop without retry');
+        }
+        if (arm === 'schema' && packet.version !== 3) assert(summary.decision.nativeSchemaExact, 'Native schema was not enforced; stop without retry');
         if (packet.version === 2) assert(summary.decision.fullValid, 'Reason refinement did not satisfy the unchanged decision contract; stop without retry');
       }
     }
     save('summary', { calls, results, elapsedMs: Date.now() - started,
       publicationCalls: 0, liveStoresOpened: 0, automaticRetries: 0, maintenanceHolds: 0 });
+  };
+  try {
+    if (packet.version === 3) await observeFinalPair(execute);
+    else await execute(null);
   } finally { worker.stop(); worker.maintenance.close(); }
 }
 
 if (require.main === module) {
   (async () => {
-    if (['--prepare', '--prepare-reason-refinement'].includes(process.argv[2])) {
-      const packet = (process.argv[2] === '--prepare' ? prepare : prepareReasonRefinement)(read(process.argv[3]));
+    if (['--prepare', '--prepare-reason-refinement', '--prepare-final-pair'].includes(process.argv[2])) {
+      const mode = { '--prepare': prepare, '--prepare-reason-refinement': prepareReasonRefinement,
+        '--prepare-final-pair': prepareFinalPair }[process.argv[2]];
+      const packet = mode(read(process.argv[3]));
       fs.writeFileSync(process.argv[4], JSON.stringify(packet), { flag: 'wx' });
       console.log(JSON.stringify(packet.cases.map(item => ({ id: item.id, label: item.label,
         input: item.request.decisionBudget.inputTokens, votes: item.voteCandidates.length, historical: item.historical }))));
     } else if (process.argv[2] === '--run') await run(read(process.argv[3]), process.argv[4], process.argv[5],
       process.argv[6] === '--continue-unattempted');
-    else throw new Error('Explicit --prepare, --prepare-reason-refinement or --run required');
+    else throw new Error('Explicit --prepare, --prepare-reason-refinement, --prepare-final-pair or --run required');
   })().catch(() => { console.error('Frozen native-format validation stopped; no retry. See private evidence.'); process.exitCode = 1; });
 }
-module.exports = { prepare, prepareReasonRefinement, validatePacket, freshOutput, score, boundedAdmission, continuation, receiptKind };
+module.exports = { prepare, prepareReasonRefinement, prepareFinalPair, validatePacket, freshOutput, score,
+  boundedAdmission, continuation, receiptKind, observeFinalPair };

@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { prepare, prepareReasonRefinement, validatePacket, freshOutput, score, boundedAdmission, continuation, receiptKind } = require('../bin/validate-hosted-decision-format');
+const { prepare, prepareReasonRefinement, prepareFinalPair, validatePacket, freshOutput, score,
+  boundedAdmission, continuation, receiptKind, observeFinalPair } = require('../bin/validate-hosted-decision-format');
 const budget = require('../lib/hosted-decision-budget');
 let checks = 0;
 function eq(actual, expected) { assert.deepEqual(actual, expected); checks++; }
@@ -122,7 +123,112 @@ eq(missingScore.votes[1], { id: 'V2', direction: null, decisionKind: 'missing' }
 // still rejects the same short non-nil reason independently.
 eq(score(JSON.stringify(wrongReason), item).nativeSchemaExact, true);
 
+const finalCorpus = structuredClone(corpus);
+const finalOriginal = structuredClone(finalCorpus.cases[1]);
+finalOriginal.id = 't_80a68191c5055cdd1ffe390c31955d19';
+finalOriginal.generations.push(structuredClone(finalOriginal.generations[0]));
+finalCorpus.cases.push(finalOriginal);
+const finalPacket = prepareFinalPair(finalCorpus);
+eq(finalPacket.version, 3);
+eq(finalPacket.maxCalls, 2);
+eq(finalPacket.cases.length, 1);
+eq(finalPacket.cases[0].descriptor.version, 1);
+eq(finalPacket.cases[0].order, ['control', 'schema']);
+eq(finalPacket.cases[0].request, finalOriginal.generations[0].request);
+eq(finalPacket.cases[0].candidates, finalOriginal.candidates);
+eq(finalPacket.cases[0].voteCandidates, finalOriginal.voteCandidates);
+validatePacket(finalPacket); checks++;
+for (const changed of [
+  { ...finalPacket, maxCalls: 3 },
+  { ...finalPacket, cases: [...finalPacket.cases, finalPacket.cases[0]] },
+  { ...finalPacket, cases: [{ ...finalPacket.cases[0], id: ids[0] }] },
+  { ...finalPacket, cases: [{ ...finalPacket.cases[0], order: ['schema', 'control'] }] },
+  { ...finalPacket, cases: [{ ...finalPacket.cases[0], frozenHash: 'changed' }] },
+  { ...finalPacket, cases: [{ ...finalPacket.cases[0], descriptor: { ...finalPacket.cases[0].descriptor, version: 2 } }] },
+]) {
+  assert.throws(() => validatePacket(changed)); checks++;
+}
+assert.throws(() => validatePacket(finalPacket, true)); checks++;
+assert.throws(() => continuation(finalPacket, [firstLabel + '-admitted.json'], marker)); checks++;
+const failedHistory = structuredClone(finalCorpus);
+failedHistory.cases.at(-1).generations[1].result.text = JSON.stringify(valid);
+assert.throws(() => prepareFinalPair(failedHistory)); checks++;
+eq(score(JSON.stringify(valid), item).rawJSON, true);
+eq(score('```json\n' + JSON.stringify(valid) + '\n```', item).rawJSON, false);
+eq(score(JSON.stringify(wrongReason), item).invalid, 1);
+eq(score(JSON.stringify(missingRefined), refinement.cases[0]).missing, 1);
+eq(score('An unreadable technical failure.', item).waited, true);
+eq(score('An unreadable technical failure.', item).validWait, false);
+eq(score(JSON.stringify({ ...valid, choice: 'WAIT' }), item).validWait, true);
+
 (async () => {
+  const format = require('../lib/hosted-decision-format');
+  const body = { model: 'unchanged-fixture-model', messages: [{ role: 'user', content: 'Private fixture.' }],
+    stream: false, keep_alive: '5m', options: { num_ctx: 3072, num_predict: 640, temperature: 0.8 } };
+  let fetched = 0;
+  const responses = [];
+  const originalFetch = async (url, options) => {
+    eq(new URL(url).pathname, '/api/chat');
+    eq(options.headers, headers);
+    fetched++;
+    const response = new Response(JSON.stringify({ done: true, done_reason: 'stop',
+      prompt_eval_count: 2254, eval_count: 90, message: { content: 'Private output must never enter telemetry.' } }));
+    responses.push(response);
+    return response;
+  };
+  const headers = { 'Content-Type': 'application/json' };
+  const target = { fetch: originalFetch };
+  const observed = await observeFinalPair(async observer => {
+    const completions = [];
+    for (const arm of ['control', 'schema']) {
+      observer.start(arm, finalPacket.cases[0].descriptor);
+      const requestBody = JSON.stringify({ ...body,
+        ...(arm === 'schema' ? { format: format.schema(finalPacket.cases[0].descriptor) } : {}) });
+      const options = { method: 'POST', headers, body: requestBody };
+      const response = await target.fetch('http://127.0.0.1:11434/api/chat', options);
+      eq(response, responses.at(-1));
+      eq(options.body, requestBody);
+      eq((await response.json()).message.content, 'Private output must never enter telemetry.');
+      completions.push(observer.finish());
+    }
+    return completions;
+  }, target);
+  eq(fetched, 2);
+  eq(target.fetch, originalFetch);
+  eq(observed[0], observed[1]);
+  eq(Object.keys(observed[0]).sort(), ['done', 'finishReason', 'inputTokens', 'outputTokens', 'requestHashWithoutFormat'].sort());
+  eq(observed[0].done, true);
+  eq(observed[0].inputTokens, 2254);
+  eq(observed[0].finishReason, 'stop');
+  eq(JSON.stringify(observed).includes('Private'), false);
+  for (const failure of ['transport', 'invalid-json', 'extra-call', 'wrong-format', 'changed-settings', 'wrong-host']) {
+    let networkCalls = 0;
+    const fetchImpl = async () => {
+      networkCalls++;
+      if (failure === 'transport') throw new Error('Mock transport failure');
+      return new Response(failure === 'invalid-json' ? 'not JSON' : JSON.stringify({ done: true, done_reason: 'length',
+        prompt_eval_count: 2254, eval_count: 640 }));
+    };
+    const failedTarget = { fetch: fetchImpl };
+    await assert.rejects(() => observeFinalPair(async observer => {
+      observer.start('control', finalPacket.cases[0].descriptor);
+      const initial = { ...body, ...(failure === 'wrong-format' ? { format: {} } : {}) };
+      await failedTarget.fetch(failure === 'wrong-host' ? 'http://other.test/api/chat' : 'http://127.0.0.1:11434/api/chat',
+        { body: JSON.stringify(initial) });
+      if (failure === 'extra-call') {
+        await failedTarget.fetch('http://127.0.0.1:11434/api/chat', { body: JSON.stringify(body) });
+      }
+      observer.finish();
+      observer.start('schema', finalPacket.cases[0].descriptor);
+      await failedTarget.fetch('http://127.0.0.1:11434/api/chat', { body: JSON.stringify({ ...body,
+        options: { ...body.options, temperature: 0.9 }, format: format.schema(finalPacket.cases[0].descriptor) }) });
+    }, failedTarget)); checks++;
+    eq(failedTarget.fetch, fetchImpl);
+    eq(networkCalls, ['wrong-format', 'wrong-host'].includes(failure) ? 0 : 1);
+  }
+  const noCalls = { fetch: originalFetch };
+  await assert.rejects(() => observeFinalPair(async () => {}, noCalls)); checks++;
+  eq(noCalls.fetch, originalFetch);
   const options = { deadline: Date.now() + 1000, reserveMs: 0, maintenanceExists: () => false, pollMs: 1 };
   let released = 0;
   const lease = { release: async () => { released++; } };
