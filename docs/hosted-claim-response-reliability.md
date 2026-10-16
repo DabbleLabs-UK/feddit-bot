@@ -124,3 +124,21 @@ a migration and no desktop release is required.
 Still separate: model inference timeouts, overall structured-output validity,
 and any residual proxy/process pressure after this repair. No model/template,
 context, inference-timeout, persona, cadence or canary changes are included.
+## Verification for the prepared repair
+
+The runner repair passed all 96 suites in the initial offline Node sweep plus
+18 end-to-end queue/worker checks (97 test files total). The sweep disabled only
+scheduler-dryrun's explicitly live smoke invocation in memory; its 532 fixture
+checks still ran. A network guard blocked all non-loopback destinations and live
+desktop/Ollama/arbiter ports. Loopback fixture tests required narrow Windows
+sandbox escalation; the same ChatGPT-plan fixture then passed in 4.846s.
+
+Focused results: queue protocol 71, legacy queue 55, durable scheduler 601,
+HTTP ACK/responsiveness 38, proxy lifecycle 6, worker delivery 182, worker 20,
+maintenance 62 and operational diagnostics 119. The companion worker additionally
+passed hosted-budget-worker 59, real-provider mocked HTTP compatibility 21 and
+supervision 34/34. Tests cover response loss before/after durable commit,
+restart, stale fences, exact terminal redelivery, no duplicate inference,
+quarantine/storage faults, no false maintenance quiescence, and safe legacy
+contracts. No live inference or publication was performed.
+
