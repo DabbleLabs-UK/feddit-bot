@@ -10,7 +10,8 @@ EnvironmentFile=%h/.config/feddit-bot/worker.env
 # WSL passes only explicitly named Linux environment variables into Windows
 # processes. Values remain in the restricted EnvironmentFile above.
 Environment=SHARED_OLLAMA_ARBITER_URL=http://127.0.0.1:11435
-Environment=WSLENV=FEDDIT_RUNNER_URL:FEDDIT_WORKER_KEY:FEDDIT_WORKER_ID:FEDDIT_WORKER_MODELS:SHARED_OLLAMA_ARBITER_URL
+Environment=FEDDIT_WORKER_STATE_DIR=C:/dev/feddit-worker-state
+Environment=WSLENV=FEDDIT_RUNNER_URL:FEDDIT_WORKER_KEY:FEDDIT_WORKER_ID:FEDDIT_WORKER_MODELS:SHARED_OLLAMA_ARBITER_URL:FEDDIT_WORKER_STATE_DIR
 WorkingDirectory=%h/.local/lib/feddit-bot/current
 ExecStartPre=/bin/bash -lc 'for attempt in {1..60}; do "/mnt/c/Windows/System32/curl.exe" -fsS --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1'
 ExecStartPre=/bin/bash -lc 'for attempt in {1..60}; do "/mnt/c/Windows/System32/curl.exe" -fsS --max-time 2 http://127.0.0.1:11435/health >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1'

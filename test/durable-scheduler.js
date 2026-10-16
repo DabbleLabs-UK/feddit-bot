@@ -482,6 +482,68 @@ function votingHarness(id, count) {
 }
 
 async function run() {
+  for (const scalarStatus of [true, false]) {
+    const h = harness();
+    try {
+      if (!scalarStatus) h.queue.peekStatus = undefined;
+      const runtime = h.scheduler();
+      await runtime.runTick();
+      await settle();
+      const turn = h.turnStore.listActive()[0];
+      ok(turn && turn.generations[0], 'waiting fixture admitted a generation: ' + JSON.stringify({ turn, logs: h.logs }));
+      const jobId = turn.generations[0].jobId;
+      const initialRequest = structuredClone(turn.generations[0].request);
+      const generation = h.turnStore.generation;
+      const patches = [];
+      h.turnStore.generation = (...args) => {
+        patches.push(structuredClone(args[2]));
+        return generation(...args);
+      };
+      const writeFileSync = fs.writeFileSync;
+      let turnWrites = 0;
+      fs.writeFileSync = (file, ...args) => {
+        if (String(file) === h.turnFile + '.tmp') turnWrites++;
+        return writeFileSync(file, ...args);
+      };
+      try {
+        for (let i = 0; i < 10; i++) runtime.reconcileDurableTurns();
+        await settle();
+        eq(turnWrites, 0, 'unchanged queued reconciliation does not rewrite durable state');
+        eq(patches, [], 'unchanged queued work does not replay generation');
+        const job = h.queue.claim('status-worker');
+        eq(job.id, jobId, 'the frozen job is claimed once');
+        runtime.reconcileDurableTurns();
+        await settle();
+        eq(h.turnStore.get(turn.id).status, 'generating', 'changed queue status advances the turn');
+        eq(patches.filter((patch) => patch.jobStatus === 'claimed').length, 1,
+          'the claimed transition is stored once');
+        patches.length = 0;
+        turnWrites = 0;
+        for (let i = 0; i < 10; i++) runtime.reconcileDurableTurns();
+        await settle();
+        eq(turnWrites, 0, 'unchanged claimed reconciliation performs zero durable writes');
+        h.turnStore.update(turn.id, { status: 'blocked' });
+        runtime.reconcileDurableTurns();
+        await settle();
+        eq(h.turnStore.get(turn.id).status, 'generating', 'blocked turns replay even when the job is unchanged');
+        eq(patches.length, 0, 'defensive generation status update also avoids an unchanged write');
+        h.queue.complete(jobId, 'status-worker', { text: JSON.stringify({ choice: 'WAIT', reason: 'Nothing fits now.', votes: [] }),
+          provider: 'ollama', model: 'test-model', usage: { inputTokens: 1, outputTokens: 1 }, ms: 1 });
+        runtime.reconcileDurableTurns();
+        await settle();
+        const completed = h.turnStore.get(turn.id);
+        eq(completed.status, 'completed', 'completed queue work resumes and finishes normally');
+        eq(patches.filter((patch) => patch.jobStatus === 'completed').length, 1,
+          'completed generation status and result are persisted together once');
+        ok(patches.find((patch) => patch.jobStatus === 'completed').result,
+          'completion never persists a status-only intermediate generation');
+        eq(completed.generations[0].request, initialRequest, 'responsiveness optimization preserves frozen request exactly');
+        eq(h.writes.length, 0, 'a resumed WAIT never publishes');
+      } finally {
+        fs.writeFileSync = writeFileSync;
+      }
+    } finally { h.cleanup(); }
+  }
   {
     const p=makeProfile('burst-scoped-guard',false);
     Object.assign(p,{canReply:true,canStartDiscussions:false,canVote:false,postsPerHour:0,commentsPerHour:1});

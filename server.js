@@ -192,6 +192,23 @@ function sendJson(res, status, obj) {
   res.end(body);
 }
 
+let workerReconcilePending = false;
+function acknowledgeWorkerResult(res, job) {
+  // Queue transitions are already durable. Flush the acknowledgement before
+  // replay can construct another prompt; periodic reconciliation also recovers
+  // the turn if this process exits after the acknowledgement.
+  res.once('finish', () => {
+    if (workerReconcilePending) return;
+    workerReconcilePending = true;
+    setImmediate(() => {
+      workerReconcilePending = false;
+      try { schedulerHandle.reconcileDurableTurns(); }
+      catch (error) { console.error('[worker] Deferred durable reconciliation failed: ' + error.message); }
+    });
+  });
+  return sendJson(res, 200, { ok: true, job: { id: job.id, status: job.status } });
+}
+
 function sendCultureImportError(res, error) {
   const status = Number(error && error.statusCode) ||
     (error instanceof CultureImportUiError ? 409 : 422);
@@ -803,7 +820,16 @@ async function handleApi(req, res, urlPath, query) {
         return sendJson(res, 200, { ok: true });
       }
       if (urlPath === '/api/worker/claim') {
-        const job = jobQueue.claim(workerId, details);
+        // Let queued socket-close events run before allocating a lease. A
+        // normally completed POST body may have req.destroyed=true, so only
+        // explicit abort/response/socket signals indicate a disconnected poll.
+        await new Promise((resolve) => setImmediate(resolve));
+        if (req.aborted || res.destroyed || req.socket?.destroyed) return;
+        const job = jobQueue.claim(workerId, {
+          ...details,
+          claimRequestId: body.claimRequestId,
+          includeQueueMetadata: false,
+        });
         return sendJson(res, 200, { job });
       }
 
@@ -812,20 +838,19 @@ async function handleApi(req, res, urlPath, query) {
         const jobId = decodeURIComponent(jobRoute[1]);
         const action = jobRoute[2];
         if (action === 'renew') {
-          const job = jobQueue.renew(jobId, workerId);
-          return sendJson(res, 200, { ok: true, job });
+          const job = jobQueue.renew(jobId, workerId, undefined, body.leaseToken);
+          return sendJson(res, 200, { ok: true, job: { id: job.id, status: job.status } });
         }
         if (action === 'complete') {
-          const job = jobQueue.complete(jobId, workerId, body.result);
-          schedulerHandle.reconcileDurableTurns();
-          return sendJson(res, 200, { ok: true, job });
+          const job = jobQueue.complete(jobId, workerId, body.result, body.leaseToken);
+          return acknowledgeWorkerResult(res, job);
         }
-        const job = jobQueue.fail(jobId, workerId, body.error, body.retryable !== false);
-        schedulerHandle.reconcileDurableTurns();
-        return sendJson(res, 200, { ok: true, job });
+        const job = jobQueue.fail(jobId, workerId, body.error, body.retryable !== false, body.leaseToken);
+        return acknowledgeWorkerResult(res, job);
       }
     } catch (err) {
-      return sendJson(res, 409, { error: err.message });
+      return sendJson(res, 409, { error: err.message,
+        ...(err.code === 'WORKER_LEASE_CONFLICT' ? { code: err.code } : {}) });
     }
     return sendJson(res, 404, { error: 'Unknown worker route' });
   }

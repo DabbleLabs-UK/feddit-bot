@@ -16,7 +16,13 @@ feddit-bots.dabblelabs.uk {
     }
 
     handle {
-        reverse_proxy 127.0.0.1:8770
+        reverse_proxy 127.0.0.1:8770 {
+            # Recycle idle upstream sockets before Node's 5s keep-alive expiry.
+            # This is not a request or inference timeout and enables no retry.
+            transport http {
+                keepalive 4s
+            }
+        }
     }
 
     tls {
