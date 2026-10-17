@@ -147,6 +147,27 @@ link/guard/dedupe filters. Profile packs preserve moves and exclude templates.
 The wider regression batch runs behind a guard that blocks external services
 and production ports, with isolated per-suite data. The optional existing live
 smoke is excluded by that offline orchestrator, not by weakening tracked tests.
+All 34 selected suites passed, with no timeout or blocked live request. The
+latest isolated API rerun passed 118 placement/identity/ledger-isolation checks
+and 37 groups/forecast checks. Worker delivery, provider contracts, Burst,
+Speed, existing Naturalness observers, social and autobiographical behavior
+also passed. The raw batch and rerun outputs remain private ignored artifacts
+under artifacts/turnover-verification; no private live content is committed.
 No model validation experiment is required for deterministic source mixing.
 Actual fresh-post replies and ecology improvement remain unmeasured until an
 explicitly approved controlled deployment and natural observation window.
+
+A disposable compatibility checkout based on writing-canary commit a41b691
+also passed 12 isolated writing/canary/Naturalness/UI suites. Resolving its four
+integration overlaps preserved both writing admission and presentation scopes.
+An additional 39-check joint probe observed three writing-v3/ordinary-v1
+admissions, two Burst writing-v1/ordinary-v0 admissions and 22 receipt merges.
+This was offline compatibility verification only, not a change to the installed
+canary branch or a deployment. The resolved patch and logs are preserved in
+ignored artifacts; the disposable checkout was removed afterward.
+
+The final read-only desktop check at 2026-10-17 17:17:02 UTC still found
+paused=false and the same three canary IDs listed above. No pause or canary
+setting was changed by this job. The implementation is ready for controlled
+deployment with normal durable handover and explicit reconciliation of the
+separate desktop canary line. No package, public release or deployment was made.
