@@ -37,6 +37,7 @@ const original = {
   postedNews: ['https://example.com/already-posted'],
   repliedTo: ['t3_12'],
   replyGuardState: { version: 2, attempts: [{ postId: '12', targetKey: 't1_43', at: 100 }] },
+  ordinaryCandidateState: { version: 1, entries: [{ key: 't3_12', at: 100 }] },
   attentionState: { cursor: { comments: 44, posts: 9 }, seenEventIds: ['t1_43'] },
   socialState: {
     relationships: {
@@ -73,6 +74,7 @@ assert.deepEqual(moved.runtime.voteState, original.voteState);
 assert.deepEqual(moved.runtime.postedNews, original.postedNews);
 assert.deepEqual(moved.runtime.attentionState, original.attentionState);
 assert.deepEqual(moved.runtime.replyGuardState, original.replyGuardState);
+assert.deepEqual(moved.runtime.ordinaryCandidateState, original.ordinaryCandidateState);
 assert.deepEqual(moved.runtime.socialState, original.socialState);
 assert.deepEqual(moved.runtime.memoryState, original.memoryState);
 assert.equal(moved.bot.feedSort, 'controversial');
@@ -112,6 +114,7 @@ assert.deepEqual(imported.voteState, original.voteState);
 assert.deepEqual(imported.postedNews, original.postedNews);
 assert.deepEqual(imported.attentionState, original.attentionState);
 assert.deepEqual(imported.replyGuardState, original.replyGuardState);
+assert.deepEqual(imported.ordinaryCandidateState, original.ordinaryCandidateState);
 assert.deepEqual(imported.socialState, original.socialState);
 assert.deepEqual(imported.memoryState, original.memoryState);
 assert.equal(imported.feedSort, 'controversial');
@@ -147,6 +150,7 @@ assert.equal(template.bot.fedditUsername, '');
 assert.equal(template.bot.fedditBio, original.fedditBio);
 assert.equal('runtime' in template, false);
 assert.equal(JSON.stringify(template).includes('replyGuardState'), false, 'templates exclude continuation guard history');
+assert.equal(JSON.stringify(template).includes('ordinaryCandidateState'), false, 'templates exclude shortlist presentation history');
 assert.equal(JSON.stringify(template).includes('Replied to Alice'), false, 'templates exclude autobiographical runtime memory');
 assert.deepEqual(template.executionPreference, { localModel: 'machine-specific-model' });
 
