@@ -32,3 +32,13 @@ and UTF-16 character counts, and final token totals when Ollama supplies them.
 Fragment counts are not token counts. No prompt, output or thinking content is
 stored. Old telemetry remains readable; absent new fields are unknown/zero.
 Historical records are never restored as currently Working after restart.
+
+The diagnostic extension additionally retains system/prompt character counts,
+requested output/context/thread settings, shared-lease wait, and native Ollama
+terminal load/prompt-evaluation/decoding/total durations in milliseconds. Native
+nanosecond durations are converted only when finite and nonnegative. Missing
+terminal counters stay null, including interrupted prefill: no phase duration
+or token count is fabricated for a timeout. Inherited context is null rather
+than an assertion of zero context. These counters are not CPU utilization or a
+complete measure of Ollama's internal queue, and diagnostics do not add model
+metadata or generation requests. See desktop-decision-latency-2026-10-17.md.

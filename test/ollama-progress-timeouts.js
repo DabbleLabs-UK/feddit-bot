@@ -387,7 +387,9 @@ test('telemetry records content-free timing and honest final token totals', asyn
   assert.equal(active.progressRecords, 2);
   assert.equal(active.outputCharacters, 'PRIVATE_OUTPUT_SENTINEL'.length);
   assert.equal(active.thinkingCharacters, 'PRIVATE_THINKING_SENTINEL'.length);
-  line(res, { done: true, eval_count: 41, prompt_eval_count: 6930 });
+  line(res, { done: true, eval_count: 41, prompt_eval_count: 6930,
+    load_duration: 1000000, prompt_eval_duration: 900000000000,
+    eval_duration: 120000000000, total_duration: 1020001000000 });
   res.emit('end');
   await success(turn);
   const saved = f.records[0];
@@ -395,6 +397,10 @@ test('telemetry records content-free timing and honest final token totals', asyn
   assert.equal(saved.endedAt, saved.completedAt);
   assert.equal(saved.inputTokens, 6930);
   assert.equal(saved.outputTokens, 41);
+  assert.equal(saved.modelLoadMs, 1);
+  assert.equal(saved.promptEvalMs, 900000);
+  assert.equal(saved.generationEvalMs, 120000);
+  assert.equal(saved.ollamaTotalMs, 1020001);
   assert.equal(saved.progressRecords, 2, 'terminal metadata is not generated progress');
   assert.doesNotMatch(JSON.stringify(saved), /PRIVATE_(SYSTEM|PROMPT|OUTPUT|THINKING)_SENTINEL/);
   clean(f);
