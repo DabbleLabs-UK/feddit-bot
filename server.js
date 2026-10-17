@@ -2305,6 +2305,7 @@ function activeSyntheticTurnCount() {
 }
 reconcileHostedProfiles();
 const schedulerHandle = scheduler.start({
+  placement: PLACEMENT,
   evidenceStore,
   store,
   providers,

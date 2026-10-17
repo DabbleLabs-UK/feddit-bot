@@ -37,6 +37,7 @@ async function run() {
   let sent;
   const generated = await ollama.generate({ system: 'PRIVATE_SYSTEM', prompt: 'PRIVATE_PROMPT',
     model: 'fixture-local', kind: 'scheduled-decision', numPredict: 640, leaseClient: null,
+    decisionEvidenceVersion: 1,
     chatTransport: async (body) => { sent = body; return terminal; },
   });
   eq(generated.text, 'PRIVATE_GENERATED_TEXT');
@@ -53,6 +54,7 @@ async function run() {
   eq(saved.systemCharacters, 'PRIVATE_SYSTEM'.length);
   eq(saved.promptCharacters, 'PRIVATE_PROMPT'.length);
   eq(saved.requestedOutputTokens, 640);
+  eq(saved.decisionEvidenceVersion, 1);
   eq(saved.requestedContextTokens, null);
   eq(saved.requestedThreads, 4);
   eq(saved.leaseWaitMs, 0);
@@ -66,6 +68,7 @@ async function run() {
   eq(saved.leaseWaitMs, 1234);
   eq(saved.requestedContextTokens, 3072);
   eq(saved.modelLoadMs, null);
+  eq(saved.decisionEvidenceVersion, null);
   eq(releases, 1);
 
   await assert.rejects(ollama.generate({ model: 'fixture-failed', leaseClient: null,
