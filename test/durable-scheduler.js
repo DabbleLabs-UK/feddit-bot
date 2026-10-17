@@ -345,7 +345,7 @@ function harness(options = {}) {
   let sequence = 0;
   const now = () => current;
   const profiles = options.profiles || [makeProfile('bot-a', true)];
-  const store = makeStore(profiles, now);
+  const store = options.store || makeStore(profiles, now);
   const queueFile = path.join(dir, 'jobs.json');
   const turnFile = path.join(dir, 'turns.json');
   const queue = createQueue({
@@ -404,6 +404,7 @@ function harness(options = {}) {
   function scheduler() {
     return createScheduler({
       store,
+      placement: options.placement,
       providers,
       feddit,
       about,
@@ -436,6 +437,7 @@ function harness(options = {}) {
     };
     const restartedScheduler = createScheduler({
       store,
+      placement: options.placement,
       providers: restartedProviders,
       feddit,
       about,

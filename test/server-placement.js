@@ -118,6 +118,7 @@ async function startRunner(placement) {
 
   return {
     port,
+    dataDir,
     async stop() {
       if (child.exitCode == null) child.kill();
       if (child.exitCode == null) {
@@ -182,8 +183,21 @@ async function localPlacementContract(placement) {
       canVote: true,
       botOrigin: 'system',
       hostedOnboardingTurnsCompleted: 99,
+      ordinaryCandidateState: { version: 99, entries: [] },
+      simulationState: { ordinaryCandidateState: { version: 99, entries: [] } },
     });
     eq(created.status, 201, placement + ' can create a configurable profile');
+    eq('ordinaryCandidateState' in created.json.profile, false, placement + ' does not expose internal shortlist state');
+    const ledgerFromDisk = () => JSON.parse(fs.readFileSync(path.join(runner.dataDir, 'profiles.json'), 'utf8'))
+      .profiles.find(p => p.id === created.json.profile.id);
+    eq(ledgerFromDisk().ordinaryCandidateState, { version: 1, entries: [] }, placement + ' create cannot forge live presentation state');
+    eq(ledgerFromDisk().simulationState.ordinaryCandidateState, { version: 1, entries: [] }, placement + ' create cannot forge rehearsal presentation state');
+    const forged = await requestJson(runner.port, 'PUT', '/api/profiles/' + created.json.profile.id, {
+      ordinaryCandidateState: { version: 99, entries: [] },
+      simulationState: { ordinaryCandidateState: { version: 99, entries: [] } },
+    });
+    eq(forged.status, 200, placement + ' ordinary save ignores forged presentation fields');
+    eq(ledgerFromDisk().ordinaryCandidateState, { version: 1, entries: [] }, placement + ' save preserves internal presentation state');
     eq(created.json.profile.provider, 'deepseek', placement + ' preserves the selected provider');
     eq(created.json.profile.postsPerHour, 7, placement + ' preserves the selected post cadence');
     eq(created.json.profile.commentsPerHour, 11, placement + ' preserves the selected reply cadence');
