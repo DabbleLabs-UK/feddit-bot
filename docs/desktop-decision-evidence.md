@@ -125,3 +125,39 @@ Offline implementation checks pass, but behavioral deployment readiness remains
 held: this aborted check supplies no model comprehension, prompt_eval_count or
 throughput comparison. No new comparison campaign, repeated attempts or
 automatic production rollout is authorized. No timing speedup is claimed yet.
+
+## Follow-up repair-or-stop assessment
+
+The follow-up authorization allowed a new two-call attempt only if the prior
+heartbeat failure was small and confidently repairable. Inspection found the
+last committed heartbeat at 14:00:07.706 UTC and a complete 77-byte temporary
+heartbeat at 14:00:09.725 UTC, immediately before the controller aborted.
+The controller catches every exception from atomic persistence into one boolean
+and reports PAUSE_HEARTBEAT_STALE; it retains neither syscall nor native error
+code. Atomic persistence includes write, fsync, close and rename. The available
+evidence cannot distinguish their failures or establish an external lock owner.
+A Windows replacement/sharing conflict is plausible, not proven. Generic retry
+or replacement changes would therefore be speculative, not a demonstrated fix.
+
+Decision: STOP under the user's repair-or-stop condition. No pause, protocol,
+model inference, retry, runtime edit or deployment was initiated in this
+follow-up. Prior ledgers and temporary evidence remain untouched. Model
+comprehension is NOT VERIFIED (the deployment gate fails for missing evidence,
+not an observed model-comprehension failure). All model-response validity,
+semantic/reference comprehension and actual inference timing comparisons
+remain unavailable. The earlier offline token/preservation results still stand.
+
+Read-only follow-up checks found port 8770 still serving desktop 0.27.3,
+paused=false, with the same three persisted canary IDs and natural scheduled
+comment writing by tavern_toilet_oracle. The original desktop process 20872
+remains in place. No Cy or hosted pause, restart, deployment, configuration or
+admission change was made; no new claim about remote Cy health is inferred from
+the local desktop checks. Controlled desktop deployment remains held.
+
+Existing pause, guard-diagnostics and guard-integration suites passed again,
+including 44 mocked fault/race integration checks and zero live inference/HTTP
+calls. Their first sandbox execution was blocked by Windows temporary-file
+hard-link permissions; the same unmodified tests passed outside that sandbox.
+This separate test-environment restriction does not establish the cause of
+the earlier unsandboxed heartbeat replacement failure. No harness or application
+code was changed by this follow-up.
