@@ -93,14 +93,35 @@ unique evidence retention, overlapping/prefix/multiline/Unicode evidence,
 reference-like-content fallback, voting-only and no-saving fallback, invalid
 E-ID rejection, and unresolved missing votes.
 
-No inference call has yet been run for this change. Existing natural local
-work is active. A separate bounded desktop-only admission pause has been
-requested, not assumed. Do not compete with or cancel natural work merely to
-obtain results. No hosted or Cy pause, maintenance window, model reload or
-production state write is justified by the offline measurement.
+The user authorized one desktop-only admission pause of at most 20 minutes,
+allowing already-admitted natural work to drain before at most two frozen
+non-publishing calls. Protocol c6dda3b0-efa1-47ca-9d16-19e20e18e474 was frozen
+with identical model/settings/content between arms; initial framed counts were
+3241 released tokens and 2204 compact tokens. Its private ledger retains zero
+calls: neither experimental arm was admitted.
+
+The pause ran on 2026-10-17 from 13:51:05.845 to 14:00:09.953 UTC (544.108
+seconds). While Sir_Ponsalot's already-admitted natural decision was draining,
+the controller stopped with PAUSE_HEARTBEAT_STALE. In this controller that code
+also covers a caught heartbeat atomic-write exception. A heartbeat temporary
+file remains; the last committed heartbeat was only about two seconds old at
+abort. Thus the retained evidence establishes heartbeat persistence failure,
+not actual inference inactivity. The inner filesystem error was not retained,
+so its specific cause is not established. No further protocol or retry ran.
+
+The controller's finally path restored paused=false on its first attempt; the
+independent watchdog recorded released and exited. Read-only verification of
+port 8770 found desktop 0.27.3 and a naturally admitted scheduled-generation
+request for Sir_Ponsalot writing a comment after restoration. Persisted settings
+confirm normal scheduling and unchanged canary IDs p_swb8djuqg1y4,
+p_7gc83gbxvjpc and p_e4l36dfw9wrl. Hosted Feddit and Cy were not paused or
+restarted. No model settings, cadence, provider selections, memory, candidate
+state or canary membership were edited, and no compaction build was installed.
+The only runtime write was the explicitly authorized global admission pause
+and its restoration. Natural work remained free to complete normally.
 
 Lossless representation does not prove equal model comprehension/attention.
-The implementation is ready for the authorized at-most-two-call non-publishing
-comprehension check, but behavioral deployment readiness remains held until
-that check can run safely. No new comparison campaign, repeated attempts or
+Offline implementation checks pass, but behavioral deployment readiness remains
+held: this aborted check supplies no model comprehension, prompt_eval_count or
+throughput comparison. No new comparison campaign, repeated attempts or
 automatic production rollout is authorized. No timing speedup is claimed yet.
