@@ -132,6 +132,18 @@ next natural reply deadline was later; its empty ledger at the initial audit
 was not treated as a failure or artificially populated. No opportunity was
 forced. Leave normal activity running for ecological observation.
 
+At 18:01:02 UTC the same natural turn was generating through unchanged worker
+d91884c. Job j_8967955a5e46df39de2ab05619a3af3f was claimed at attempt 1 and
+its fenced lease was renewing. Frozen continuationVersion remained 2. Unchanged
+construction-v2 offered renewed C5 and ordinary-root C8; the other eight action
+candidates and three vote candidates were deferred atomically. The verified
+request contained 2,094 input tokens, a 640-token output reserve and 64-token
+safety allowance, fitting the unchanged 3,072-token context. No discovery-handling
+checkpoint had been created before a decision. This provides a real ordinary
+root model offer alongside renewed context, with disk-persisted presentation
+state and no duplicate claim. The inference was still in progress at cutoff;
+its eventual validity/publication and the ecological effect remain unclaimed.
+
 ## Rollback
 
 Old immutable releases and private backups remain available. Do not restore a
