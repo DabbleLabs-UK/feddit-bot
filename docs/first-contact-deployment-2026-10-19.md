@@ -168,11 +168,15 @@ paused:false and the original three writing-canary IDs above.
 
 All 27 profile IDs, the organizational group, protected settings/personas/
 providers/models/cadences, credentials, cache/population content and durable IDs
-survived. Importer semantic comparison retained the corpus, completed analysis,
-all 24 candidates, edits, selections and staging evidence. Its sole semantic
+survived. Importer semantic comparison retained the same workspace ID, 100 posts,
+321 comments, completed analysis, all 24 stable candidates, 24 drafts, 24
+selections, and 22 confirmed plus two skipped staging outcomes. Analysis,
+import-result, edit, review, staging, task and source-reference component hashes
+matched. Its sole semantic
 file difference was sessions[0].sourceSnapshot.cache.ageMs, recomputed by the
 unchanged UI session code. Ten populationActivity objects had the existing
-14-day recentOpportunities pruning; rates, bands and drift targets were unchanged.
+14-day recentOpportunities pruning plus one natural pre-handover driftUpdatedAt
+timestamp; rates, bands and drift targets were unchanged.
 Shared memory episode IDs retained identical content; ordinary Sir/tavern work
 added bounded episodes, with normal preoccupation decay. No state was cleared.
 
@@ -188,6 +192,13 @@ Final production identity reads retain API 75c60de and the active immutable
 hosted runner 1d12829. Authoritative Feddit master and Feddit Bots
 progressive-bot-platform match their remotes and have clean checkouts. Worker
 and verified hosted Ollama remain unchanged. No public desktop release occurred.
+Completed desktop evidence is committed/pushed at
+e4c6a4d2eb3b087bce32d5c76192ab2b29f0184e on
+ops/desktop-first-contact-20261019. Its worktree matches upstream and is clean.
+All owned verification/drain processes completed; only ordinary production
+services and resumed natural bot work remain. There is no remaining rollout
+blocker. Longer-term ecology and continuity effects are left for observation,
+not asserted from this bounded deployment check.
 
 ## Rollback constraints
 
