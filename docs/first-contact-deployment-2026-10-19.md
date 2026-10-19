@@ -104,6 +104,24 @@ Natural root reply+voting exposure, new receipts and completed WAIT/NIL behavior
 are not claimed yet. Deterministic replay/deferred/invalid tests are not passed
 off as live evidence. No opportunity or publication was forced.
 
+At 21:01:45 UTC, natural turn t_f9fd3d0f53e4da7f20588a2a65ffe7b4 froze
+firstContactVersion:1 and ordinaryVersion:1. Root 679 had explicit false public
+assessment metadata and actually survived construction as reply C8 and post vote
+V1. An existing own-comment vote V2 also remained offered. Exact construction-v2
+budget was input 2315 + output 640 + safety 64 = 3019 of 3072 tokens. The durable
+job j_e79ccf77ca60c1e7c0b2d89925ae5458 had one claim/attempt and was waiting on
+the natural model result. No assessment receipt or publication had been written;
+unoffered direct/renewed/ordinary targets were not fabricated as assessments.
+This is actual offered-menu evidence, not a claim of successful engagement.
+
+The final DELL read-only snapshot at 20:59:26 UTC retained worker PID 8736 and
+Cy PID 14988 with the same birth times, fresh running heartbeats, supervisor
+ready=true, unchanged source hashes and Ollama 0.34.1. Its outbox was clear,
+with no pending acknowledgement or blocked delivery. The bounded event projection
+through 20:59:41 had no additional failures after the 20:46:32 claim timeout and
+no quarantine, delivery failure, conflict or duplicate completion. Later natural
+inference admission above is separate from this earlier idle health snapshot.
+
 Desktop public updater remains 0.27.2 and is intentionally untouched. Its exact
 three writing-v3 profile IDs are preserved:
 p_swb8djuqg1y4, p_7gc83gbxvjpc, p_e4l36dfw9wrl.
