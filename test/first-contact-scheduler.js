@@ -188,6 +188,17 @@ async function run() {
     } finally { h.cleanup(); }
   }
   {
+    const h = fixture('missing-frozen-store');
+    try {
+      h.scoped.recordFirstContactAssessment = undefined;
+      const turn = h.turnStore.create({ profileId: h.id, profile: store.getProfile(h.id), rehearsal: false,
+        trigger: 'scheduled', input: { mode: 'capabilities', firstContactVersion: 1, choices: [{ key: 'reply' }] } }).turn;
+      h.scheduler().reconcileDurableTurns(); await settle(12);
+      eq(h.turnStore.get(turn.id).status, 'blocked', 'missing storage for a frozen v1 contract holds instead of silently falling back');
+      eq(h.turnStore.get(turn.id).generations.length, 0, 'missing bookkeeping prevents inference safely');
+    } finally { h.cleanup(); }
+  }
+  {
     const h = fixture('unknown-contract');
     try {
       const turn = h.turnStore.create({ profileId: h.id, profile: store.getProfile(h.id), rehearsal: false,

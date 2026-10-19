@@ -9,7 +9,9 @@ No deployment, runtime pause, model call or public release is authorized here.
 
 Ordinary scheduled reply or standalone-vote opportunities freeze
 firstContactVersion:1. Burst, manual previews, legacy turns and discussion/news-
-only opportunities retain 0. Upstream public root data must explicitly contain
+only opportunities retain 0. A frozen v1 turn without its required store methods
+blocks before inference; older custom stores admit new work as legacy 0.
+Upstream public root data must explicitly contain
 independently_assessed:false. Missing/null metadata fails closed, without
 guessing from score 1 or comment totals.
 
@@ -116,3 +118,20 @@ Only natural post-deployment observations can establish ecological benefit:
 broader independent root votes/comments and a varied first-six/24h distribution,
 without guaranteed replies or loss of established conversations. Offline tests
 prove exposure and safety, not that a model will like or engage with the roots.
+
+## Offline verification
+
+All 104 applicable hosted Node suites passed behind the existing external-
+network/production-port guard, including scheduler, durable replay, continuation,
+voting, provider, claim/delivery reliability, UI and turnover. The new focused
+suites cover 44 selection/receipt, 25 real-store, 15 exact-budget and 58 scheduler
+integration checks. Initial durable snapshot equality caught an undefined-vs-
+omitted API field mismatch; boolean-only serialization corrected it and the
+601-check durable suite plus the full guarded batch passed afterward. Additional
+frozen-missing-store coverage holds before inference instead of silently falling
+back. Verification artifacts are ignored under artifacts/first-contact-verification.
+
+The companion Feddit API passes 25 focused assessment, 445 HTTP API, 20 public
+observation and 41 sorting checks. Its HTTP fixture enables an already installed
+GD extension through a test-only external ini, without changing runtime config.
+These are mocks/isolated fixtures, not production retrieval, inference or posts.
