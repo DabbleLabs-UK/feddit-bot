@@ -18,8 +18,12 @@ Prerequisites and order:
 The observed starting runtime is desktop 0.27.4, source 8ce2959, node PID 27476.
 It is unpaused and naturally processing a scheduled best_MIL_xx decision. The
 writing-canary IDs are p_swb8djuqg1y4, p_7gc83gbxvjpc and p_e4l36dfw9wrl.
-No admission pause, forced inference, public release, model or runtime change is
-authorized by this local delivery. Public desktop remains 0.27.2.
+The initial delivery waited hands-off for a natural idle point. Forced inference,
+public release, model or runtime changes are not authorized. After the pending
+update remained blocked by captured scheduler work, a conventional temporary
+update-owned use of the existing Pause control was authorized for safe drain,
+with original false state recorded and mandatory restoration. No new admission
+gate or experiment mechanism was introduced. Public desktop remains 0.27.2.
 
 Rollback must use first-contact-compatible code while v1 turns or assessment
 receipts exist. Drain at the established durable boundary before an incompatible
@@ -50,8 +54,8 @@ The snapshot contains 27 profiles and one organizational group.
 After API compatibility was confirmed, a read-only request through the exact
 desktop API client received 100 feed roots, all with boolean assessment metadata
 (89 unassessed). The normal pending-version workflow staged 0.27.5 at
-2026-10-19 20:46:08 UTC. The existing launcher waits while naturally admitted
-Sir_Ponsalot work finishes. No pause or forced inference cancellation was used.
+2026-10-19 20:46:08 UTC. The existing launcher initially waited hands-off while
+naturally admitted Sir_Ponsalot work finished, without inference cancellation.
 At the initial preservation check all protected configuration, settings,
 groups, secrets, population and importer saved work remained unchanged. The
 only dynamic changes were ordinary natural work in activity, schedule, social,
@@ -59,3 +63,21 @@ memory, attention and presentation fields. No durable record was removed.
 
 Installed-version and natural first-contact observations will be recorded after
 the launcher completes its existing safe-idle handover.
+
+## Conventional update-owned drain
+
+Source review confirms Pause is read at tick entry, not as an active inference
+cancellation. A captured tick retains its settings while processing up to
+MAX_OLLAMA_PER_TICK=3 acted profiles. The launcher requires scheduler idleness,
+not just the brief gap between model calls. Sir_Ponsalot writing finished at
+21:04:47.242 UTC; another already-captured natural decision began at
+21:04:49.303 UTC. This is not evidence that an active model was interrupted or
+that the pending package failed validation.
+
+At 21:09:27.316 UTC, pause was verified false with no recent competing pause
+owner in the known maintenance records. The existing PUT /api/settings control
+was temporarily set to paused:true under this update's explicit ownership.
+The private owner record is in the verified recovery folder. Current admitted
+work continues untouched; future ticks are held. The operational controller
+restores false immediately after healthy 0.27.5 or any aborted bounded handover.
+No profile enablement, cadence, deadline, canary or provider was changed.
