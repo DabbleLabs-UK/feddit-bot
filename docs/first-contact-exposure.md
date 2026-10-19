@@ -135,3 +135,26 @@ The companion Feddit API passes 25 focused assessment, 445 HTTP API, 20 public
 observation and 41 sorting checks. Its HTTP fixture enables an already installed
 GD extension through a test-only external ini, without changing runtime config.
 These are mocks/isolated fixtures, not production retrieval, inference or posts.
+
+## Desktop source integration
+
+Companion integration/desktop-first-contact-canary is committed at
+8e5f23c0b825bde71772357033af8b53fba14fd6, based on the exact desktop 0.27.4
+source 8ce2959. It preserves the existing writing-v3 admission wrapper and
+canary settings architecture without importing held compaction, native schema
+or hosted claim/reliability changes. Runtime canary membership was never edited.
+
+Desktop retains its existing hosted-budget metadata VERSION:1 and exact legacy
+first-contact-0 requests. First-contact-1 alone enables complete-block packing
+and examples naming actual offered IDs, so a retained C8/V7 cannot be described
+with a nonexistent C1/V1. Normal local Ollama keeps its existing full-menu path.
+The production worker already verifies these existing version-1/2 token/hash
+descriptors; no worker inference, timeout, supervision or runtime update is needed.
+
+All 21 targeted desktop suites pass, including 150 new first-contact checks,
+turnover 147, durable scheduler 536, scheduler 532 and canary 39. Joint coverage
+freezes writing-v3 and first-contact together, preserves in-flight v3 across
+restart/removal, and restores future released writing for removed members.
+Existing voting, continuation, public-writing, rollout/API, Naturalness and
+budget compatibility pass. Both source branches and the companion API are
+pushed and clean. No package was built, installed or publicly released here.
