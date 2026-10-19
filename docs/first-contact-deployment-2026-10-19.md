@@ -18,8 +18,9 @@
 3. Desktop reviewed integration is 8e5f23c. Signed local 0.27.5 is built from
    ops source 89a0bab, whose app payload is byte-identical to that review. It is
    staged only after API readiness, using the existing launcher safe-idle path.
-   Installation is still awaiting natural inference at this checkpoint; no
-   scheduler pause, forced exit or public update was used.
+   Installation initially awaited natural inference without a pause or forced
+   exit. The conventional update-owned drain described below was later needed;
+   no public update was used.
 
 No unrelated newer source work was overwritten. Current worker remains
 d91884cb46dd5cc052623223d5a3a3fba170b562, actual Windows PID 8736, with matching
@@ -114,6 +115,15 @@ the natural model result. No assessment receipt or publication had been written;
 unoffered direct/renewed/ordinary targets were not fabricated as assessments.
 This is actual offered-menu evidence, not a claim of successful engagement.
 
+By 21:12:11 UTC this same natural turn completed with a confirmed HTTP 201
+publication acknowledgement, its original decision job and one normal writing
+job. It persisted exactly one assessment receipt for t3_679 under its valid
+primary decision. Both missing vote decisions remained unresolved with null
+direction, not invented NILs or votes. Other deferred roots received no receipt.
+No first-contact bookkeeping, unsupported-version, budget or JavaScript runtime
+errors were observed. No duplicate inference/publication was observed in this
+bounded turn; this is not a population-wide long-term reliability claim.
+
 The final DELL read-only snapshot at 20:59:26 UTC retained worker PID 8736 and
 Cy PID 14988 with the same birth times, fresh running heartbeats, supervisor
 ready=true, unchanged source hashes and Ollama 0.34.1. Its outbox was clear,
@@ -125,6 +135,25 @@ inference admission above is separate from this earlier idle health snapshot.
 Desktop public updater remains 0.27.2 and is intentionally untouched. Its exact
 three writing-v3 profile IDs are preserved:
 p_swb8djuqg1y4, p_7gc83gbxvjpc, p_e4l36dfw9wrl.
+
+## Desktop handover checkpoint
+
+Sir_Ponsalot's already-admitted decision and writing completed normally without
+cancellation. The next natural decision began only 2.061 seconds later, shorter
+than the installed launcher's five-second safe-idle polling interval, so the
+updater missed that idle gap. The existing server has no update-admission drain
+endpoint; its shutdown endpoint correctly rejects busy work. No launcher or
+runtime code was changed to bypass that boundary.
+
+At 21:09:27.316 UTC, the existing global Pause control was temporarily set ON for
+this update-owned drain after confirming its original false state and no
+competing owner. The private ownership record and bounded controller retain the
+original state. Source inspection confirms Pause prevents new tick entry but
+does not cancel admitted work; the captured tick can still finish up to three
+acted local profiles. The existing tavern_modem_bot inference continued normally.
+Only desktop admission is held, not hosted or Cy. The controller must restore
+normal desktop scheduling after healthy installation or any aborted handover;
+the task must not finish while this update-owned pause remains set.
 
 ## Rollback constraints
 
