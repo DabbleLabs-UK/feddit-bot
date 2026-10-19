@@ -61,8 +61,7 @@ groups, secrets, population and importer saved work remained unchanged. The
 only dynamic changes were ordinary natural work in activity, schedule, social,
 memory, attention and presentation fields. No durable record was removed.
 
-Installed-version and natural first-contact observations will be recorded after
-the launcher completes its existing safe-idle handover.
+The completed safe-idle handover and preservation results are recorded below.
 
 ## Conventional update-owned drain
 
@@ -80,4 +79,55 @@ was temporarily set to paused:true under this update's explicit ownership.
 The private owner record is in the verified recovery folder. Current admitted
 work continues untouched; future ticks are held. The operational controller
 restores false immediately after healthy 0.27.5 or any aborted bounded handover.
-No profile enablement, cadence, deadline, canary or provider was changed.
+No profile enablement, cadence, deadline, canary or provider was manually changed.
+
+## Completed local delivery and preservation
+
+The existing launcher positively reported safe idle and stopped the old runner
+at 21:19:38.262 UTC, activated 0.27.5 at 21:19:38.276 UTC, and reported healthy
+0.27.5 at 21:19:41.213 UTC. The operational controller verified that version and
+restored paused:false at 21:19:41.483 UTC. The update-owned admission drain lasted
+10 minutes 14.166 seconds; all already-admitted natural work completed normally.
+The controller exited successfully, with its private ownership record marked
+restored:true. No owned verification or handover process remains running.
+
+Port 8770 is served by node PID 36844 from
+`%LOCALAPPDATA%/Programs/Feddit Bots/versions/0.27.5/app/server.js`.
+All 84 installed app file hashes match the reviewed desktop payload exactly.
+The launcher and shared Node/Ollama runtimes were not replaced. A new ordinary
+happy_dayz decision was naturally admitted at 21:20:02.693 UTC, proving normal
+scheduling resumed. Its Naturalness voting offers include direct/own-thread
+and renewed routes. No post-update model completion was forced or awaited.
+The hosted natural first-contact root/action/vote proof is recorded separately
+by the coordinated hosted deployment report; no desktop-specific first-contact
+outcome or ecological improvement is claimed from this brief startup window.
+
+All 27 profile IDs, one group, every protected profile setting and all global
+settings including the exact three writing-canary IDs are unchanged. Secrets,
+population storage and the private FetchLayer corpus cache are byte-identical.
+All existing durable turn IDs remain present. Live/rehearsal presentation and
+assessment ledgers remain within their 512-entry bounds.
+
+The saved importer has the same one workspace ID, 100 source posts, 321 comments,
+24 stable candidate IDs, 24 edited drafts, 24 selections, 22 confirmed candidates
+and two skipped candidates. Analysis, importResult, review/edits, task, source
+reference and complete staging evidence have identical component hashes. The
+only workspace file difference is derived sourceSnapshot.cache.ageMs recomputed
+by the unchanged importer session normalizer. Removing only that elapsed-age
+field yields the same canonical workspace SHA-256 on both sides:
+42304a0376a956bdfb8185b43b401c6e148376a9af6c87a4f3e3af87437e54bb.
+No retrieval, generation, registration or staging was used for this audit.
+
+Dynamic state was not incorrectly asserted byte-identical while natural work
+continued: unchanged startup normalization removed expired 14-day opportunity
+history from populationActivity on ten profiles; every rate, band and target
+remains identical. The natural tavern turn advanced its driftUpdatedAt timestamp
+before handover, without changing its rate. Shared memory episode IDs retain
+identical content; natural completed turns added bounded episodes, and existing
+startup normalization aged preoccupation weights. The memory, population-activity
+and importer-normalization source modules are byte-identical to desktop 8ce2959.
+No memory policy, persona or runtime-model setting was changed by this delivery.
+
+Public updater remains version 0.27.2 with SHA-256
+863b165a312393820f985a270de5c2ca710258b92bfc071869d1e14864b802da.
+No public package, manifest, tag or desktop release was published.
