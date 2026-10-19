@@ -155,6 +155,40 @@ Only desktop admission is held, not hosted or Cy. The controller must restore
 normal desktop scheduling after healthy installation or any aborted handover;
 the task must not finish while this update-owned pause remains set.
 
+## Installed desktop and final preservation
+
+The existing launcher installed signed 0.27.5 at 21:19:41 UTC, actual Node PID
+36844 from versions/0.27.5/app/server.js. All 84 installed app files match the
+reviewed payload. The controller restored paused:false at 21:19:41.483 UTC and
+exited successfully, after a 10 minute 14.166 second update-owned drain. No
+admitted decision or writing call was cancelled. A new ordinary happy_dayz
+decision began naturally at 21:20:02.693 UTC; no output was forced for testing.
+An independent parent check confirmed appVersion 0.27.5, placement desktop,
+paused:false and the original three writing-canary IDs above.
+
+All 27 profile IDs, the organizational group, protected settings/personas/
+providers/models/cadences, credentials, cache/population content and durable IDs
+survived. Importer semantic comparison retained the corpus, completed analysis,
+all 24 candidates, edits, selections and staging evidence. Its sole semantic
+file difference was sessions[0].sourceSnapshot.cache.ageMs, recomputed by the
+unchanged UI session code. Ten populationActivity objects had the existing
+14-day recentOpportunities pruning; rates, bands and drift targets were unchanged.
+Shared memory episode IDs retained identical content; ordinary Sir/tavern work
+added bounded episodes, with normal preoccupation decay. No state was cleared.
+
+The natural hosted turn's HTTP 201 acknowledgement was followed by a read-only
+public API check: root 679 now has independently_assessed:true and one comment,
+having been verified false with zero independent engagement before its offer.
+This establishes one real first-contact cycle, not a claim that wider reply
+density is fixed. Live WAIT/NIL and every malformed/deferred combination were
+not forced; those semantics, bounded receipts, restart and replay are covered
+by the deterministic regression suites.
+
+Final production identity reads retain API 75c60de and the active immutable
+hosted runner 1d12829. Authoritative Feddit master and Feddit Bots
+progressive-bot-platform match their remotes and have clean checkouts. Worker
+and verified hosted Ollama remain unchanged. No public desktop release occurred.
+
 ## Rollback constraints
 
 Retain immutable old releases and verified private backups, but never restore
