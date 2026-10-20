@@ -13,7 +13,8 @@ const fallback = (id) => ({ key: 't1_' + id, kind: 'comment', candidateType: 're
 const keys = (items) => items.map((item) => item.key);
 eq(first.version(), 0, 'missing turn version preserves legacy behavior');
 eq(first.version(null, 1), 1, 'new admission explicitly selects the first-contact contract');
-for (const raw of [2, '1', -1, {}, false, NaN]) {
+eq(first.version(2), 2, 'reader-scoped first-look contract is explicit');
+for (const raw of [3, '1', -1, {}, false, NaN]) {
   rejects(() => first.version(raw), { code: 'UNSUPPORTED_FIRST_CONTACT' }, 'unknown contracts fail closed');
 }
 eq(first.select(roots), roots[0], 'feed ordering breaks unseen ties');
@@ -21,8 +22,12 @@ const presented = ordinary.record(null, ordinary.receipt([roots[0]], 100));
 eq(first.select(roots, presented), roots[1], 'shortlisted but deferred root rotates without losing eligibility');
 const allPresented = ordinary.record(presented, ordinary.receipt([roots[1], roots[2]], 200));
 eq(first.select(roots, allPresented), roots[0], 'deferred roots return in least-recently-shortlisted order');
-eq(first.select([root(1, true), { ...root(2), independentlyAssessed: null }, { ...root(3), independentlyAssessed: undefined }]), null,
+eq(first.select([root(1, true), { ...root(2), independentlyAssessed: null }, { ...root(3), independentlyAssessed: undefined }], null, null, 1), null,
   'upstream assessment must be known false, never inferred from missing evidence');
+eq(first.select([root(1, true)]).key, 't3_1', 'another bot public reaction cannot suppress this bot first look');
+eq(first.select([{ ...root(2), independentlyAssessed: undefined }]).key, 't3_2', 'v2 first look does not require global assessment metadata');
+eq(first.select(roots, null, null, 2, ['t3_1']).key, 't3_2', 'second root excludes the primary stable key');
+eq(first.select(roots, null, null, 0), null, 'legacy version zero never creates a first-look lane');
 eq(first.select(roots, null, { considered: ['post:1'] }), roots[1], 'existing explicit vote consideration prevents repeated assessment');
 const menu = [fallback(9), fallback(8), fallback(7)];
 const before = JSON.stringify({ roots, menu });
@@ -33,7 +38,9 @@ eq(first.inject(menu, roots[0], 0), [], 'zero capacity does not manufacture a la
 eq(first.inject(menu, roots[0], 100).length, 3, 'first contact never increases ordinary limit');
 eq(JSON.stringify({ roots, menu }), before, 'pure presentation does not mutate evidence');
 const wait = first.plan({ valid: true, candidates: [{ target: roots[0] }, { target: fallback(9) }], votes: [] }, 300);
-eq(wait, { version: 1, at: 300, keys: ['t3_1'] }, 'valid WAIT assesses offered roots without requiring publication');
+eq(wait, { version: 2, at: 300, keys: ['t3_1'] }, 'valid WAIT assesses offered roots without requiring publication');
+eq(first.plan({ valid: true, candidates: [{ target: roots[0] }] }, 300, 1),
+  { version: 1, at: 300, keys: ['t3_1'] }, 'frozen v1 assessment receipt stays exact');
 const state = first.record(allPresented, wait);
 eq(state.entries, allPresented.entries, 'assessment does not alter turnover presentation timestamps');
 eq(first.select(roots, state), roots[1], 'handled root stops taking first-contact lane');
@@ -50,6 +57,8 @@ eq(first.plan({ valid: true, candidates: Array.from({ length: 30 }, (_, i) => ({
   20, 'one assessment receipt cannot exceed the existing combined action and vote bounds');
 eq(first.plan({ valid: true, candidates: [{ target: roots[1] }], votes: [nil] }, 400).keys, ['t3_2'],
   'a root handled by both reply and voting paths records exactly once');
+eq(first.plan({ valid: true, candidates: roots.map(target => ({ target })), votes: [] }, 400).keys,
+  ['t3_1', 't3_2', 't3_3'], 'two preferential sources never cap normal ordinary-root assessments');
 eq(first.plan({ valid: false, candidates: [], votes: [{ ...nil, decisionKind: 'missing' },
   { ...nil, status: 'unresolved' }, { ...nil, direction: null }, { ...nil, targetType: 'comment' }] }, 400).keys, [],
   'missing malformed unresolved and comment votes cannot assess roots');
@@ -69,7 +78,7 @@ for (const receipt of [null, {}, { version: 1, at: 0, keys: [] }, { version: 1, 
   { version: 1, at: 1, keys: ['t3_1', 't3_1'] }, { version: 1, at: 1, keys: Array.from({ length: 21 }, (_, i) => 't3_' + i) }]) {
   rejects(() => first.record(null, receipt), /receipt/, 'malformed receipt is rejected without rewriting state');
 }
-rejects(() => first.record(null, { version: 2, at: 1, keys: [] }), { code: 'UNSUPPORTED_FIRST_CONTACT' },
+rejects(() => first.record(null, { version: 3, at: 1, keys: [] }), { code: 'UNSUPPORTED_FIRST_CONTACT' },
   'future receipt versions fail closed');
 rejects(() => first.plan({}, NaN), /timestamp/, 'invalid receipt clock fails explicitly');
 console.log('first contact: ' + checks + ' checks passed');

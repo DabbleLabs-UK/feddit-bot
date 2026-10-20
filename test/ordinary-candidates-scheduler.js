@@ -257,10 +257,14 @@ async function run() {
   }
   {
     const h = fixture('voting-only');
+    // Isolate the turnover-only compatibility contract; current first-look
+    // voting behavior is exercised by the separate first-contact integration.
+    h.scopedStore.recordFirstContactAssessment = undefined;
     realStore.updateProfile(h.id, { canReply: false, canVote: true, commentsPerHour: 0, votesPerHour: 1 });
     realStore.updateSched(h.id, { nextCommentAt: null, nextVoteAt: 0 });
     try {
       const turn = await admit(h);
+      eq(turn.input.firstContactVersion, 0, 'older store retains legacy first-contact admission');
       eq(turn.input.ordinaryCandidateVersion, 0, 'voting-only opportunity freezes legacy ordinary exposure');
       eq(snapshot(turn).ordinaryCandidateReceipt, undefined, 'voting-only opportunity records no turnover receipt');
       eq(snapshot(turn).candidates, [], 'voting-only opportunity cannot gain a reply action');

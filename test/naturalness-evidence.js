@@ -137,6 +137,28 @@ try {
     assert.equal(result[0].decisionKind, 'invalid');
     assert.equal(result[1].decisionKind, 'missing');
   });
+  test('vote-only first look keeps exact public metadata without inventing action context', () => {
+    const secondary = { key: 't3_11', voteItems: [{ targetType: 'post', targetId: 11,
+      author: 'second_reader', content: 'The cloud has a parking permit.',
+      observerMetadata: evidence.itemMetadata({ score: 2, created_utc: time / 1000 }, { id: 11, feddit: 'gardening' }) }] };
+    const slate = voting.collect([secondary]);
+    assert.equal(slate[0].sourceCandidateId, null);
+    const snapshot = { firstContactVoteKey: 't3_11', voteCandidates: slate, observationCandidates: [secondary] };
+    const value = evidence.offeredItems(snapshot)[0];
+    assert.equal(value.postId, 11);
+    assert.equal(value.community, 'gardening');
+    assert.equal(value.createdAt, time);
+    assert.equal(value.scoreAtExposure, 2);
+    assert.equal(value.scoreVisibleToModel, false);
+    assert.equal(value.hasMemoryContext, false);
+    assert.equal(value.hasSocialContext, false);
+    assert.equal(value.source, 'first_look_vote_only');
+    const legacy = evidence.offeredItems({ ...snapshot, firstContactVoteKey: undefined })[0];
+    assert.equal(legacy.source, 'unknown', 'legacy null-source records retain their existing interpretation');
+    assert.equal(legacy.community, null);
+    const mismatch = evidence.offeredItems({ ...snapshot, voteCandidates: [{ ...slate[0], targetId: 12 }] })[0];
+    assert.equal(mismatch.community, null, 'a different ballot cannot borrow second-root metadata');
+  });
   test('missing parent-post metadata never borrows comment creation time or score', () => {
     const snapshot = { voteCandidates: [{ ...slate[0], sourceCandidateId: 'C1' }], observationCandidates: [{
       id: 'C1', candidateType: 'renewed_thread', target: { postId: 10, commentId: 20, createdUtc: time / 1000, feddit: 'gardening' },
