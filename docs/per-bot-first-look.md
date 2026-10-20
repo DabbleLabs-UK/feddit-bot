@@ -97,5 +97,46 @@ without increasing call count. Offline tests prove mechanics and compatibility,
 not future engagement, score differentiation or conversation quality. Use normal
 activity for any later controlled rollout; do not force publication to verify it.
 
-Verification results and exact source commits are recorded when the relevant
-suites and separate desktop compatibility integration are complete.
+## Verification - 20 October 2026
+
+The hosted/shared implementation is 634b51b on feature/per-bot-first-look,
+followed by extracted-package regression 07df120. The desktop companion is
+integration/desktop-per-bot-first-look at 53f505a: implementation 9ffdd67 and
+package regression 614a097, integrated against desktop delivery base e4c6a4.
+Its three expected conflicts preserved desktop budget metadata VERSION:1,
+writing-v3/canary tests and data-handling disclosures. Hosted construction-v2
+was not copied wholesale over desktop construction. Independent read-only
+reviews of both implementation lines found no material issues.
+
+All 105 hosted/shared Node suites passed with isolated fixture data and an
+offline endpoint guard blocking external services and production ports. This
+includes 51 selection, 35 store, 108 first-contact scheduler, 96 new packing,
+601 durable scheduler, 532 scheduler, 239 construction-v2 and 135 continuation
+checks. Existing optional live scheduler smoke was excluded; no assertion was
+weakened. Sandbox-denied mock loopback tests were rerun unchanged with the same
+endpoint guard. No inference, production API or publication call was made.
+
+Desktop focused verification passed 19 suites, including 111 joint first-look/
+canary scheduler, 39 writing-canary and 536 durable scheduler checks. Both lines
+retain exact v0/v1 SHA-256 reconstruction goldens generated from their own base.
+Updater tests passed 13/13 and isolated local-staging preservation passed 9/9,
+using disposable installation data only. The desktop companion's signed-build
+fixture passed 28 checks, extracted packaged-library execution, 90 existing
+packaged-browser checks and Naturalness checks, using generated test keys and
+disposable version 9.8.7. These are not a real release artifact or installation.
+
+Deterministic hosted token examples (initial / repair input tokens):
+
+* Small: 741 / 784 before and after; the whole menu fits.
+* Pressure: 1486 / 1529 before and after; the optional root already fits.
+* Competition: v1 2058 / 2101 defers V8; v2 1628 / 1671 includes V8 and defers
+  the large C1 whole. C3 renewed continuity and C8 primary root remain offered.
+* Tight: 2168 / 2211 before and after; V8 is deferred whole and stays eligible.
+
+These are exact fixture tokenizer counts, not live performance measurements or
+prompt compression. The competition result trades one complete context block
+for the lightweight ballot. Desktop has analogous independently verified cases.
+No worker, API, provider, tokenizer, timeout or context-limit update is needed.
+No actual version bump, canary enrollment, runtime pause, deployment, staging,
+installation or public release has occurred. Controlled rollout remains a
+separate authorized operation; engagement outcomes remain unproven.
