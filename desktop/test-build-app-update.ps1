@@ -49,6 +49,33 @@ try {
     & node -e 'const a=require("node:assert/strict"),p=require("node:path"),g=require(p.join(process.argv[1],"lib/continuation-guard.js")),r=require(p.join(process.argv[1],"lib/discovery-receipt.js"));a.equal(g.VERSION,2);a.equal(g.WINDOW_MS,3600000);a.equal(g.count(g.record(null,1,{targetKey:"t1_2",nowMs:100}).state,1,100),1);const scan={cursor:{comments:2,posts:0},startCursor:{comments:0,posts:0},seenEventIds:["t1_2"],pendingEventIds:["t1_2"]};a.equal(r.plan({attentionScan:scan},{valid:false}).attentionScan.cursor.comments,1);a.deepEqual(r.plan({attentionScan:scan},{valid:true,candidates:[{target:{key:"t1_2"}}]}).attentionScan.seenEventIds,["t1_2"]);' (Join-Path $tokenizerExtract "app")
     Assert-True ($LASTEXITCODE -eq 0) "packaged continuation guard and selective discovery receipts load and execute"
 
+    $firstLookCheck = @'
+const a = require('node:assert/strict'), path = require('node:path');
+const app = process.argv[1], f = require(path.join(app, 'lib/first-contact.js'));
+const b = require(path.join(app, 'lib/hosted-decision-budget.js'));
+const t = require(path.join(app, 'lib/hosted-tokenizer.js'));
+const roots = [1, 2].map(id => ({ kind: 'post', candidateType: 'ordinary_post',
+  key: 't3_' + id, independentlyAssessed: true }));
+a.equal(f.VERSION, 2);
+a.equal(f.select(roots, null, null, 1), null);
+a.equal(f.select(roots, null, null, 2).key, 't3_1');
+const candidate = { id: 'C7', candidateType: 'ordinary_post', target: roots[0],
+  context: 'A complete public root question about a moon permit.' };
+const votes = [1, 2].map((id, index) => ({ id: index ? 'V5' : 'V2', targetType: 'post',
+  targetId: id, author: 'other_bot', label: 'Public root ' + id, content: 'Does a moon need a permit?' }));
+const packed = b.construct({ model: t.MODEL, constructionVersion: b.VERSION,
+  system: 'A dry bureaucratic fixture persona.', candidates: [candidate], voteCandidates: votes,
+  voteAllowance: { remaining: 8 }, decisionAt: 100, decisionContractVersion: 2,
+  firstContactVersion: 2, firstContactKey: 't3_1', firstContactVoteKey: 't3_2' });
+a.ok(!packed.failure && b.fits(packed.budget) && b.fits(packed.repairBudget));
+a.deepEqual(packed.candidateIds, ['C7']); a.deepEqual(packed.voteIds, ['V2', 'V5']);
+const handled = f.plan({ valid: true, candidates: [candidate], votes: [] }, 100, 2);
+a.deepEqual(handled.keys, ['t3_1']);
+a.equal(f.select(roots, f.record(null, handled), null, 2).key, 't3_2');
+'@
+    & node -e $firstLookCheck (Join-Path $tokenizerExtract "app")
+    Assert-True ($LASTEXITCODE -eq 0) "packaged first-look v2 and two-root packing execute with legacy v1 preserved"
+
     $manifest = Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json -DateKind String
     $sha = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant()
     Assert-True ($manifest.sha256 -eq $sha) "manifest pins the package SHA-256"
