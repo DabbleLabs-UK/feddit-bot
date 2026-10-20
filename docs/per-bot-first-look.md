@@ -132,3 +132,11 @@ V8, preserving its eligibility. Neither reserve nor model limits are enlarged.
 No live runtime was contacted or changed. Actual canary membership, installed
 version, profiles, scheduler, memory and credentials are untouched by this work.
 No version bump, real signed update, staging, installation or deployment occurs.
+
+Companion implementation checkpoint: 9ffdd67. The separate packaged-library
+regression 07df120 integrates cleanly as 614a097. The isolated signed-update
+fixture passed 28 checks, including execution of first-look-v2 selection,
+two-root packing and local retirement from extracted package dependencies, and
+90 existing packaged browser checks plus Naturalness. Its disposable version
+9.8.7, generated test signing keys and temporary data never enter the installed
+desktop or public update channel. Production signing material was not used.
