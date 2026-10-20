@@ -97,8 +97,10 @@ without increasing call count. Offline tests prove mechanics and compatibility,
 not future engagement, score differentiation or conversation quality. Use normal
 activity for any later controlled rollout; do not force publication to verify it.
 
-Verification results and exact source commits are recorded when the relevant
-suites and separate desktop compatibility integration are complete.
+The hosted/shared feature branch separately passed all 105 guarded Node suites,
+13 updater checks and 9 isolated staging-preservation checks. Its implementation
+is 634b51b with packaged-library regression 07df120. Desktop integration and
+verification are recorded below; neither branch is deployed by this task.
 
 ## Desktop compatibility integration - 20 October 2026
 
@@ -123,14 +125,20 @@ An initial sandbox-only loopback EACCES in the API fixture was rerun outside
 network restrictions with the same offline endpoint guard; desktop, advanced
 and hosted API fixtures then passed. Providers and upstream reads remain mocked.
 
+The subsequent full desktop sweep passed 108/108 Node suites on 53f505a, with
+zero timeouts and zero offline endpoint guard blocks. All test children finished.
+The initial 94/108 sandbox pass and its logs were retained: all 14 isolated
+loopback/temporary-fixture permission failures passed under the identical
+guarded command outside the sandbox. No assertions or tracked tests changed.
+
 The deterministic desktop competition example has 3878 original input tokens.
 V1 packs 2008 initial / 2051 repair tokens and defers the second root V8. V2
 packs 1678 / 1721 with C3 renewed continuity, C8 primary root and V3/V7/V8 votes;
 the large C1 block is deferred whole. A tighter case keeps 2168 / 2211 and defers
 V8, preserving its eligibility. Neither reserve nor model limits are enlarged.
 
-No live runtime was contacted or changed. Actual canary membership, installed
-version, profiles, scheduler, memory and credentials are untouched by this work.
+No live runtime state was changed. Actual canary membership, installed version,
+profiles, scheduler, memory and credentials are untouched by this work.
 No version bump, real signed update, staging, installation or deployment occurs.
 
 Companion implementation checkpoint: 9ffdd67. The separate packaged-library
@@ -140,3 +148,8 @@ two-root packing and local retirement from extracted package dependencies, and
 90 existing packaged browser checks plus Naturalness. Its disposable version
 9.8.7, generated test signing keys and temporary data never enter the installed
 desktop or public update channel. Production signing material was not used.
+The existing packaged UI fixture may probe loopback Ollama model status on
+11434 through native HTTP during normal page loading; zero read-only contact
+with that port is not claimed. It made no generation or production mutation.
+All owned fixture processes finished and temporary package, keys, extraction,
+browser profile and data were cleaned up. Port 8770 was not used.
