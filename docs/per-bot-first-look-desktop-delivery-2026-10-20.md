@@ -56,3 +56,58 @@ pause state on every exit, using the existing documented mechanism only.
 Rollback must preserve compatible code while first-contact-v2 turns or receipts
 exist. Existing frozen v0/v1 turns retain their old construction. Do not clear
 queues, reinterpret durable turns or restore old snapshots over new activity.
+
+## Completed safe delivery
+
+The coordinating job confirmed API 75c60de and healthy hosted 633e808 before
+authorizing the local pending update. Version 0.27.6 was staged with the existing
+stage-local-update script. A natural best_MIL_xx Qwen decision admitted at
+15:06:29.479 UTC was active; no inference was cancelled for delivery.
+
+Current pause was false, and the previous update-owner record was positively
+restored. This job therefore used the existing conventional update-owned Pause
+drain from 15:08:18.446 UTC, retaining its private original-false ownership
+record and bounded 35-minute finally-restoration controller. The already-admitted
+decision reached its existing OLLAMA_FIRST_OUTPUT_TIMEOUT at 20 minutes, without
+new timeout behavior or automatic experiment/model work. It published nothing.
+
+The launcher stopped the old runner at an authoritative safe-idle boundary at
+15:26:31.843 UTC, activated 0.27.6 at 15:26:31.850 UTC and reported healthy at
+15:26:37.432 UTC. The controller detected healthy at 15:26:38.932 UTC and restored
+paused:false at 15:26:39.025 UTC. The owned admission drain lasted 18 minutes
+20.579 seconds. The controller exited successfully and its owner record is
+restored:true. No owned controller or verification process remains running.
+
+Actual port 8770 now reports desktop 0.27.6, served by Node PID 36304 from
+versions/0.27.6/app/server.js. The existing shared Node/Ollama runtimes and
+launcher were not replaced. All 84 installed application files match reviewed
+f6dafd1 and the verified signed package. The pending pointer was consumed.
+
+All 27 profile IDs, one group, protected profile configuration and complete
+global settings match the recovery snapshot, including the exact three-bot
+writing-v3 allowlist, cadence/provider settings, Speed/Burst and paused:false.
+Secrets, population and the private corpus cache are byte-identical. Every
+existing durable turn ID remains present. All 358 existing presentation entries
+and 98 local assessment entries persist across live/rehearsal state, with no
+receipt lost or changed and all per-mode 512-entry bounds retained.
+
+Importer recovery checks retain the same one workspace, 100 posts, 321 comments,
+24 stable candidates, 24 drafts, 24 selections, 22 confirmed and two skipped.
+Analysis, inputs, review, staging evidence and task/source references match.
+Only derived sourceSnapshot.cache.ageMs changes with elapsed time. Excluding
+that existing derived field, the workspace canonical SHA-256 remains
+42304a0376a956bdfb8185b43b401c6e148376a9af6c87a4f3e3af87437e54bb.
+
+Expected natural differences were the old timed-out opportunity's activity,
+scheduling, presentation and attention/social records; unchanged startup memory
+normalization aged preoccupations and removed expired population history. Shared
+memory episodes retain identical content, and population rate policy is unchanged.
+No data was reset or restored over normal work. At the 15:28 UTC check the new
+runtime was healthy, unpaused and idle; no new desktop first-look-v2 inference
+had yet occurred. Do not claim local model outcomes or ecological improvement
+from installation. Hosted natural v2 evidence is recorded by the coordinating
+deployment report. Leave ordinary scheduling running without forcing activity.
+
+No browser, experimental inference, real registration/staging/activation or
+public desktop release was used for this delivery. The sole observed model
+timeout belongs to unchanged old-build natural work, not to the new package.
