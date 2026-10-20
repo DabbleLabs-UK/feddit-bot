@@ -116,14 +116,20 @@ checks. Existing optional live scheduler smoke was excluded; no assertion was
 weakened. Sandbox-denied mock loopback tests were rerun unchanged with the same
 endpoint guard. No inference, production API or publication call was made.
 
-Desktop focused verification passed 19 suites, including 111 joint first-look/
-canary scheduler, 39 writing-canary and 536 durable scheduler checks. Both lines
+Desktop full verification passed 108/108 guarded Node suites after the 19-suite
+focused pass, including 111 joint first-look/canary scheduler, 39 writing-canary
+and 536 durable scheduler checks. All test children finished; no timeouts or
+endpoint guard blocks occurred. Both lines
 retain exact v0/v1 SHA-256 reconstruction goldens generated from their own base.
 Updater tests passed 13/13 and isolated local-staging preservation passed 9/9,
 using disposable installation data only. The desktop companion's signed-build
 fixture passed 28 checks, extracted packaged-library execution, 90 existing
 packaged-browser checks and Naturalness checks, using generated test keys and
 disposable version 9.8.7. These are not a real release artifact or installation.
+That existing packaged UI fixture may perform read-only loopback Ollama status
+probes on 11434; zero contact with that port is not claimed. It made no model
+generation or production mutation. All owned fixture processes and disposable
+package, keys, extraction, browser profile and data were cleaned up.
 
 Deterministic hosted token examples (initial / repair input tokens):
 
