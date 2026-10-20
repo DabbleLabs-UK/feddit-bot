@@ -21,8 +21,10 @@ Actual DELL worker PID 8736 retains its 16 October birth time and immutable
 d91884c-claim-reliability runtime. Supervisor PID 584332 is active and reports
 fresh ready:true, maintenance:running, with no failure reason. Actual Ollama is
 still 0.34.1. The stable private completion outbox had one state file and no
-pending or blocked delivery at 15:10:10 UTC. Worker, supervision, Ollama, Cy,
-arbiter, Caddy and model/provider settings were not deployed or restarted.
+pending or blocked delivery at 15:10:10 UTC. This rollout did not deploy or
+restart worker, supervision, Ollama, Cy, arbiter or Caddy, or change model/provider
+settings. A later Caddy reload is visible in the shared proxy journal; it was
+not performed by this rollout and unrelated concurrent work was not reverted.
 
 The exact hosted candidate passed all 105 guarded Node suites again before
 handover, including 108 first-contact scheduler, 96 new budget, 601 durable,
@@ -148,6 +150,18 @@ was assessed by its own explicit vote, not merely by the primary decision.
 The valid primary selected a normal reply, now continuing through one normal
 scheduled-writing job j_8e4e6975ae44c2dbfa080ede3cda9848, one claim/attempt.
 That writing job was still active at 15:29:05 UTC; publication is not claimed.
+
+At the final 15:32:07 UTC snapshot, this same natural turn is completed with
+publication state response-received and confirmed HTTP 201. It used only its
+original decision job and one normal writing job, both one attempt, with no
+repair or additional assessment inference. The original v2 receipt remains
+exactly the two independently valid roots. All protected fields/private files
+still match, no job is queued/claimed, and error counters remain zero. Final
+worker readiness is fresh, still PID 8736 and Ollama 0.34.1, with outbox clear.
+One read-only capacity probe was slow around finalisation before returning
+online/ready; this bounded check does not attribute that latency to first-look
+or establish a new defect. No timeout/claim/publication policy was changed to
+obtain a healthy result.
 
 Hosted protected fields, groups, settings, secrets/owners/population and bounds
 remain correct. Assessment lists now legitimately differ from backup because
