@@ -1,5 +1,9 @@
 # Bounded first-contact exposure
 
+The original contract-v1 behavior below remains the frozen legacy reference.
+The implementation-only per-bot contract-v2 extension is documented in
+[per-bot-first-look.md](per-bot-first-look.md).
+
 Unreleased on feature/first-contact-exposure, based on deployed hosted operations
 6681d7d (runner source 57bf87a). Authoritative main is still 0d1200c; this branch
 does not reset it or replace the separate desktop writing-canary integration.

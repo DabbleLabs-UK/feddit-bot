@@ -71,8 +71,38 @@ try {
   store.resetSimulation('legacy');
   eq(store.getOrdinaryCandidateState('legacy', { simulation: true }), ordinary.defaults(), 'rehearsal reset clears only rehearsal state');
   eq(store.getOrdinaryCandidateState('legacy'), rotated, 'rehearsal reset leaves live state intact');
+  const secondBot = store.createProfile({ fedditUsername: 'independent_reader' });
+  const publiclyEngaged = { kind: 'post', key: 't3_901', candidateType: 'ordinary_post', independentlyAssessed: true };
+  const localReceipt = first.plan({ valid: true, candidates: [{ target: publiclyEngaged }], votes: [] }, 500, 2);
+  eq(localReceipt.version, 2, 'new local first-look receipt freezes contract v2');
+  store.recordFirstContactAssessment('legacy', localReceipt);
+  eq(first.select([publiclyEngaged], store.getOrdinaryCandidateState('legacy'), store.getVoteState('legacy'), 2), null,
+    'this bot retires its own genuinely handled root');
+  eq(first.select([publiclyEngaged], store.getOrdinaryCandidateState(secondBot.id), store.getVoteState(secondBot.id), 2), publiclyEngaged,
+    'another profile remains eligible despite public engagement and first-reader receipt');
+  const nilReceipt = first.plan({ valid: false, candidates: [], votes: [
+    { targetType: 'post', targetId: 901, decisionKind: 'explicit', status: 'no-vote', direction: 'nil' },
+  ] }, 600, 2);
+  store.recordFirstContactAssessment(secondBot.id, nilReceipt, { simulation: true });
+  eq(store.getOrdinaryCandidateState(secondBot.id).assessed, undefined, 'rehearsal NIL cannot retire a live first look');
+  eq(first.select([publiclyEngaged], store.getOrdinaryCandidateState(secondBot.id, { simulation: true }), null, 2), null,
+    'valid rehearsal NIL retires only this rehearsal reader');
+  for (let start = 1000; start < 1520; start += 20) {
+    store.recordFirstContactAssessment(secondBot.id, {
+      version: 2, at: start, keys: Array.from({ length: 20 }, (_, offset) => 't3_' + (start + offset)),
+    });
+  }
+  eq(store.getOrdinaryCandidateState(secondBot.id).assessed.length, 512, 'v2 live assessment state remains bounded to 512 roots');
+  const legacyAfterV2 = store.recordFirstContactAssessment('legacy', { version: 1, at: 700, keys: ['t3_902'] });
+  eq(legacyAfterV2.assessed.some(entry => entry.key === 't3_901'), true, 'legacy receipt replay preserves newer local first looks');
+  delete require.cache[storePath];
+  store = require('../lib/store');
+  eq(store.getOrdinaryCandidateState('legacy'), legacyAfterV2, 'mixed v1/v2 receipts survive backend restart unchanged');
+  eq(store.getOrdinaryCandidateState(secondBot.id).assessed.length, 512, 'restart preserves the v2 bound');
+  eq(store.getOrdinaryCandidateState(secondBot.id, { simulation: true }).assessed.map(entry => entry.key), ['t3_901'],
+    'restart preserves independent rehearsal assessment');
   assert.throws(() => store.recordFirstContactAssessment('missing', receipt), /Profile not found/); checks++;
-  assert.throws(() => store.recordFirstContactAssessment('legacy', { ...receipt, version: 2 }), { code: 'UNSUPPORTED_FIRST_CONTACT' }); checks++;
+  assert.throws(() => store.recordFirstContactAssessment('legacy', { ...receipt, version: 99 }), { code: 'UNSUPPORTED_FIRST_CONTACT' }); checks++;
   console.log('first contact store: ' + checks + ' checks passed');
 } finally {
   delete require.cache[storePath];
