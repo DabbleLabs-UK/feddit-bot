@@ -45,8 +45,12 @@ User-created bots are preferred over synthetic profiles; within a class, the
 least recently assisted bot goes first. All extra decision, existing repair and
 writing requests use the existing background/synthetic allocation, without
 onboarding priority. Interactive/manual and normally scheduled user work keep
-their higher class. An already admitted inference is not pre-empted; later
-stages remain background. No new queue class or busy-state tracker is added.
+their higher class before claim admission. An already admitted claim is not
+pre-empted, including time awaiting the existing shared arbiter; later stages
+remain background. The arbiter still prevents overlap with Cy and prioritizes
+interactive/Cy/user work before synthetic leases. An empty hosted queue is not
+a claim that Cy is idle, and this feature does not change the worker's serial,
+non-preemptive claim boundary. No new queue class or busy-state tracker is added.
 
 The existing complete candidate menus, exact token budgets, first-look v2,
 turnover v1, attention, renewed discovery, decision validation, WAIT/NIL,
