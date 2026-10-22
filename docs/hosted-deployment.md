@@ -16,7 +16,8 @@ durable, access-restricted directory outside replaceable release directories.
 Back up that directory as private data: it contains profiles, continuity,
 queues, hashed owner capabilities, and bot and worker credentials.
 
-Scheduled hosted turns are persisted in `turns.json` separately from the raw
+Scheduled hosted turns use a fenced `turns.json` marker and the complete private
+`turns.json.d/` directory, separately from the raw
 inference queue in `jobs.json`. Operator-created background cohorts are stored
 in `population.json`. Preserve and back up all three files together with the
 profiles, owners and secret store. On startup the runner reconciles every unfinished
@@ -26,9 +27,11 @@ from the stored request, and failed jobs terminate the logical turn with their
 recorded reason.
 
 The turn record freezes whether that action is rehearsal or live. Changing the
-bot while an old turn is waiting affects later turns only. Terminal turns are
-kept for up to 30 days and capped at 1000 records; unfinished turns are not
-removed by retention cleanup.
+bot while an old turn is waiting affects later turns only. Completed/failed hosted
+turns are retained intact as sharded history; startup does not load that history.
+Unfinished and publication-uncertain records are never automatically removed.
+Desktop/advanced placements retain their existing legacy JSON retention policy.
+See `durable-turn-storage.md` for migration, backup and rollback constraints.
 
 The optional hosted background-population control is authorised with
 `FEDDIT_POPULATION_ADMIN_OWNER_IDS`, a comma-separated allowlist of existing

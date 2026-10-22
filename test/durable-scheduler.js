@@ -354,6 +354,7 @@ function harness(options = {}) {
   });
   const turnStore = createTurnStore({
     file: turnFile,
+    segmented: process.env.FEDDIT_TEST_SEGMENTED_TURNS === '1',
     now,
     random: () => (++sequence) / 1000,
   });
@@ -424,6 +425,7 @@ function harness(options = {}) {
     });
     const restartedTurns = createTurnStore({
       file: turnFile,
+      segmented: process.env.FEDDIT_TEST_SEGMENTED_TURNS === '1',
       now,
       random: () => (++sequence) / 1000,
     });
@@ -539,7 +541,8 @@ async function run() {
           'completed generation status and result are persisted together once');
         ok(patches.find((patch) => patch.jobStatus === 'completed').result,
           'completion never persists a status-only intermediate generation');
-        eq(completed.generations[0].request, initialRequest, 'responsiveness optimization preserves frozen request exactly');
+        eq(JSON.parse(JSON.stringify(completed.generations[0].request)), JSON.parse(JSON.stringify(initialRequest)),
+          'responsiveness optimization preserves the exact JSON-durable frozen request');
         eq(h.writes.length, 0, 'a resumed WAIT never publishes');
       } finally {
         fs.writeFileSync = writeFileSync;
@@ -701,8 +704,16 @@ async function run() {
         'budget-deferred renewed IDs are not acknowledged');
       eq(h.writes.length, 0, 'WAIT fixture never publishes');
       h.advance(voter.sched.nextCommentAt-h.now()+1);
-      await restarted.scheduler.runTick(); await settle();
-      const next = JSON.parse(fs.readFileSync(h.turnFile, 'utf8')).turns
+      const admittedIds = [];
+      const createTurn = restarted.turnStore.create;
+      restarted.turnStore.create = (...args) => {
+        const result = createTurn(...args);
+        if (result.created) admittedIds.push(result.turn.id);
+        return result;
+      };
+      try { await restarted.scheduler.runTick(); await settle(); }
+      finally { restarted.turnStore.create = createTurn; }
+      const next = admittedIds.map(id => restarted.turnStore.get(id))
         .filter(t=>t.profileId===voter.id && t.id!==turn.id).sort((a,b)=>b.createdAt-a.createdAt)[0];
       const nextKeys = next.checkpoints['opportunity-candidates'].candidates.map(c=>c.target && c.target.key);
       ok(deferred.every(c=>nextKeys.includes(c.target.key)), 'deferred renewed conversations surface on a later ordinary opportunity');
@@ -842,7 +853,10 @@ async function run() {
       const runtime = h.scheduler();
       await runtime.runTick();
       await settle();
-      const turns = JSON.parse(fs.readFileSync(h.turnFile, 'utf8')).turns;
+      const turns = process.env.FEDDIT_TEST_SEGMENTED_TURNS === '1'
+        ? fs.readdirSync(h.turnFile + '.d/history', { recursive: true })
+          .filter(name => name.endsWith('.json')).map(name => JSON.parse(fs.readFileSync(path.join(h.turnFile + '.d/history', name), 'utf8')))
+        : JSON.parse(fs.readFileSync(h.turnFile, 'utf8')).turns;
       const turn = turns[0];
       ok(turn.checkpoints['hosted-decision-construction'].failure,
         'an impossible complete persona/slate freezes an explicit budget failure');

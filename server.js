@@ -61,7 +61,10 @@ const jobQueue = createQueue({
   file: path.join(store.DATA_DIR, 'jobs.json'),
   maxActivePerProfile: PLACEMENT === 'hosted' ? hostedPolicy.MAX_ACTIVE_JOBS_PER_BOT : 0,
 });
-const turnStore = createTurnStore({ file: path.join(store.DATA_DIR, 'turns.json') });
+const turnStore = createTurnStore({
+  file: path.join(store.DATA_DIR, 'turns.json'),
+  segmented: PLACEMENT === 'hosted',
+});
 const evidenceStore = createEvidenceStore({ file: path.join(store.DATA_DIR, 'naturalness-evidence.json') });
 const naturalness = naturalnessObserver.createObserver({
   dataDir: store.DATA_DIR, request: feddit.request, evidenceStore,

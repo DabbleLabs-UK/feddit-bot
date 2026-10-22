@@ -59,7 +59,7 @@ async function admit(h, runtime = h.scheduler()) {
   await runtime.runTick(); await settle(12);
   const turn = h.turnStore.activeForProfile(h.id);
   ok(turn, 'mocked scheduled opportunity admits one durable turn: ' + JSON.stringify({ logs: h.logs,
-    turns: fs.existsSync(h.turnFile) ? JSON.parse(fs.readFileSync(h.turnFile, 'utf8')).turns.map(t => ({ status: t.status, error: t.error })) : [] }));
+    turns: h.turnStore.listActive().map(t => ({ status: t.status, error: t.error })) }));
   return turn;
 }
 async function finish(h, runtime, turn, text = wait) {
