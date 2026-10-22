@@ -23,6 +23,7 @@ const feddit = require('./lib/feddit');
 const gdelt = require('./lib/gdelt');
 const feeds = require('./lib/feeds');
 const scheduler = require('./lib/scheduler');
+const { createQuietConversations } = require('./lib/quiet-conversations');
 const activityForecast = require('./lib/activity-forecast');
 const { createEvidenceStore } = require('./lib/naturalness-evidence');
 const naturalnessMetrics = require('./lib/naturalness-metrics');
@@ -2309,6 +2310,11 @@ function activeSyntheticTurnCount() {
   }).length;
 }
 reconcileHostedProfiles();
+const quietConversations = createQuietConversations({
+  file: path.join(store.DATA_DIR, 'quiet-conversations.json'),
+  request: feddit.request,
+  enabled: process.env.FEDDIT_QUIET_CONVERSATIONS === '1',
+});
 const schedulerHandle = scheduler.start({
   evidenceStore,
   store,
@@ -2318,6 +2324,8 @@ const schedulerHandle = scheduler.start({
   feddit,
   gdelt,
   feeds,
+  quietConversations,
+  quietLocalCapacity: () => !ollama.SHARED_OLLAMA_ARBITER_URL && !providers.ollamaBusy(),
   queueAllocationFor: PLACEMENT === 'hosted'
     ? (profile, at) => hostedPolicy.processingFor(profile, at)
     : undefined,

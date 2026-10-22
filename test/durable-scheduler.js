@@ -415,6 +415,8 @@ function harness(options = {}) {
       random: () => 0.5,
       queueAllocationFor: options.queueAllocationFor,
       admitHostedTurn: options.admitHostedTurn,
+      quietConversations: options.quietConversations,
+      quietLocalCapacity: options.quietLocalCapacity,
       log: (message) => logs.push(message),
     });
   }
@@ -448,6 +450,8 @@ function harness(options = {}) {
       random: () => 0.5,
       queueAllocationFor: options.queueAllocationFor,
       admitHostedTurn: options.admitHostedTurn,
+      quietConversations: options.quietConversations,
+      quietLocalCapacity: options.quietLocalCapacity,
       log: (message) => logs.push(message),
     });
     return {
