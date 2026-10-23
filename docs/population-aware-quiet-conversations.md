@@ -32,7 +32,9 @@ Use at most 64 existing terminal request lifecycles, at least four within six
 hours, with the latest finishing within 30 minutes. Hosted timings include
 creation-to-completion queue, execution and delivery time; local timings include
 the existing local provider lifecycle. Failed requests consume capacity too.
-Use the nearest-rank 75th percentile, not a model's advertised speed. Neither
+Use the nearest-rank 75th percentile, not a model's advertised speed. A newest
+observed failed request (including a tied failure) suppresses assistance until
+ordinary successful work establishes recovery. Neither
 worker count nor multiple processes imply independent capacity. Mixed local and
 hosted lanes use fixed fallback rather than combine incomparable estimates.
 
