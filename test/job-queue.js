@@ -43,6 +43,34 @@ function fixture(options = {}) {
 }
 
 function run() {
+  {
+    const f = fixture();
+    try {
+      const start = f.now();
+      const job = f.queue.enqueue({ profileId: 'private-profile', payload: { prompt: 'PRIVATE PROMPT' } });
+      f.advance(1000);
+      f.queue.claim('worker-test');
+      f.advance(2000);
+      f.queue.complete(job.id, 'worker-test', { text: 'PRIVATE RESPONSE' });
+      eq(f.queue.quietCapacitySamples(), [{ startedAt: start, finishedAt: start + 3000, status: 'completed' }],
+        'quiet capacity includes queue wait but no private job content or identity');
+      const failed = f.queue.enqueue({ profileId: 'other', maxAttempts: 1 });
+      f.queue.claim('worker-test'); f.advance(4000);
+      f.queue.fail(failed.id, 'worker-test', 'PRIVATE ERROR', false);
+      eq(f.queue.quietCapacitySamples()[0].status, 'failed', 'failed execution still consumes observed capacity');
+      eq(f.queue.quietCapacitySamples()[0].finishedAt - f.queue.quietCapacitySamples()[0].startedAt, 4000,
+        'failed lifecycle has its complete cost');
+      const restarted = createQueue({ file: f.file, now: f.now });
+      eq(restarted.quietCapacitySamples(), f.queue.quietCapacitySamples(), 'request evidence survives queue restart without a new tracker');
+      for (let i = 0; i < 65; i++) {
+        const next = f.queue.enqueue({ profileId: 'bounded-' + i });
+        f.queue.claim('worker-test'); f.advance(1);
+        f.queue.complete(next.id, 'worker-test', {});
+      }
+      eq(f.queue.quietCapacitySamples().length, 64, 'capacity projection remains bounded');
+      eq(f.queue.quietCapacitySamples()[0].finishedAt, f.now(), 'bounded projection retains newest evidence');
+    } finally { f.cleanup(); }
+  }
   eq(effectiveScore({ priority: 'normal', createdAt: 1000 }, 1000), 200, 'normal base score');
   eq(
     effectiveScore({ priority: 'background', createdAt: 1000 }, 1000 + (5 * AGING_STEP_MS)),

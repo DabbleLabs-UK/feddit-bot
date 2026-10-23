@@ -45,6 +45,7 @@ function fixture(name, options = {}) {
   h.advance(startAt - h.now());
   const ledgerFile = path.join(h.dir, 'quiet.json');
   const controller = () => quiet.createQuietConversations({ file: ledgerFile, now: h.now, enabled: true,
+    populationAware: options.populationAware === true,
     request: async () => ({ ok: responseOk, data: {
       schemaVersion: 1, source: 'feddit-current-votes', generatedAt: new Date(h.now()).toISOString(),
       window: { hours: 1, since: new Date(h.now() - 3600000).toISOString(), until: new Date(h.now()).toISOString() },
@@ -92,6 +93,40 @@ function deadlines(h) {
 }
 
 async function run() {
+  {
+    const h = fixture('population-replay', { populationAware: true });
+    try {
+      store.updateProfile(h.id, { activity: [{ at: new Date(h.now() - 1000).toISOString(),
+        kind: 'decision', ok: true, dryRun: false, assessmentCandidates: 1 }] });
+      let reads = 0;
+      h.queue.quietCapacitySamples = () => {
+        reads++;
+        return [1, 2, 3, 4].map(index => ({ startedAt: h.now() - index * 60000 - 30000,
+          finishedAt: h.now() - index * 60000, status: 'completed' }));
+      };
+      const before = deadlines(h), runtime = h.scheduler(), turn = await admitted(h, runtime);
+      eq(turn.input.quietConversation.version, 2, 'explicit population flag freezes v2 on new extras');
+      eq(turn.input.quietConversation.signal.policy.activeProfiles, 1, 'actual eligible participation feeds the controller');
+      eq(turn.input.quietConversation.signal.policy.gapMs, 3600000, 'small active population receives a bounded slower extra lane');
+      eq(reads, 1, 'capacity evidence is read only for the enabled population extension');
+      const restarted = h.restartRuntime();
+      const final = await finishWait(h, restarted.scheduler, turn, restarted.queue, restarted.turnStore);
+      eq(final.status, 'completed', 'frozen v2 extra replays through the real durable scheduler');
+      eq(final.generations.length, 1, 'replay does not duplicate inference after handover');
+      eq(h.writes, [], 'v2 valid WAIT still publishes nothing');
+      eq(deadlines(h), before, 'v2 extra preserves cadence and deadlines');
+      const waitActivity = h.profile().activity.findLast(entry => entry.kind === 'decision');
+      ok(waitActivity.assessmentCandidates > 0, 'a genuine WAIT records bounded actual-offer evidence');
+    } finally { h.cleanup(); }
+  }
+  {
+    const h = fixture('fixed-no-scaling-read');
+    try {
+      h.queue.quietCapacitySamples = () => { throw new Error('default policy must not inspect scaling data'); };
+      const turn = await admitted(h);
+      eq(turn.input.quietConversation.version, 1, 'default fixed controller ignores population and capacity history');
+    } finally { h.cleanup(); }
+  }
   {
     const h = fixture('quiet-wait');
     try {
@@ -145,9 +180,9 @@ async function run() {
       eq(h.dependency.peek().modes.live[0].postId, candidate.target.postId, 'chosen thread is durably recorded for the quiet-only cap');
     } finally { h.cleanup(); }
   }
-  for (const reason of ['healthy', 'unknown', 'paused', 'rehearsal', 'disabled', 'offline', 'capacity', 'local-busy',
+  for (const populationAware of [false, true]) for (const reason of ['healthy', 'unknown', 'paused', 'rehearsal', 'disabled', 'offline', 'capacity', 'local-busy',
     'payg', 'default-off', 'backoff', 'zero-reply-rate', 'reply-disabled']) {
-    const h = fixture('suppressed-' + reason, { comments: reason === 'healthy' ? 9 : 2,
+    const h = fixture('suppressed-' + reason, { populationAware, comments: reason === 'healthy' ? 9 : 2,
       rehearsal: reason === 'rehearsal', provider: reason === 'payg' ? 'deepseek' : 'dell',
       noController: reason === 'default-off',
       admitHostedTurn: reason === 'capacity' ? () => ({ admit: false, reason: 'fixture-capacity' }) : undefined });

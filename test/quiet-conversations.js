@@ -29,7 +29,8 @@ async function main() {
   const bookkeeping = 'QUIET_CONVERSATION_BOOKKEEPING_PENDING';
   try {
     eq(quiet.version(1), 1, 'contract is independently versioned');
-    for (const value of [undefined, 0, 2, '1', null]) rejects(() => quiet.version(value), 'UNSUPPORTED_QUIET_CONVERSATION', 'unknown version never guesses semantics');
+    eq(quiet.version(2), 2, 'population-aware contract is independently supported');
+    for (const value of [undefined, 0, 3, '1', null]) rejects(() => quiet.version(value), 'UNSUPPORTED_QUIET_CONVERSATION', 'unknown version never guesses semantics');
 
     let calls = 0;
     const disabledFile = path.join(directory, 'disabled.json');
@@ -207,7 +208,7 @@ async function main() {
     eq(bounded.peek().modes.rehearsal.length, 0, 'bounding one mode does not invent other mode state');
     rejects(() => bounded.ensure(oldest, 't_outside_ledger'), bookkeeping, 'out-of-bound replay fails closed rather than claiming missing bookkeeping persisted');
     const invalidVersion = create();
-    rejects(() => invalidVersion.ensure({ ...saved, version: 2 }), 'UNSUPPORTED_QUIET_CONVERSATION', 'future frozen descriptor is never replayed under version one');
+    rejects(() => invalidVersion.ensure({ ...saved, version: 3 }), 'UNSUPPORTED_QUIET_CONVERSATION', 'future frozen descriptor is never replayed under a known contract');
 
     const corruptFile = path.join(directory, 'corrupt.json');
     fs.writeFileSync(corruptFile, '{broken');
@@ -215,7 +216,7 @@ async function main() {
     rejects(() => corrupt.canAdmit('p_one'), bookkeeping, 'corrupt ledger is not silently reset');
     eq(fs.readFileSync(corruptFile, 'utf8'), '{broken', 'corrupt source stays available for recovery');
     const futureFile = path.join(directory, 'future.json');
-    fs.writeFileSync(futureFile, JSON.stringify({ version: 2, modes: { live: [], rehearsal: [] } }));
+    fs.writeFileSync(futureFile, JSON.stringify({ version: 3, modes: { live: [], rehearsal: [] } }));
     rejects(() => create({ file: futureFile }).canAdmit('p_one'), 'UNSUPPORTED_QUIET_CONVERSATION', 'future storage format is not downgraded');
     const failedFile = path.join(directory, 'failed.json');
     const failed = create({ file: failedFile });
