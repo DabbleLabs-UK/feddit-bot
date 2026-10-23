@@ -66,6 +66,7 @@ async function main() {
       const start = await prepare(h);
       eq(h.turnStore.get(start.turnId).input.publicWritingVersion, 3, 'independent reply overlay preserves selected writing-v3');
       assert.match(start.generation.request.prompt, /40-70 words in the comment/); checks++;
+      assert.ok(start.generation.request.prompt.includes(require('../lib/public-writing').contentGuidance('comment', 3))); checks++;
       eq(h.store.getSettings().writingCanary, membership, 'reply overlay never edits canary membership');
       await finish(h, start);
     } finally { h.cleanup(); }
