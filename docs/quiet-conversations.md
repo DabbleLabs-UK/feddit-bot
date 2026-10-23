@@ -1,5 +1,9 @@
 # Quiet-time conversation opportunities
 
+The optional population-aware extension is separately default-off and versioned;
+see [population-aware controller](population-aware-quiet-conversations.md). This
+document describes the unchanged fixed fallback and shared admission safeguards.
+
 Default off. This is an explicitly enabled scheduler feature, not Naturalness
 analysis, an autonomous tuner, a publishing policy, or a change to bot personas.
 No deployment or activation is authorized by this implementation.
