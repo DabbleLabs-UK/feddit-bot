@@ -70,8 +70,65 @@ staging creation, ZIP-derived exact file hashes and no-replace target/pending
 publication. Recovery/unpause requires verified owned process/current/pending,
 old/new source hashes and exact canary. Shipped updater code is unchanged.
 
-Desktop drain/install was still in progress at this checkpoint. Final local
-preservation/runtime and natural reply evidence will be appended after handover.
+## Completed desktop delivery
+
+Installed at **21:18:36.280151 UTC**; normal scheduling restored at
+**21:18:38.327963 UTC**. The update-owned admission pause began at
+20:57:36.070808 UTC and lasted **21m02.257155s**. The already-admitted
+governmint_clerk_b_1 decision reached its existing 20-minute first-output timeout
+normally; it was not cancelled for installation and no timeout was changed.
+No new natural work was admitted while draining.
+
+Actual new Node PID **55080**, launcher PID **22596**, serve 0.27.8 from
+`versions/0.27.8/app/server.js`. All 86 installed files match the signed package
+and reviewed source. build-source.json records exact 10d6c7a and the package hash.
+The actual process retains FEDDIT_QUIET_CONVERSATIONS=1. Global pause is false;
+the same three canary IDs are persisted. Natural what_who_where_why scheduled
+decision 2448 resumed at **21:18:47.988 UTC**, without a forced call.
+
+Verified private backup:
+`C:/Users/jodyf/AppData/Local/DabbleLabs/FedditBots/backups/reply-continuity-20261023`.
+It contains **10 files / 10765864 bytes**, with unchanged data hashes before
+new-process start. Post-start checks retain all 27 profiles/protected fields,
+settings/groups/providers/models/cadence/enablement, Speed/Burst/canary, secrets,
+importer cache and work (ignoring only derived cache age), and the one existing
+legacy durable turn with identical frozen input. No snapshot was restored.
+An early read-only verification sampled settings before restoration completed
+and correctly saw the owned pause; the post-controller verification passes.
+
+The existing 43-assertion core regression was also run against the actual
+installed libraries with disposable isolated data and no network. It verifies
+fingerprint persistence through store reopen, exact-repeat rejection, same-owner
+replay, live/rehearsal separation, bounds, history, identity moves and atomic-save
+failure. It did not insert a receipt or duplicate probe into production state.
+
+## First natural reply and final health
+
+Hosted botboggle turn **t_bc433fd814c1648b556e48e642f89ab8** naturally replied
+to **root 165**, receiving HTTP **201**. The frozen writing context contains one
+recent-own-reply excerpt explicitly marked already said and factual memory cues;
+the complete target block is last. This is a top-level reply, not live evidence
+of a nested ancestor chain. Nested immediate-parent/ancestor ordering remains
+covered by retained-case and installed-code tests, not forced social traffic.
+
+Actual writing request: **659 input + 200 output + 64 safety = 923 / 3072**.
+Its decision and existing repair requests used 2119/2162 input tokens with
+640 output and 64 safety (2823/2866 total). All three distinct jobs completed
+with exactly one attempt each. One live fingerprint is persisted in the actual
+profile file. No natural duplicate-body rejection has occurred at this cutoff;
+the pre-HTTP/no-regeneration boundary is fixture-verified, not live-probed.
+
+One other natural post completed and an existing malformed-decision failure
+occurred before writing. No claim, source-contract, persistence, duplicate-job or
+publication-uncertainty regression was found. Final worker/queue is healthy with
+one normal natural job active and no duplicate dedupe keys. All 1269 pre-handover
+hosted turns remain intact and byte-identical; segmented storage is unchanged.
+This small sample does not establish better conversation quality or reciprocity.
+
+Public updater remains **0.27.2**, unchanged SHA-256
+`863b165a312393820f985a270de5c2ca710258b92bfc071869d1e14864b802da`.
+No public artifact/manifest/tag/release was published. Both installations are
+left running under normal admission. No further tuning was started.
 
 ## Rollback constraints
 
