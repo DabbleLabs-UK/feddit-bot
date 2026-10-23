@@ -76,9 +76,8 @@ eq(select(null).kind, 'blocked', 'missing eligible profile set is not zero popul
 eq(select([null]).kind, 'blocked', 'invalid eligible profile is not silently ignored');
 eq(select([profile()], samples(), at + 0.5).kind, 'blocked', 'observation timestamp must be safe integer');
 
-for (const rows of [undefined, null, [], samples(MINUTE, 3), samples(MINUTE, 4).map((row) => ({
-  ...row, startedAt: row.startedAt - HOUR, finishedAt: row.finishedAt - HOUR,
-})), samples(MINUTE, 4).map((row) => ({ ...row, startedAt: row.startedAt - 7 * HOUR, finishedAt: row.finishedAt - 7 * HOUR }))]) {
+for (const rows of [undefined, null, [], samples(MINUTE, 3),
+  samples(MINUTE, 4).map((row) => ({ ...row, startedAt: row.startedAt - 7 * HOUR, finishedAt: row.finishedAt - 7 * HOUR }))]) {
   eq(policy.selectPolicy([profile()], rows, at).kind, 'fallback', 'missing, insufficient or stale capacity uses fixed fallback');
 }
 for (const rows of [{}, samples(MINUTE, 65), [{ startedAt: at - MINUTE, finishedAt: at, status: 'running' }],
@@ -96,6 +95,26 @@ eq(select(count(24), samples(10 * MINUTE)).gapMs, 60 * MINUTE, 'largest permitte
 eq(select(count(24), samples(10 * MINUTE + 1)).kind, 'blocked', 'capacity requiring over one hour cannot admit extras');
 eq(select(count(24), samples(1)).gapMs, 8 * MINUTE, 'ample capacity never exceeds hard eight-per-hour bound');
 eq(select(count(24), measured), select(count(24), measured.slice().reverse()), 'sample ordering cannot change controller');
+eq(select(count(24), samples(1).map((row) => ({ ...row, status: 'failed' }))).kind,
+  'blocked', 'fast repeated failures never prove ample usable capacity');
+eq(select(count(24), samples().map((row) => ({ ...row,
+  startedAt: row.startedAt - HOUR, finishedAt: row.finishedAt - HOUR }))).kind,
+  'fallback', 'old successful capacity evidence retains the fixed safe fallback');
+const latestFailed = samples(MINUTE).map((row, index) => ({ ...row, status: index === 0 ? 'failed' : 'completed' }));
+eq(select(count(24), latestFailed).kind, 'blocked', 'latest failure holds assistance despite previous successes');
+const recovered = [...latestFailed, { startedAt: at - 2000, finishedAt: at - 1000, status: 'completed' }];
+eq(select(count(24), recovered).kind, 'scaled', 'later completed request positively establishes recovery');
+eq(select(count(24), recovered).p75RequestMs, MINUTE, 'recovered capacity still includes failed request durations');
+const tiedFailure = [...recovered, { startedAt: at - 1500, finishedAt: at - 1000, status: 'failed' }];
+eq(select(count(24), tiedFailure).kind, 'blocked', 'failure wins conservatively on tied terminal timestamps');
+eq(select(count(24), [{ startedAt: at - 2000, finishedAt: at - 1000, status: 'failed' }]).kind,
+  'blocked', 'failure remains fail-closed before the minimum sample count');
+eq(select([], [{ startedAt: at - 2000, finishedAt: at + 1, status: 'completed' }]).kind,
+  'blocked', 'zero participation cannot hide contradictory future capacity');
+eq(select([], { invalid: true }).kind, 'blocked', 'zero participation cannot hide malformed capacity');
+eq(select([], latestFailed).kind, 'blocked', 'zero participation cannot hide failed capacity');
+eq(policy.selectPolicy([], undefined, at).kind, 'fallback', 'missing capacity and participation retain safe fixed fallback');
+eq(select([], samples()).kind, 'fallback', 'healthy capacity without participation proof retains fixed fallback');
 eq(select(count(24)).low > select(count(2)).low, true, 'population drop immediately lowers expectation');
 eq(select(count(6)).high - select(count(6)).low, 3, 'separate deterministic thresholds preserve hysteresis band');
 
