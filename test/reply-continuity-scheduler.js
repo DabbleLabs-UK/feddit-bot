@@ -108,6 +108,47 @@ async function main() {
     try { const start = await prepare(h, true); await finish(h, start); eq(h.writes.length, 1); eq(h.profiles[0].replyOutputState, undefined, 'old turn never adopts new publication semantics'); }
     finally { h.cleanup(); }
   }
+  for (const key of ['comment-reply-context-v1', 'comment-output-claim-v1']) {
+    const h = fixture();
+    try {
+      const setter = h.turnStore.setCheckpoint;
+      let failed = false;
+      h.turnStore.setCheckpoint = (...args) => {
+        if (args[1] === key && !failed) { failed = true; throw new Error('fixture checkpoint failure'); }
+        return setter(...args);
+      };
+      const runtime = h.scheduler(); await runtime.runTick(); await settle(10);
+      const turn = h.turnStore.activeForProfile(h.profiles[0].id);
+      const candidate = turn.checkpoints['opportunity-candidates'].candidates.find(c => c.target?.commentId === h.targetId);
+      completeJob(h.queue, turn.generations[0].jobId, JSON.stringify({ choice: candidate.id, reason: 'A relevant branch question.', votes: [] }));
+      runtime.reconcileDurableTurns(); await settle(10);
+      if (key === 'comment-output-claim-v1') {
+        completeJob(h.queue, h.turnStore.get(turn.id).generations[1].jobId, output);
+        runtime.reconcileDurableTurns(); await settle(10);
+      }
+      eq(h.turnStore.get(turn.id).status, 'blocked', key + ' holds safely after failed persistence');
+      eq(h.writes.length, 0);
+      h.turnStore.setCheckpoint = setter;
+      runtime.reconcileDurableTurns(); await settle(10);
+      if (key === 'comment-reply-context-v1') {
+        completeJob(h.queue, h.turnStore.get(turn.id).generations[1].jobId, output);
+        runtime.reconcileDurableTurns(); await settle(10);
+      }
+      eq(h.turnStore.get(turn.id).status, 'completed');
+      eq(h.turnStore.get(turn.id).generations.length, 2, 'checkpoint recovery does not redo inference');
+      eq(h.writes.length, 1);
+    } finally { h.cleanup(); }
+  }
+  {
+    const enabled = fixture(), legacy = fixture();
+    delete legacy.store.reserveReplyOutput;
+    try {
+      await enabled.scheduler().runTick(); await legacy.scheduler().runTick(); await settle(10);
+      const one = enabled.turnStore.activeForProfile(enabled.profiles[0].id), two = legacy.turnStore.activeForProfile(legacy.profiles[0].id);
+      eq(one.generations[0].request.prompt, two.generations[0].request.prompt, 'decision prompt, candidates and voting presentation remain unchanged');
+      eq(one.generations[0].request.system, two.generations[0].request.system, 'persona is unchanged');
+    } finally { enabled.cleanup(); legacy.cleanup(); }
+  }
   console.log('reply continuity scheduler: ' + checks + ' checks passed');
 }
 main().catch(error => { console.error(error.stack); process.exitCode = 1; });

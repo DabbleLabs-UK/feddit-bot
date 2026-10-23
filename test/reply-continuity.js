@@ -70,6 +70,18 @@ try {
   delete require.cache[storePath]; store = require(storePath);
   eq(store.reserveReplyOutput(profile.id, { hash, id: 'operation-c', at }), false, 'restart retains the claim');
   eq(store.reserveReplyOutput(profile.id, { hash, id: 'operation-a', at }), true, 'restart permits exact owner replay');
+  const protectedLive = store.getProfile(profile.id).replyOutputState;
+  const protectedDry = store.getProfile(profile.id).simulationState.replyOutputState;
+  store.updateProfile(profile.id, { replyOutputState: { version: 99 }, simulationState: { replyOutputState: { version: 99 } } });
+  eq(store.getProfile(profile.id).replyOutputState, protectedLive, 'ordinary profile edits cannot overwrite the live guard');
+  store.updateProfile(profile.id, { replyOutputState: { version: 99 }, simulationState: { replyOutputState: { version: 99 } } }, { allowContinuity: true });
+  eq(store.getProfile(profile.id).simulationState.replyOutputState, protectedDry, 'internal timer patches preserve later rehearsal claims');
+  const pack = require('../lib/profile-pack');
+  eq(pack.exportProfile(store.getProfile(profile.id)).runtime.replyOutputState, protectedLive, 'explicit identity movement retains guard receipts');
+  const moved = store.createProfile(pack.importPatch(pack.exportProfile(store.getProfile(profile.id))));
+  eq(moved.replyOutputState, protectedLive, 'identity export/import preserves live guard exactly');
+  eq(moved.simulationState.replyOutputState, protectedDry, 'identity export/import preserves rehearsal guard exactly');
+  eq('replyOutputState' in (pack.exportProfile(store.getProfile(profile.id), { template: true }).runtime || {}), false, 'templates do not inherit claims');
   const rename = fs.renameSync;
   const failedHash = writing.fingerprint(repeated + ' New output before a failed write.');
   try {
