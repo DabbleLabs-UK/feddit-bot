@@ -61,6 +61,18 @@ async function main() {
   {
     const h = fixture();
     try {
+      const membership = { version: 1, profileIds: [h.profiles[0].id] };
+      h.store.getSettings().writingCanary = structuredClone(membership);
+      const start = await prepare(h);
+      eq(h.turnStore.get(start.turnId).input.publicWritingVersion, 3, 'independent reply overlay preserves selected writing-v3');
+      assert.match(start.generation.request.prompt, /40-70 words in the comment/); checks++;
+      eq(h.store.getSettings().writingCanary, membership, 'reply overlay never edits canary membership');
+      await finish(h, start);
+    } finally { h.cleanup(); }
+  }
+  {
+    const h = fixture();
+    try {
       const start = await prepare(h);
       const checkpoint = h.turnStore.get(start.turnId).checkpoints['comment-reply-context-v1'];
       assert(checkpoint.target.replyBranch.complete); checks++;
