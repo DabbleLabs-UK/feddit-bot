@@ -395,7 +395,7 @@ function safeProfile(p) {
   // count of the news dedupe set so the UI can show it on the clear button.
   const {
     token, ownerId, repliedTo, postedNews, newsDomainDaily, newsDomainDays,
-    attentionState, socialState, memoryState, voteState, simulationState, replyGuardState, ordinaryCandidateState,
+    attentionState, socialState, memoryState, voteState, simulationState, replyGuardState, ordinaryCandidateState, replyOutputState,
     creatorProfile, creatorProvenance, ...rest
   } = p;
   const now = Date.now();
@@ -1531,8 +1531,10 @@ async function handleApi(req, res, urlPath, query) {
   if (method === 'POST' && urlPath === '/api/profiles') {
     const body = await readBody(req);
     delete body.ordinaryCandidateState;
+    delete body.replyOutputState;
     if (body.simulationState && typeof body.simulationState === 'object') {
       delete body.simulationState.ordinaryCandidateState;
+      delete body.simulationState.replyOutputState;
     }
     if (Object.prototype.hasOwnProperty.call(body, 'fedditBio')) {
       try {
@@ -1648,7 +1650,7 @@ async function handleApi(req, res, urlPath, query) {
       const biography = await currentFedditBiography(existing);
       const {
         token, ownerId, postedNews, newsDomainDaily, newsDomainDays,
-        socialState, memoryState, voteState, simulationState, replyGuardState, ordinaryCandidateState, ...rest
+        socialState, memoryState, voteState, simulationState, replyGuardState, ordinaryCandidateState, replyOutputState, ...rest
       } = existing;
       const simulation = scheduler.isDryRun(existing, store.getSettings());
       return sendJson(res, 200, {
@@ -1778,6 +1780,7 @@ async function handleApi(req, res, urlPath, query) {
       delete body.simulationState;
       delete body.replyGuardState;
       delete body.ordinaryCandidateState;
+      delete body.replyOutputState;
       if (existing.token && Object.prototype.hasOwnProperty.call(body, 'fedditUsername')) {
         const currentUsername = String(existing.fedditUsername || '').trim().toLowerCase();
         const requestedUsername = String(body.fedditUsername || '').trim().toLowerCase();
