@@ -2317,6 +2317,7 @@ const quietConversations = createQuietConversations({
   file: path.join(store.DATA_DIR, 'quiet-conversations.json'),
   request: feddit.request,
   enabled: process.env.FEDDIT_QUIET_CONVERSATIONS === '1',
+  populationAware: process.env.FEDDIT_QUIET_POPULATION_V2 === '1',
 });
 const schedulerHandle = scheduler.start({
   evidenceStore,
