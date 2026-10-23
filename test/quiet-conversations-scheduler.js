@@ -158,6 +158,36 @@ async function run() {
     } finally { h.cleanup(); store.updateSettings({ writingCanary: { version: 1, profileIds: [] } }); }
   }
   {
+    const h = fixture('population-local', { populationAware: true, provider: 'ollama', placement: 'desktop',
+      quietLocalCapacity: () => true });
+    try {
+      store.updateProfile(h.id, { activity: [{ at: new Date(h.now() - 1000).toISOString(),
+        kind: 'decision', ok: true, dryRun: false, assessmentCandidates: 1 }] });
+      h.providers.ollama = { generationActivity: () => ({ active: null,
+        recent: [1, 2, 3, 4].map(index => ({ startedAt: h.now() - index * 60000 - 30000,
+          finishedAt: h.now() - index * 60000, status: 'completed', prompt: 'MUST NOT REACH POLICY' })) }) };
+      const before = deadlines(h);
+      await tick(h, h.scheduler());
+      eq(h.dependency.peek().modes.live[0].version, 2, 'desktop reads existing local timing snapshot for scaled admission');
+      eq(h.calls.length, 1, 'local scaled opportunity performs only its ordinary decision inference');
+      eq(h.writes, [], 'local model can freely WAIT without publication');
+      eq(deadlines(h), before, 'scaled desktop admission preserves ordinary deadlines');
+      eq(JSON.stringify(h.dependency.peek()).includes('MUST NOT REACH'), false, 'local adapter discards all non-timing diagnostic fields');
+    } finally { h.cleanup(); }
+  }
+  {
+    const h = fixture('population-empty-menu', { populationAware: true, provider: 'ollama', placement: 'desktop',
+      quietLocalCapacity: () => true });
+    try {
+      h.posts.splice(0);
+      await tick(h, h.scheduler());
+      eq(h.calls.length, 0, 'no-target WAIT adds no model call');
+      const waitActivity = h.profile().activity.findLast(entry => entry.kind === 'decision');
+      eq(waitActivity.assessmentCandidates, 0, 'no-target WAIT cannot inflate future participating population');
+      eq(h.writes, [], 'empty menu does not manufacture conversation');
+    } finally { h.cleanup(); }
+  }
+  {
     const h = fixture('population-replay', { populationAware: true });
     try {
       store.updateProfile(h.id, { activity: [{ at: new Date(h.now() - 1000).toISOString(),
