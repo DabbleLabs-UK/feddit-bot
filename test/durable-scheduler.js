@@ -417,6 +417,7 @@ function harness(options = {}) {
       admitHostedTurn: options.admitHostedTurn,
       quietConversations: options.quietConversations,
       quietLocalCapacity: options.quietLocalCapacity,
+      themeInterestEnabled: options.themeInterestEnabled,
       log: (message) => logs.push(message),
     });
   }
@@ -452,6 +453,7 @@ function harness(options = {}) {
       admitHostedTurn: options.admitHostedTurn,
       quietConversations: options.quietConversations,
       quietLocalCapacity: options.quietLocalCapacity,
+      themeInterestEnabled: options.themeInterestEnabled,
       log: (message) => logs.push(message),
     });
     return {
