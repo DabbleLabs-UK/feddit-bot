@@ -401,7 +401,7 @@ function safeProfile(p) {
   // count of the news dedupe set so the UI can show it on the clear button.
   const {
     token, ownerId, repliedTo, postedNews, newsDomainDaily, newsDomainDays,
-    attentionState, socialState, memoryState, voteState, simulationState, replyGuardState, ordinaryCandidateState, replyOutputState,
+    attentionState, socialState, memoryState, voteState, simulationState, replyGuardState, ordinaryCandidateState, replyOutputState, themeInterestState,
     creatorProfile, creatorProvenance, ...rest
   } = p;
   const now = Date.now();
@@ -1506,9 +1506,11 @@ async function handleApi(req, res, urlPath, query) {
     const body = await readBody(req);
     delete body.ordinaryCandidateState;
     delete body.replyOutputState;
+    delete body.themeInterestState;
     if (body.simulationState && typeof body.simulationState === 'object') {
       delete body.simulationState.ordinaryCandidateState;
       delete body.simulationState.replyOutputState;
+      delete body.simulationState.themeInterestState;
     }
     if (Object.prototype.hasOwnProperty.call(body, 'fedditBio')) {
       try {
@@ -1624,7 +1626,7 @@ async function handleApi(req, res, urlPath, query) {
       const biography = await currentFedditBiography(existing);
       const {
         token, ownerId, postedNews, newsDomainDaily, newsDomainDays,
-        socialState, memoryState, voteState, simulationState, replyGuardState, ordinaryCandidateState, replyOutputState, ...rest
+        socialState, memoryState, voteState, simulationState, replyGuardState, ordinaryCandidateState, replyOutputState, themeInterestState, ...rest
       } = existing;
       const simulation = scheduler.isDryRun(existing, store.getSettings());
       return sendJson(res, 200, {
@@ -1755,6 +1757,7 @@ async function handleApi(req, res, urlPath, query) {
       delete body.replyGuardState;
       delete body.ordinaryCandidateState;
       delete body.replyOutputState;
+      delete body.themeInterestState;
       if (existing.token && Object.prototype.hasOwnProperty.call(body, 'fedditUsername')) {
         const currentUsername = String(existing.fedditUsername || '').trim().toLowerCase();
         const requestedUsername = String(body.fedditUsername || '').trim().toLowerCase();
@@ -2292,6 +2295,7 @@ const quietConversations = createQuietConversations({
   enabled: process.env.FEDDIT_QUIET_CONVERSATIONS === '1',
 });
 const schedulerHandle = scheduler.start({
+  themeInterestEnabled: process.env.FEDDIT_THEME_INTEREST_V1 === '1',
   evidenceStore,
   store,
   providers,
