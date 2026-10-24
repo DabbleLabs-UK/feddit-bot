@@ -57,6 +57,25 @@ for (const communities of [['bookclub', 'bookclub'], ['general', 'bookclub'], ['
   unchanged(packed, baseline(f), 'non-canary or mixed decision is byte-for-byte released baseline');
   eq(packed.themeHints.included, false, 'non-canary decisions never receive optional cue');
 }
+for (const community of ['general', 'bookclub']) {
+  const f = fixture([community]);
+  const candidate = f.raw.candidates[0], body = candidate.target.replyBranch.post.body;
+  candidate.target = { ...candidate.target, key: 't1_40', commentId: 40,
+    replyBranch: { ...candidate.target.replyBranch, target: { body } } };
+  candidate.voteItems = [{ targetType: 'comment', targetId: 40, content: body }];
+  f.raw.voteCandidates[0] = { ...f.raw.voteCandidates[0], targetType: 'comment', targetId: 40, content: body };
+  const state = interest.record(undefined, [{ id: 'comment-known', at, kind: 'exposure', community: 'general',
+    sourceKey: 't1_1', threadKey: 't3_1', author: 'other', features: interest.features(body) }]);
+  f.snapshot = context.decorate(f.raw, state, at, 'comment-offer', scope);
+  f.options.candidates = f.snapshot.candidates;
+  f.options.voteCandidates = f.snapshot.voteCandidates;
+  const packed = decision.construct(f.options, f.snapshot, scope);
+  eq(packed.themeHints.included, community === 'general', 'actual nested comment cues obey exact community scope');
+  const receipts = context.exposure(f.snapshot, { valid: true, candidates: f.snapshot.candidates, votes: [] }, 'reader');
+  eq(receipts.map(item => item.sourceKey), community === 'general' ? ['t1_40'] : [],
+    'actual comment exposure cannot leak through a shared root identity');
+  if (community === 'bookclub') unchanged(packed, baseline(f), 'non-canary nested comment keeps released prompt bytes');
+}
 {
   const f = fixture(['general']);
   f.options.voteCandidates.push({ id: 'V8', targetType: 'post', targetId: 999, author: 'other', content: 'Unknown community.' });

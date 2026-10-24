@@ -9,11 +9,19 @@ exactly. Scoped hosted construction retains baseline IDs, order and deferrals;
 optional cues fit both requests or are omitted. Exposure and confirmed use are
 filtered independently, including live/rehearsal publication paths.
 
-New scope tests: 64 pure scope assertions, 72 actual-tokenizer construction
+New scope tests: 64 pure scope assertions, 86 actual-tokenizer construction
 assertions, and 201 scheduler assertions (including the original cases). Frozen
 scope survives config removal/restart; unknown scope holds before inference.
 Existing legacy unscoped-v1 replay remains exact. The companion retains its
 existing writing-v3 admission and hosting construction version.
+
+Broad offline regression: 3,385 counted checks plus the unnumbered voting suite
+passed, including legacy and segmented durable scheduler (601 each), exact
+budgeting, continuity, quiet assistance, first-look, turnover, claim recovery,
+worker delivery and maintenance. Network fetch was blocked. A pre-existing
+ignored fixture outbox initially blocked one old budgeting fixture; the unchanged
+test passed with an exclusively created disposable worker state directory. The
+existing delivery state was not altered.
 
 These checks do not establish a natural quality benefit. Deployment evidence
 will separately record actual running revisions, private backups, preserved
