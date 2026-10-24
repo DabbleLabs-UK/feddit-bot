@@ -14,12 +14,12 @@ unreleased branch. No branch was reset or production configuration changed.
 | theme-context | 40 checks |
 | theme-interest-budget | 9 checks |
 | theme-interest-store | 61 checks |
-| theme-interest-scheduler | 133 checks |
-| Total distinct new assertions | 344 |
+| theme-interest-scheduler | 134 checks |
+| Total distinct new assertions | 345 |
 
-The scheduler suite also passes with `FEDDIT_TEST_SEGMENTED_TURNS=1` (133),
+The scheduler suite also passes with `FEDDIT_TEST_SEGMENTED_TURNS=1` (134),
 in addition to legacy temporary-file storage. Repeating it is not counted as
-another 133 distinct assertions. All runtime tests use mocks and disposable
+another 134 distinct assertions. All runtime tests use mocks and disposable
 stores; no retrieval, registration, publication, AI call or active pause occurs.
 
 Important cases include default-off exact prompt equality despite existing
@@ -60,6 +60,25 @@ The Windows sandbox produced the known EPERM failure on atomic replacement of
 disposable fixture files. The exact affected tests were rerun outside the
 sandbox with narrow approval and passed. No filesystem workaround was added to
 production and no private runtime file was used.
+
+The companion source branch `integration/desktop-theme-interest` starts at
+`10d6c7a` and preserves the existing public-writing/canary admission wrappers.
+Its fixture selects that line's existing `budget.VERSION`, rather than wrongly
+requiring hosted construction-v2. Legacy/default-off theme behavior is tested
+independently of the unchanged hosting construction contract. The original
+hard-coded fixture was correctly rejected before inference; only the fixture
+was corrected.
+
+Companion checks additionally pass: reply-continuity scheduler 70,
+writing-canary scheduler 39, writing-rollout, writing-integration,
+naturalness-writing 12, public-writing and Burst 39. No installed desktop was
+changed and no package/version bump was made.
+
+The companion-only `theme-writing-canary` adds 26 passing mocked assertions:
+theme v1 coexists with an actually enrolled writing-v3 profile, the parent stays
+last, removal/restart retains both frozen contracts without changing persona,
+model or cadence, and future ordinary work returns to writing-v1 while retaining
+theme-v1. These are additional to the 345 shared assertions above.
 
 `git diff --check`, JavaScript syntax checks and data-handling JSON parsing pass.
 No full browser/package/signing suite or real-model semantic validation was
