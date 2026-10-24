@@ -10,10 +10,18 @@ conversation momentum retain their current paths and limits. WAIT/NIL remain
 valid. Existing writing contracts/canary membership and exact-body protection
 are unchanged. Burst and manual previews do not adopt this contract.
 
-The process flag `FEDDIT_THEME_INTEREST_V1=1` selects v1 for future ordinary
-admissions only. It is absent/off by default. No UI, active configuration,
-deployment, installation, desktop version bump or live inference is part of
-this implementation. Population-aware quiet assistance remains separately off.
+The process flag `FEDDIT_THEME_INTEREST_V1=1` and an explicit comma-separated
+`FEDDIT_THEME_INTEREST_COMMUNITIES` allowlist select v1 for future ordinary
+admissions only. Both are required; empty scope remains off and malformed scope
+fails closed. At most eight exact community names are allowed, without wildcards.
+Population-aware quiet assistance remains separately off.
+
+The controlled canary scope is `shittyaskfeddit`, not a bot group or a global
+theme feed. Each admitted turn freezes independent scope version 1. Receipts and
+selected-writing cues are limited to that community. A mixed/unknown-community
+decision menu receives no theme cues at all, so non-canary decision prompts stay
+unchanged. Existing legacy unscoped v1 turns retain exact replay; new admissions
+cannot accidentally use that unscoped mode.
 
 ## Identity: cheap and deliberately conservative
 
@@ -93,10 +101,12 @@ Actual model interpretation has not been established by an inference experiment.
 
 Decision menus receive at most two keyword-free summaries of at most 160
 characters. No list of motif words is suggested for the bot to mention. Existing
-exact hosted measurement includes the summaries before complete-block packing;
-no appended unmeasured decision suffix is allowed. Hints can consume scarce
-budget and cause an additional complete candidate to be deferred. That is an
-observation risk, not a reason to enlarge context or weaken first-look packing.
+exact hosted measurement includes the summaries. Scoped canaries first freeze
+baseline complete-block packing without hints. Optional cues may then decorate
+only those retained IDs, in the same order, if both initial and repair requests
+fit. Otherwise cues are omitted, never candidates. No appended unmeasured suffix,
+context enlargement or change to first-look packing is allowed. Legacy unscoped
+v1 reconstruction preserves its original packing exactly.
 
 A selected reply may receive one frozen summary before existing immediate-parent
 instructions. Hosted writing measures the complete hinted request plus its
@@ -127,7 +137,8 @@ is conservatively ignored, potentially undercounting interest, never creating
 publication or considered evidence. Finite storage cannot be permanent readership
 history and is not claimed as such.
 
-New turns freeze `themeInterestVersion: 1`, the candidate-local descriptions,
+New turns freeze `themeInterestVersion: 1`, `themeInterestScope` (version and
+explicit community names), the candidate-local descriptions,
 time/operation identity and final receipt checkpoint. Legacy absent/zero remains
 exactly off even if the process flag later changes. Disabling the flag affects
 future admissions, not in-flight v1 reconstruction. Unknown contracts/corrupt

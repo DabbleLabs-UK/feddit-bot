@@ -418,6 +418,7 @@ function harness(options = {}) {
       quietConversations: options.quietConversations,
       quietLocalCapacity: options.quietLocalCapacity,
       themeInterestEnabled: options.themeInterestEnabled,
+      themeInterestCommunities: options.themeInterestCommunities,
       log: (message) => logs.push(message),
     });
   }
@@ -454,6 +455,7 @@ function harness(options = {}) {
       quietConversations: options.quietConversations,
       quietLocalCapacity: options.quietLocalCapacity,
       themeInterestEnabled: options.themeInterestEnabled,
+      themeInterestCommunities: options.themeInterestCommunities,
       log: (message) => logs.push(message),
     });
     return {

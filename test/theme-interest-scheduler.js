@@ -30,7 +30,8 @@ function fixture(name, options = {}) {
     created_utc: 9, independently_assessed: false }));
   const calls = [];
   const settings = { profiles: [store.getProfile(id)], store: scoped, placement: options.local ? 'desktop' : 'hosted',
-    themeInterestEnabled: options.enabled, feedPosts: () => posts, commentResponse: options.commentResponse,
+    themeInterestEnabled: options.enabled, themeInterestCommunities: options.communities === undefined ? 'general' : options.communities,
+    feedPosts: () => posts, commentResponse: options.commentResponse,
     providerGenerate: async request => { calls.push(request); return { text: waitFromPrompt(request.prompt), ms: 1,
       model: 'fixture', usage: { inputTokens: 10, outputTokens: 10 } }; } };
   const h = harness(settings);
@@ -88,10 +89,45 @@ async function run() {
     } finally { h.cleanup(); }
   }
   {
+    const h = fixture('flag-without-scope', { enabled: true, communities: '' }); seed(h);
+    try {
+      const runtime = h.scheduler(), turn = await admit(h, runtime);
+      eq(turn.input.themeInterestVersion, 0, 'global flag alone cannot enable an unrestricted canary');
+      eq(turn.input.themeInterestScope, undefined, 'missing allowlist never freezes a global scope');
+      eq(turn.generations[0].request.prompt, baseline, 'flag without allowlist retains released prompt bytes');
+      await finish(h, runtime, turn);
+      eq(evidence(h), [], 'flag without allowlist cannot advance theme evidence');
+    } finally { h.cleanup(); }
+  }
+  for (const mixed of [false, true]) {
+    const h = fixture('non-canary-' + mixed, { enabled: true }); seed(h);
+    h.posts.forEach((post, i) => { if (!mixed || i % 2) post.feddit = 'bookclub'; });
+    store.updateProfile(h.id, { readFeddits: ['general', 'bookclub'] });
+    try {
+      const runtime = h.scheduler(), turn = await admit(h, runtime);
+      const snap = turn.checkpoints['opportunity-candidates'];
+      eq(turn.input.themeInterestScope, { version: 1, communities: ['general'] }, 'allowlist freezes independently of profile subscriptions');
+      ok(!turn.generations[0].request.prompt.includes('BOT-LOCAL FAMILIARITY'), 'non-canary/mixed request has no theme cues');
+      const candidates = snap.candidates.map(candidate => {
+        if (!candidate.themeInterest) return candidate;
+        return { ...candidate, themeInterest: { ...candidate.themeInterest, offeredHint: false } };
+      });
+      const plain = budget.construct({ model: turn.generations[0].request.model, system: turn.generations[0].request.system,
+        candidates, voteCandidates: snap.voteCandidates, voteAllowance: snap.voteAllowance,
+        decisionAt: Number(turn.createdAt) || h.now(), decisionContractVersion: 2, constructionVersion: budget.VERSION,
+        firstContactVersion: 2, firstContactKey: snap.firstContactKey, firstContactVoteKey: snap.firstContactVoteKey });
+      eq(turn.generations[0].request.prompt, plain.prompt, 'mixed scope cannot alter baseline prompt or retained slate');
+      await finish(h, runtime, turn);
+      ok(evidence(h).every(event => event.community === 'general'), 'non-canary encounters cannot enter scoped receipt state');
+      if (!mixed) eq(evidence(h), [], 'entirely non-canary menu creates no theme evidence');
+    } finally { h.cleanup(); }
+  }
+  {
     const h = fixture('on-wait', { enabled: true }); seed(h);
     try {
       const runtime = h.scheduler(), turn = await admit(h, runtime);
       eq(turn.input.themeInterestVersion, 1, 'explicit flag freezes theme v1 for new ordinary turns');
+      eq(turn.input.themeInterestScope, { version: 1, communities: ['general'] }, 'new admission freezes explicit canary community contract');
       eq(turn.input.firstContactVersion, 2, 'first-look v2 unchanged');
       eq(turn.input.ordinaryCandidateVersion, 1, 'turnover-v1 unchanged');
       eq(turn.input.continuationVersion, 2, 'continuation-v2 unchanged');
@@ -103,16 +139,21 @@ async function run() {
         'decorated request obeys exact hosted context ceiling');
       const request = JSON.stringify(turn.generations[0].request);
       h.settings.themeInterestEnabled = false;
+      h.settings.themeInterestCommunities = 'bookclub';
       const restart = h.restartRuntime();
       restart.scheduler.reconcileDurableTurns(); await settle(12);
       eq(JSON.stringify(restart.turnStore.get(turn.id).generations[0].request), request, 'flag removal cannot reinterpret frozen request after restart');
-      const final = await finish(h, runtime, turn);
+      eq(restart.turnStore.get(turn.id).input.themeInterestScope, { version: 1, communities: ['general'] },
+        'restart cannot replace frozen allowlist with current process configuration');
+      completeJob(restart.queue, turn.generations[0].jobId, wait(turn));
+      restart.scheduler.reconcileDurableTurns(); await settle(18);
+      const final = restart.turnStore.get(turn.id);
       eq(final.status, 'completed', 'valid WAIT completes');
       ok(evidence(h, 'exposure').length > 0, 'valid actually offered WAIT records exposure');
       eq(evidence(h, 'participation'), [], 'WAIT does not invent own participation');
       eq(h.writes, [], 'WAIT/NIL remains free of publication');
       const receipts = JSON.stringify(evidence(h));
-      runtime.reconcileDurableTurns(); await settle(12);
+      restart.scheduler.reconcileDurableTurns(); await settle(12);
       eq(JSON.stringify(evidence(h)), receipts, 'completed replay cannot double-count evidence');
       eq(final.generations.length, 1, 'no additional model call');
     } finally { h.cleanup(); }
@@ -177,6 +218,38 @@ async function run() {
       ok(!frozen.generations[0].request.prompt.includes('BOT-LOCAL FAMILIARITY'), 'feature flag cannot reinterpret admitted legacy request');
       await finish(h, runtime, frozen);
       eq(evidence(h), [], 'legacy turn cannot advance new theme state');
+    } finally { h.cleanup(); }
+  }
+  {
+    const h = fixture('legacy-global-theme', { enabled: true, communities: 'bookclub' }); seed(h);
+    try {
+      const turn = h.turnStore.create({ profileId: h.id, profile: store.getProfile(h.id), rehearsal: false,
+        trigger: 'scheduled', input: { mode: 'capabilities', decisionContractVersion: 2, continuationVersion: 2,
+          ordinaryCandidateVersion: 1, hostedDecisionBudgetVersion: budget.VERSION, firstContactVersion: 2,
+          themeInterestVersion: 1, choices: [{ key: 'reply' }] } }).turn;
+      const runtime = h.scheduler(); runtime.reconcileDurableTurns(); await settle(18);
+      const frozen = h.turnStore.get(turn.id);
+      eq(frozen.input.themeInterestScope, undefined, 'reviewed legacy theme-v1 turn retains absent global scope');
+      ok(frozen.generations[0].request.prompt.includes('OPTIONAL BOT-LOCAL FAMILIARITY'),
+        'new restricted process cannot reinterpret already-frozen global theme-v1 construction');
+      await finish(h, runtime, frozen);
+      ok(evidence(h).length > 0, 'legacy global theme-v1 replay retains its reviewed receipt semantics');
+    } finally { h.cleanup(); }
+  }
+  {
+    const h = fixture('unknown-frozen-scope', { enabled: true });
+    try {
+      const turn = h.turnStore.create({ profileId: h.id, profile: store.getProfile(h.id), rehearsal: false,
+        trigger: 'scheduled', input: { mode: 'capabilities', decisionContractVersion: 2, continuationVersion: 2,
+          ordinaryCandidateVersion: 1, hostedDecisionBudgetVersion: budget.VERSION, firstContactVersion: 2,
+          themeInterestVersion: 1, themeInterestScope: { version: 99, communities: ['general'] },
+          choices: [{ key: 'reply' }] } }).turn;
+      h.scheduler().reconcileDurableTurns(); await settle(18);
+      const held = h.turnStore.get(turn.id);
+      eq(held.status, 'blocked', 'unsupported frozen scope holds safely for compatible recovery');
+      eq(held.generations.length, 0, 'unsupported scope cannot enqueue inference');
+      eq(evidence(h), [], 'unsupported scope cannot write receipts');
+      eq(h.writes, [], 'unsupported scope cannot publish');
     } finally { h.cleanup(); }
   }
   {
@@ -247,6 +320,43 @@ async function run() {
       ok(evidence(h, 'exposure').length > 0, 'desktop valid offers recorded in selected mode');
       eq(store.getThemeInterestState(h.id, { simulation: !rehearsal }).events, [], 'opposite live/rehearsal ledger remains isolated');
       eq(h.writes, [], 'desktop WAIT/NIL never publishes');
+    } finally { h.cleanup(); }
+  }
+  for (const rehearsal of [false, true]) {
+    let released;
+    for (const enabled of [false, true]) {
+      const h = fixture('local-mixed-' + rehearsal + '-' + enabled, { enabled, local: true, rehearsal }); seed(h);
+      h.posts.forEach((post, i) => { if (i % 2) post.feddit = 'bookclub'; });
+      store.updateProfile(h.id, { readFeddits: ['general', 'bookclub'] });
+      try {
+        await h.scheduler().runTick();
+        eq(h.calls.length, 1, 'mixed desktop menu retains one existing inference');
+        if (!enabled) released = h.calls[0].prompt;
+        else eq(h.calls[0].prompt, released, 'mixed desktop menu is byte-identical to released prompt');
+        ok(evidence(h).every(event => event.community === 'general'), 'desktop non-canary encounters cannot create receipts');
+        eq(store.getThemeInterestState(h.id, { simulation: !rehearsal }).events, [], 'mixed desktop scope preserves mode isolation');
+        eq(h.writes, [], 'mixed desktop WAIT never publishes');
+      } finally { h.cleanup(); }
+    }
+  }
+  for (const rehearsal of [false, true]) for (const action of ['reply', 'post']) {
+    const h = fixture('non-canary-use-' + rehearsal + '-' + action, { enabled: true, rehearsal });
+    h.posts.forEach(post => { post.feddit = 'bookclub'; });
+    store.updateProfile(h.id, { readFeddits: ['bookclub'], postFeddits: ['bookclub'],
+      ...(action === 'post' ? { canReply: false, canStartDiscussions: true, postsPerHour: 1, commentsPerHour: 0 } : {}) });
+    if (action === 'post') store.updateSched(h.id, { nextCommentAt: null, nextPostAt: 0 }, { simulation: rehearsal });
+    try {
+      const runtime = h.scheduler(), turn = await admit(h, runtime);
+      const writing = await finish(h, runtime, turn, wait(turn,
+        turn.checkpoints['hosted-decision-construction'].candidateIds[0]));
+      ok(!writing.generations[1].request.prompt.includes('BOT-LOCAL FAMILIARITY'), 'non-canary own writing retains released presentation');
+      completeJob(h.queue, writing.generations[1].jobId,
+        'Municipal lunar permits\n\nMunicipal lunar parking paperwork requires a permit for every filing cabinet.');
+      runtime.reconcileDurableTurns(); await settle(18);
+      eq(h.turnStore.get(turn.id).status, 'completed', 'non-canary own writing completes normally: ' + action);
+      eq(evidence(h), [], 'non-canary publication/rehearsal creates no exposure or own-use theme state: ' + action);
+      eq(store.getThemeInterestState(h.id, { simulation: !rehearsal }).events, [], 'non-canary own use leaves opposite mode untouched');
+      eq(h.writes.length, rehearsal ? 0 : 1, 'scope does not change normal publication/rehearsal semantics');
     } finally { h.cleanup(); }
   }
   {

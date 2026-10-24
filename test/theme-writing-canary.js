@@ -36,7 +36,7 @@ async function run() {
   const scoped = Object.create(store);
   scoped.listProfiles = () => [store.getProfile(id)];
   const h = harness({ profiles: [store.getProfile(id)], store: scoped, placement: 'hosted',
-    themeInterestEnabled: true, feedPosts: () => posts });
+    themeInterestEnabled: true, themeInterestCommunities: 'general', feedPosts: () => posts });
   try {
     store.updateSettings({ writingCanary: { version: 1, profileIds: [id] } });
     const membership = structuredClone(store.getSettings().writingCanary);
