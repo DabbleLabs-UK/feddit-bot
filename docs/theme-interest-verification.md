@@ -1,5 +1,25 @@
 # Theme-interest v1 verification, 24 October 2026
 
+## Community-only natural canary delta
+
+`fix/theme-interest-community-canary` adds an independent frozen explicit scope,
+not a new theme algorithm. Scope parsing is strict and default-off without a
+nonempty allowlist. Mixed/unknown-community decision prompts match the baseline
+exactly. Scoped hosted construction retains baseline IDs, order and deferrals;
+optional cues fit both requests or are omitted. Exposure and confirmed use are
+filtered independently, including live/rehearsal publication paths.
+
+New scope tests: 64 pure scope assertions, 72 actual-tokenizer construction
+assertions, and 201 scheduler assertions (including the original cases). Frozen
+scope survives config removal/restart; unknown scope holds before inference.
+Existing legacy unscoped-v1 replay remains exact. The companion retains its
+existing writing-v3 admission and hosting construction version.
+
+These checks do not establish a natural quality benefit. Deployment evidence
+will separately record actual running revisions, private backups, preserved
+configuration and any naturally occurring receipts/cues. No synthetic activity
+or model experiment is required to activate the authorized natural canary.
+
 Source-only implementation on `feature/emergent-theme-interest`, based on
 deployed hosted reply-continuity `4f4d11e`. Remote inspection confirmed main is
 still `633e808`, hosted reviewed source is `4f4d11e`, desktop reviewed source is

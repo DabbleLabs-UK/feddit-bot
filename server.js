@@ -2296,6 +2296,7 @@ const quietConversations = createQuietConversations({
 });
 const schedulerHandle = scheduler.start({
   themeInterestEnabled: process.env.FEDDIT_THEME_INTEREST_V1 === '1',
+  themeInterestCommunities: process.env.FEDDIT_THEME_INTEREST_COMMUNITIES,
   evidenceStore,
   store,
   providers,
