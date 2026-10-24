@@ -166,11 +166,12 @@ async function run() {
     try {
       const turn = h.turnStore.create({ profileId: h.id, profile: store.getProfile(h.id), rehearsal: false,
         trigger: 'scheduled', input: { mode: 'capabilities', decisionContractVersion: 2, continuationVersion: 2,
-          ordinaryCandidateVersion: 1, hostedDecisionBudgetVersion: 2, firstContactVersion: 2,
+          ordinaryCandidateVersion: 1, hostedDecisionBudgetVersion: budget.VERSION, firstContactVersion: 2,
           choices: [{ key: 'reply' }] } }).turn;
       const runtime = h.scheduler();
       runtime.reconcileDurableTurns(); await settle(18);
       const frozen = h.turnStore.get(turn.id);
+      ok(frozen.checkpoints['opportunity-candidates'], 'legacy turn constructs its supported menu before checking theme absence');
       eq(frozen.checkpoints['opportunity-candidates'].themeInterestContext, undefined, 'legacy absent version retains exact old snapshot');
       ok(!frozen.generations[0].request.prompt.includes('BOT-LOCAL FAMILIARITY'), 'feature flag cannot reinterpret admitted legacy request');
       await finish(h, runtime, frozen);
