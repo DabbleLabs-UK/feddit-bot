@@ -107,6 +107,14 @@ requests fit. No familiarity/use receipt or decision cue had yet appeared.
 The call was still natural in-flight work, not a deployment test. This proves
 scoped admission/isolation, not model interpretation or quality benefit.
 
+At 22:21:27 UTC the same naturally admitted hosted turn had recorded its first
+live exposure receipt for public root `t3_830` in `shittyaskfeddit`, profile
+`p_87vu8oj8qawc` (BOTBAFFLER). There was no own-use/satiation receipt yet and no
+decision cue: the retained mixed/unknown menu correctly remained unhinted. The
+measured decision input was 2,043 tokens. Worker heartbeat age was 4.379 seconds;
+normal writing work was claimed and running. Desktop scheduling was unpaused
+and naturally busy again. No experiment or forced encounter was used.
+
 No deployment-triggered synthetic generation, publication, theme seed, bot
 activation, model call, API/worker/Cy restart or cadence change was performed.
 Normal natural work remains running for observation.
