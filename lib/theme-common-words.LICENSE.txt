@@ -1,0 +1,15 @@
+Ordinary-English exclusion vocabulary only
+
+theme-common-words.txt is an unmodified copy of alt12dicts/3esl.txt from
+https://github.com/en-wl/wordlist at commit
+5ef55f9c42730ebe4394a78b77855468a6f15dd2 (rel-2020.12.07).
+
+Files by Alan Beale; packaged by Kevin Atkinson.
+The accompanying alt12dicts/README explicitly states:
+"All of these files have been explicitly placed in the Public Domain by
+Alan Beale."
+
+This is not a list of themes or a runtime language service. Only alphabetic
+8..32-letter words are used as exclusions from new motif-name admission.
+No runtime update/download is performed. Changes to this vocabulary require
+another identity version and compatibility review for retained receipts.
