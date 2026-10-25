@@ -29,10 +29,11 @@ async function run() {
   Object.assign(source.sched, { nextPostAt: null, nextCommentAt: 0, nextVoteAt: null });
   const id = store.createProfile(source).id;
   const posts = [20, 21, 22].map(postId => ({ id: postId, author: 'other', feddit: 'general',
-    title: 'Municipal lunar parking permits', selftext: 'Lunar parking permits demand municipal paperwork.',
+    title: 'ZIRCONLANTERNS municipal parking for ZIRCONLANTERNS', selftext: 'Lunar parking permits demand municipal paperwork.',
     created_utc: 9, independently_assessed: false }));
   store.recordThemeInterest(id, [{ id: 'seed', at: 9000, kind: 'exposure', sourceKey: 't3_1',
-    threadKey: 't3_1', community: 'general', author: 'other', features: interest.features(posts[0].selftext) }]);
+    threadKey: 't3_1', community: 'general', author: 'other', features: interest.features(posts[0].selftext),
+    identityVersion: 2, motifs: ['zirconlanterns'] }]);
   const scoped = Object.create(store);
   scoped.listProfiles = () => [store.getProfile(id)];
   const h = harness({ profiles: [store.getProfile(id)], store: scoped, placement: 'hosted',
