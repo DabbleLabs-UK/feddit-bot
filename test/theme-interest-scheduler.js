@@ -26,7 +26,7 @@ function fixture(name, options = {}) {
   const scoped = Object.create(store);
   scoped.listProfiles = () => store.listProfiles().filter(p => p.id === id);
   const posts = Array.from({ length: 6 }, (_, i) => ({ id: 20 + i, author: 'other', feddit: 'general',
-    title: 'Municipal lunar parking permits ' + i, selftext: 'Lunar parking permits demand municipal paperwork.',
+    title: 'ZIRCONLANTERNS municipal lunar parking permits for ZIRCONLANTERNS ' + i, selftext: 'Lunar parking permits demand municipal paperwork.',
     created_utc: 9, independently_assessed: false }));
   const calls = [];
   const settings = { profiles: [store.getProfile(id)], store: scoped, placement: options.local ? 'desktop' : 'hosted',
@@ -63,7 +63,8 @@ async function finish(h, runtime, turn, text = wait(turn)) {
 }
 function seed(h) {
   store.recordThemeInterest(h.id, [{ id: 'seed', at: 9000, kind: 'exposure', sourceKey: 't3_1', threadKey: 't3_1',
-    community: 'general', author: 'someone', features: interest.features(h.posts[0].title + ' ' + h.posts[0].selftext) }],
+    community: 'general', author: 'someone', features: interest.features(h.posts[0].title + ' ' + h.posts[0].selftext),
+    identityVersion: 2, motifs: ['zirconlanterns'] }],
   { simulation: !!h.options.rehearsal });
 }
 const evidence = (h, kind) => store.getThemeInterestState(h.id, { simulation: !!h.options.rehearsal }).events
@@ -127,6 +128,8 @@ async function run() {
     try {
       const runtime = h.scheduler(), turn = await admit(h, runtime);
       eq(turn.input.themeInterestVersion, 1, 'explicit flag freezes theme v1 for new ordinary turns');
+      eq(turn.input.themeIdentityVersion, 2, 'new ordinary turns freeze independent stable motif identity');
+      eq(turn.input.themeMotifIdentity.version, 2, 'admission freezes local known motif names');
       eq(turn.input.themeInterestScope, { version: 1, communities: ['general'] }, 'new admission freezes explicit canary community contract');
       eq(turn.input.firstContactVersion, 2, 'first-look v2 unchanged');
       eq(turn.input.ordinaryCandidateVersion, 1, 'turnover-v1 unchanged');
@@ -250,6 +253,23 @@ async function run() {
       eq(held.generations.length, 0, 'unsupported scope cannot enqueue inference');
       eq(evidence(h), [], 'unsupported scope cannot write receipts');
       eq(h.writes, [], 'unsupported scope cannot publish');
+    } finally { h.cleanup(); }
+  }
+  for (const identity of [{ themeIdentityVersion: 99 }, { themeIdentityVersion: 2 },
+    { themeIdentityVersion: 2, themeMotifIdentity: { version: 99, anchors: [] } }]) {
+    const h = fixture('unknown-frozen-identity-' + identity.themeIdentityVersion, { enabled: true });
+    try {
+      const turn = h.turnStore.create({ profileId: h.id, profile: store.getProfile(h.id), rehearsal: false,
+        trigger: 'scheduled', input: { mode: 'capabilities', decisionContractVersion: 2, continuationVersion: 2,
+          ordinaryCandidateVersion: 1, hostedDecisionBudgetVersion: budget.VERSION, firstContactVersion: 2,
+          themeInterestVersion: 1, themeInterestScope: { version: 1, communities: ['general'] },
+          ...identity, choices: [{ key: 'reply' }] } }).turn;
+      h.scheduler().reconcileDurableTurns(); await settle(18);
+      const held = h.turnStore.get(turn.id);
+      eq(held.status, 'blocked', 'unknown/missing identity holds for compatible recovery');
+      eq(held.generations.length, 0, 'invalid frozen identity cannot enqueue inference');
+      eq(evidence(h), [], 'invalid frozen identity cannot write receipts');
+      eq(h.writes, [], 'invalid frozen identity cannot publish');
     } finally { h.cleanup(); }
   }
   {
