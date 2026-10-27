@@ -335,3 +335,39 @@ self-recovery remains absent. No public package/release was made: desktop stays
 the same signed0.27.12/eb0a342 payload. Natural post-cache completion and overall
 reliability remain to be verified; do not call the new observation window clean
 merely because native cache activation and preservation pass.
+
+### Final natural verification: cache repair is insufficient, reliability HOLD
+
+The first post-restart request2850 failed at19:36:48.460GMT after1,200,019ms,
+OLLAMA_FIRST_OUTPUT_TIMEOUT, with no first generated record or partial acceptance.
+The native request metadata records8827 input tokens, below the unchanged32768
+context limit; the HTTP request contained34632 user characters plus401 system
+characters and shared-evidence-v1. It was the first natural call on the newly
+empty backend, not an experimental call or retry. The new native slot advanced
+from1024 tokens at19:17:37 to3072 at19:28:41, confirming continued slow prefill,
+not a successful generated result hidden by the stream parser. Terminal native
+timings correctly remain null because no completed response arrived.
+
+This falsifies any claim that excess reusable cache retention or the preceding
+cancelled job's queue delay alone explained the failures. The cap is a verified
+memory-footprint repair, but it does not make this large decision fit the existing
+deadline. CPU input-evaluation throughput remains the dominant demonstrated
+bottleneck; the precise contributions of CPU kernels, available processor share
+and variable host contention are not completely isolated. One read-only sample
+showed High performance power mode, full battery,1366MHz aggregate frequency,
+72 percent reported processor performance and performance-limit flags2; no power
+setting was changed and no unsupported thermal diagnosis is asserted. Native CPU
+allocation varied from about one to four core-equivalents across short samples.
+
+Do not declare the desktop trustworthy for a clean full-population ecology
+window yet. No additional model/thread/context/batch tuning, provider fallback,
+timeout increase or experimental inference is justified as already proven here.
+Further execution-throughput work needs its own bounded evidence and explicit
+decision about scope; it must not silently discard candidates/facts or change
+ecology to obtain a green result. No further model call is forced in this job.
+
+The service restart procedure itself completed and restored its holds; it is not
+left running. Production natural work remains enabled. Rollback of the cache cap
+is source-only restoration of the verified original launcher followed by another
+owned safe idle handover. Do not restore any old private data snapshot over later
+natural state. No public release or wider promotion is recommended by this result.
