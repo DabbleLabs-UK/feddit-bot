@@ -138,3 +138,81 @@ No UI/browser assertion was weakened and no claim of a full browser pass is made
 
 No synthetic/model experiment, paid call, hosted deployment or public release
 is part of this repair. Controlled delivery and natural runtime evidence follow.
+
+## Controlled local delivery
+
+The corrected handover installed 0.27.12 from eb0a342 at
+2026-10-27T16:54:45.861Z and restored normal scheduling at 16:54:46.474Z.
+The original launcher/runner were replaced only after the entire active tick
+became idle. No inference was killed. No update retry was required. The existing
+pause is tick-boundary admission, not a per-profile stop: the running tick could
+continue its already-captured sequence while pause was saved true. This explains
+the 32m47s second drain; the bounded helper still completed before its 35m limit.
+This maintenance limitation is not changed into another scheduler project here.
+
+The final private backup contains 10 files / 11,331,183 bytes. Every backup hash
+verifies. Post-start comparison retains all 27 profiles, protected profile
+configuration, groups, importer work and credential bytes. All settings match
+apart from the deliberately restored update-owned pause; historical theme
+receipts and exact writing-v3 IDs survive. Fixed quiet assistance is ON,
+population-aware quiet assistance remains OFF, and theme scope is unchanged.
+New launcher PID47288 and runner PID68012 serve port8770 from the signed payload.
+No hosted/API/worker/Cy or Ollama process/configuration was changed.
+
+At 16:55:05.004Z a naturally admitted quiet-conversation decision for
+am_i_gaybot2 reported decisionEvidenceVersion=1, proving the real corrected
+entry point selected the compact representation. This admission is not yet
+claimed as a completed or semantically valid decision; completion evidence is
+recorded after it arrives. No request was forced for verification.
+
+The 36 native timeout incidents also each match a retained timeout-classified
+profile activity record uniquely within 15 seconds, across 12 bots. Thus the
+full-window attribution is corroborated beyond the shorter 50-request telemetry.
+The narrower request-ID/token correlation remains separately described above.
+
+External self-recovery/supervision remains absent from the related scheduled
+task/service inventory. It was not implemented as part of this inference repair.
+
+## Natural verification: reliability remains HOLD
+
+Request2839 ended at 17:15:05.035Z after 1,200,031ms with
+OLLAMA_FIRST_OUTPUT_TIMEOUT. Shared-evidence version1 was active: 32,462 user
+prompt characters plus 397 system characters, unchanged Qwen model, four
+requested threads, 640 output tokens, native input8178 and context32768.
+No generated record arrived and no partial response was accepted. Terminal
+native timing counters correctly remain null, not fabricated zeroes.
+
+Native task110889 recorded input progress1024 at278.13s (3.68 tokens/s) and
+2048 at547.71s (3.74 tokens/s). At17:18:25Z a numeric-only read of the actual
+native /slots endpoint still showed task110889 processing, n_prompt_tokens3076,
+after its HTTP client had timed out. The desktop had already cleared that
+request and admitted request2840 for a different bot at17:15:31.037Z. This is
+not a duplicate inference retry: it is obsolete backend work delaying a later
+opportunity. Untimestamped native task records do not support an exact split
+between server queueing, cache work, cancellation drain and current prefill.
+
+The lossless representation demonstrably removes redundant input, but this
+natural result does NOT establish successful model comprehension, a throughput
+improvement or restored reliability. Smaller requests are still too slow under
+the current shared-backend conditions. Do not call the next ecology window
+clean yet or claim this was fully repaired merely because port8770 is healthy.
+
+Read-only resource checks find the expected BelowNormal priority, affinity
+0x3FF and the unchanged guardian policy, not a newly imposed single-core
+affinity. Native private memory is about16GB with about6.2GB working set; CPU
+allocation varies markedly (one short sample0.11 CPU-seconds/wall-second).
+Earlier host load was91%; its historical share of each failure is unquantified.
+The current runner had no measured read/write throughput during one sample;
+store.load uses its cache and does not unconditionally rewrite on each read.
+There is no demonstrated persistence-to-latency cause justifying a new storage
+project. No host priority, affinity, model/runtime, context or batch setting was
+changed. The native1024-token batch/ubatch may amplify cancellation delay under
+contention, but changing it without a safe service-level validation is not
+presented as a proven repair.
+
+Remaining boundary: a focused shared Open WebUI/Ollama execution and
+cancellation/drain repair, at an explicitly safe maintenance point. Do not
+blindly increase deadlines, restart active useful work, or invent a native
+quiescence acknowledgement from a closed client socket. Current local0.27.12
+is unpaused and all canaries/state remain preserved; no further model call or
+runtime change was forced to obtain a favorable result.
