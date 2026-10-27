@@ -68,5 +68,9 @@ async function runCase(placement, repair = false) {
   await runCase('desktop', true);
   await runCase('advanced');
   await runCase('hosted');
+  // Check the real startup dependency without starting a server or its timers.
+  const serverSource = require('node:fs').readFileSync(require('node:path').join(__dirname, '../server.js'), 'utf8');
+  assert.match(serverSource, /const schedulerHandle = scheduler\.start\(\{\s*placement: PLACEMENT,/,
+    'server startup must pass the configured placement to the scheduler'); checks++;
   console.log('decision-evidence-scheduler: '+checks+' checks passed');
 })().catch(e=>{ console.error(e);process.exitCode=1; });

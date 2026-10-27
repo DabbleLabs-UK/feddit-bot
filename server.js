@@ -2322,6 +2322,7 @@ const quietConversations = createQuietConversations({
   enabled: process.env.FEDDIT_QUIET_CONVERSATIONS === '1',
 });
 const schedulerHandle = scheduler.start({
+  placement: PLACEMENT,
   themeInterestEnabled: process.env.FEDDIT_THEME_INTEREST_V1 === '1',
   themeInterestCommunities: process.env.FEDDIT_THEME_INTEREST_COMMUNITIES,
   evidenceStore,
