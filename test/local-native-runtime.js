@@ -40,7 +40,8 @@ async function run() {
   eq((await changedVersion.runtime.probe()).state, 'idle');
   version = 'other';
   eq(await changedVersion.runtime.probe(), { state: 'unknown', code: 'OLLAMA_NATIVE_VERSION_CHANGED' });
-  eq((await fixture({ identity: () => ({ ...source, connections: 1 }) }).runtime.probe()).state, 'busy');
+  eq((await fixture({ identity: () => ({ ...source, connections: 1 }) }).runtime.probe()).state, 'idle');
+  eq((await fixture({ identity: () => ({ ...source, connections: 3 }), slots: [{ is_processing: true }] }).runtime.probe()).state, 'busy');
   eq((await fixture({ identity: () => ({ ...source, native: null }) }).runtime.probe()).state, 'idle');
   eq((await fixture({ identity: () => ({ ...source, native: null, connections: 1 }) }).runtime.probe()).state, 'busy');
   eq((await fixture({ identity: n => ({ ...source, service: { ...source.service, birth: String(n) } }) }).runtime.probe()).code, 'OLLAMA_NATIVE_CHANGED');

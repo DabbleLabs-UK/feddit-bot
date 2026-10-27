@@ -51,7 +51,8 @@ not change; this adds no scheduling opportunities or inference calls.
 ## Verification and replay
 
 The offline Qwen tokenizer pins vocabulary, Unicode categories, model digest,
-template and parameters. The provider independently checks actual model metadata,
+template and parameters. The provider pins the verified Ollama0.32.15 renderer
+and independently checks actual model metadata,
 input count and request hash before generation. An absent native model does not
 require a warm-up inference merely to count tokens. Unsupported model metadata
 fails closed rather than silently using the old oversized representation.
@@ -69,6 +70,12 @@ new inference. The bot's failed Working attribution clears immediately, while
 provider availability reports the drain separately. No process is killed and
 no inference is automatically retried. The scheduler rechecks this same gate
 before advancing another profile from a previously captured tick.
+
+An idle established metadata keep-alive is not inference. For a verified loaded
+native process, strict slot activity is authoritative, not the number of TCP
+connections. Budget metadata reads explicitly close their own connections and
+the admission probe precedes those reads. A pre-inference refusal preserves its
+bounded native classification in existing diagnostics.
 
 Rollback must preserve later natural state and the existing canary environment.
 Do not restore a private backup over subsequent activity. Removing this capacity

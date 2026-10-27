@@ -62,12 +62,15 @@ async function run() {
   const descriptor = { version: 2, inputLimit: 2400, inputTokens: tokenizer.countRequest(system, prompt),
     requestHash: require('node:crypto').createHash('sha256').update(JSON.stringify([system, prompt, numPredict])).digest('hex') };
   const options = { system, prompt, numPredict, model: tokenizer.MODEL, leaseClient: null,
-    desktopDecisionBudget: descriptor, metadataTransport: async () => { metadataReads++; return { fixture: true }; },
+    desktopDecisionBudget: descriptor, metadataTransport: async (route, opts) => {
+      metadataReads++; assert.equal(opts.connectionClose, true);
+      return route === '/api/version' ? { version: '0.32.15' } : { fixture: true };
+    },
     chatTransport: async () => { inferenceCalls++; return { done: true, message: { content: 'WAIT' } }; } };
   tokenizer.verifyModel = (show, tags) => { assert.equal(show.fixture, true); assert.equal(tags.fixture, true); verificationCalls++; };
   try {
     eq((await ollama.generate(options)).text, 'WAIT');
-    eq(metadataReads, 2);
+    eq(metadataReads, 3);
     eq(verificationCalls, 1);
     eq(inferenceCalls, 1);
     for (const changed of [{ inputLimit: 3000 }, { inputTokens: descriptor.inputTokens + 1 }, { version: 1 }, { requestHash: 'wrong' }]) {
@@ -75,6 +78,7 @@ async function run() {
     }
     await assert.rejects(ollama.generate({ ...options, prompt: prompt + ' changed' }), { code: 'DESKTOP_DECISION_BUDGET_INVALID' }); checks++;
     await assert.rejects(ollama.generate({ ...options, model: 'another' }), { code: 'DESKTOP_DECISION_BUDGET_INVALID' }); checks++;
+    await assert.rejects(ollama.generate({ ...options, metadataTransport: async () => ({ version: 'other' }) }), { code: 'DESKTOP_DECISION_BUDGET_INVALID' }); checks++;
     tokenizer.verifyModel = () => { throw new Error('PRIVATE METADATA'); };
     await assert.rejects(ollama.generate(options), error => error.code === 'DESKTOP_DECISION_BUDGET_INVALID' && !error.message.includes('PRIVATE')); checks++;
     eq(inferenceCalls, 1);
