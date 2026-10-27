@@ -216,3 +216,35 @@ blindly increase deadlines, restart active useful work, or invent a native
 quiescence acknowledgement from a closed client socket. Current local0.27.12
 is unpaused and all canaries/state remain preserved; no further model call or
 runtime change was forced to obtain a favorable result.
+
+## Approved focused shared-backend maintenance
+
+The owner approved focused Open WebUI/Ollama maintenance, including an idle-only
+restart. Further read-only inspection identifies a concrete memory-pressure
+amplifier: the native server retains 8,153.551 MiB of reusable prompt snapshots
+under its default 8,192 MiB limit, separately from the active 4,608 MiB KV buffer.
+The native process has about 16.28 GB private allocation. Host available memory
+fell to 976 MiB, committed memory reached 67.59 GB on a 32 GB machine, and
+multiple samples show sustained paging. This does not prove that every second
+of prefill latency is paging; it establishes unnecessary large cache retention
+under actual memory pressure. Independent host workloads are not modified.
+
+The installed native binary explicitly documents --cache-ram and its
+LLAMA_ARG_CACHE_RAM environment variable. The minimal source-controlled launch
+policy in ops/leno-ollama/start-ollama.cmd caps reusable snapshots at 1,024 MiB.
+It does not change model weights/digest, 32,768-token context, KV precision,
+temperature, thread count, batch/ubatch, provider timeouts, priority or affinity.
+Removing the new comment/environment line reproduces the original launcher
+exactly after line-ending normalization. No application data or replay contract
+changes. A cache miss may require recomputation, never omission of prompt facts.
+
+The original launcher and unchanged guardian are privately backed up and hash
+verified. The original launcher SHA-256 is
+947457014e3025420ad7ffc2616a7b969a3f64d376cc85ca263d737ebd96f178.
+The existing normal hidden startup path is retained. This is not a public
+release, model upgrade, new supervisor or scheduled experiment.
+
+Six static policy assertions pass; the native help/parser check starts no
+server and loads no model. Actual cache activation, safe handover and natural
+completion evidence remain to be recorded below; source presence is not proof
+of a running repair.
