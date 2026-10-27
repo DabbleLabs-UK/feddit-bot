@@ -31,6 +31,9 @@ function installFixture({ root, log }) {
     throw new Error('Unexpected fixture read: ' + route);
   };
   const providers = require(path.join(root, 'lib/providers'));
+  // This fixture stubs the native provider, including its new startup drain
+  // probe. Native lifecycle/identity has its own injected no-network suites.
+  providers.ollama.configureRuntime = () => {};
   providers.status = async (id) => { record({ status: id }); return { id, state: 'unavailable' }; };
   providers.ollama.isBusy = () => false;
   providers.generate = async (request) => {
