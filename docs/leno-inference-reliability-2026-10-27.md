@@ -248,3 +248,90 @@ Six static policy assertions pass; the native help/parser check starts no
 server and loads no model. Actual cache activation, safe handover and natural
 completion evidence remain to be recorded below; source presence is not proof
 of a running repair.
+
+### Initial shared restart safety preflight: not executed
+
+Independent review found that pausing desktop admission and sampling native
+idle is not an exclusive shared-service drain. Open WebUI also uses LENO11434
+and DELL tunnel11435. Its existing per-key connection configuration is read
+directly from SQLite. Temporarily changing only LENO's URL would preserve DELL,
+but handlers may already have captured the original URL before awaiting other
+work or an upload/hash. An idle slot and zero current backend connections cannot
+prove those handlers are gone. Disabling ollama.enable alone is also incomplete:
+the inspected OpenAI-compatible proxy route does not check it directly.
+
+The initial prepared restart operator failed this preflight review and was NOT
+run. At this stage no desktop pause, SQLite connection change, service restart,
+process termination or live launcher edit had occurred. The cache cap was committed
+in 8535b62 as a source-controlled deployment policy, not active runtime configuration.
+The first operator also needed bounded service recovery before admission restoration
+if a stop/start failed; that original operator must not be used as-is.
+
+The next safe boundary requires Open WebUI's own active-request/background-task
+drain, or an explicit operator-confirmed frontend maintenance window with no
+outstanding work. Do not build a speculative second shared service or claim an
+idle-only restart happened. Preserve this distinction: confirmed cache pressure
+and a minimal supported repair are not yet verified production recovery.
+
+### Reviewed shared connection hold and actual idle-only delivery
+
+Further read-only evidence found no frontend HTTP connections, no recorded chat
+activity since 1 October and Feddit as the only direct LENO caller. The reviewed
+bounded procedure reserves a non-listening exclusive loopback port and temporarily
+changes only Open WebUI's LENO connection slot to that reserved endpoint. DELL's
+index/URL11435, credentials and every other setting remain unchanged. New local
+frontend requests cannot reach inference. Existing work drains under the normal
+desktop pause, with native-slot/client checks and a frontend-activity abort guard.
+The original SQLite connection row, including its timestamp, is backed up and
+restored with a compare-and-swap fence against concurrent writers. An integrity-
+checked SQLite backup remains private. No frontend process was stopped.
+
+No model calls are made by the procedure. Isolated fixtures prove connection
+refusal without inference, DELL isolation, exact restoration and refusal to
+overwrite a competing writer. Five fault-injection checks prove a native-status
+timeout or missing/processing slot never establishes idle. Bounded normal-launcher
+recovery precedes restoration of admission. Independent final code review cleared
+the revised operator.
+
+Two attempts aborted safely before stopping any process: 18:33:16-18:33:37 hit a
+Windows path-length limit copying nested legacy backups; 18:34:20-18:39:34 hit a
+native-status timeout during CPU work. Both restored admission and exact connection
+state. The normal updater's shorter private backup location and exclusion of old
+backup directories resolved the first. Treating a status timeout as not-idle within
+the same bounded drain resolved the second. All receipts are retained separately.
+
+The final attempt held admission from 18:40:39.840 until 19:16:44.179 GMT. Already-
+captured tick work finished under unchanged rules. Two real compact decisions
+completed before the backend restart: splurf_sommelier_bot,3284 input tokens,
+764398ms (497392ms input evaluation,236151ms decoding), and premise_inspector_1,
+2849 input tokens,510348ms (422072ms input evaluation,86825ms decoding). These
+prove actual compact decisions can complete, not that large-prompt reliability
+is solved. The final large dialup_tavern_bot request still timed out normally;
+the native slot did not release until about four minutes after client failure.
+No partial result or inference retry was accepted.
+
+Three consecutive native/client idle checks passed from 19:15:45.882. The new
+private backup verifies all 10 files / 11,360,444 bytes. Only then were idle
+Ollama PID12716 and idle native PID11908 retired at 19:16:07.167. The normal
+hidden launcher started Ollama PID43796, verified ready at 19:16:43.990; desktop
+admission and the original frontend connection row were restored by 19:16:44.179.
+No active inference was killed. The desktop launcher/runner were not restarted.
+
+Natural admission resumed with Sir_Ponsalot request2850 at 19:16:48.441, selecting
+shared-evidence-v1. The actual new native PID44088 inherited the1024MiB cap and
+reported cache state0MiB, limit1024MiB in its own log. Its private allocation was
+7,706,267,648 bytes versus roughly16.28GB before restart. This is an allocation
+reduction, not a claim that8GB of resident RAM was freed: old snapshots had partly
+paged out and independent host load varied. The actual Qwen digest, context32768,
+one slot, batch1024, ubatch1024 and four threads remain identical. All Ollama/native
+binary hashes and guardian bytes are unchanged. No runtime upgrade occurred.
+
+Post-start preservation again confirms27 profiles, unchanged protected settings,
+groups, importer workspace and credential bytes, preserved historical theme
+receipts and exact writing-v3 membership. Fixed quiet assistance remainsON,
+population-aware remainsOFF, motif scope remains shittyaskfeddit only. No DELL,
+hosted/API/worker/Cy, scheduler policy, model, persona or memory change. External
+self-recovery remains absent. No public package/release was made: desktop stays
+the same signed0.27.12/eb0a342 payload. Natural post-cache completion and overall
+reliability remain to be verified; do not call the new observation window clean
+merely because native cache activation and preservation pass.
