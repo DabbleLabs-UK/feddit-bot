@@ -371,3 +371,64 @@ left running. Production natural work remains enabled. Rollback of the cache cap
 is source-only restoration of the verified original launcher followed by another
 owned safe idle handover. Do not restore any old private data snapshot over later
 natural state. No public release or wider promotion is recommended by this result.
+
+### Renewed current-runtime investigation, 20:10 GMT
+
+The renewed task did not authorize the previously proposed two-call thread
+comparison. No experimental inference, restart, pause or configuration change
+was performed in this continuation.
+
+Read-only verification at20:10:20.975GMT confirms desktop0.27.12, scheduling
+enabled, launcher47288, runner68012, Ollama43796 and native44088. The protected
+state comparison at20:10:12.956 verifies all27 profiles, unchanged protected
+profile/settings/group/importer/credential fields, preserved theme receipts and
+the exact existing three writing-v3 IDs. No matching external Feddit recovery
+scheduled task or service was found; no supervision repair was installed.
+
+The second post-cache natural decision2851, governmint_clerk_bot, also failed:
+19:36:55.651-19:56:55.668GMT,1,200,017ms, no generated first output. Its native
+input was10746 tokens. The next natural decision2852, splurf_sommelier_bot,
+started19:57:01.123 and was still waiting for output at20:10:20.975; its native
+input is9243 tokens. This is not a successful-completion observation.
+
+An independent read-only cancellation audit confirms that HTTP cancellation
+reaches native tasks0 and8. Task0 began with8827 tokens and empty reusable cache,
+processed1024/2048/3072 tokens at131.59/293.43/688.57seconds, then received the
+20-minute client cancellation. Its slot was not released until after19:38:22,
+at4096 processed tokens: at least94seconds after the client timeout. Task8 then
+started10746 tokens with only six reusable prefix tokens, reached7168 tokens
+at814.34seconds, and received cancellation after another20-minute timeout. It
+released at8198 processed tokens. Cancellation is therefore propagated, but
+native stopping is delayed; subsequent requests can spend part of their own
+deadline queued behind that drain. No missing cancellation-forwarding or
+generated-output detection bug was established.
+
+Native startup explicitly reports n_threads=4 and n_threads_batch=4 on12 logical
+processors, with AVX2/FMA/AVX_VNNI/REPACK/OPENMP enabled. This excludes an assumed
+hidden automatic larger prefill pool and an obvious missing AVX2 build. Installed
+native implementation files are binaries, not Go/C++ sources; the exact native
+cancellation-check boundary is not established. Large1024-token batches are
+consistent with the delay but are not, by themselves, proof of a safe throughput
+repair. No batch/thread/context/priority/affinity/model/timeout change was made.
+
+A current host sample reports5,500MiB available RAM, about54.2GB committed,
+632pages-in/sec and111page-reads/sec, with76percent reported processor performance
+and84percent processor time. These are contemporaneous samples, not a historical
+load trace or proof of a particular thermal fault. They do not establish a
+single new configuration fix. CPU prefill work and variable available execution
+throughput remain proven contributors; their precise hardware/host split remains
+unresolved. A tiny additional model call would not credibly establish reliable
+completion of these9k-11k-token decisions, so none was forced.
+
+Fresh offline reruns pass26 deterministic progress-timeout/cancellation checks,
+52 phase-telemetry checks and six cache-policy checks. The first telemetry run
+could not persist its fixture in the sandbox-provided temporary directory; it
+passes with TEMP/TMP scoped to an ignored, task-owned fixture directory. An
+initial command used a nonexistent timeout-test filename; the actual
+ollama-progress-timeouts.js suite above was then run successfully. Neither test
+attempt used live application data or a model.
+
+Result remains HOLD: the installed compaction/cache repairs are real, but ordinary
+large decision reliability is not restored. Do not claim a clean full-population
+natural canary window, lower memory allocation as proof of throughput recovery,
+or offline timeout tests as proof that these production decisions complete.
