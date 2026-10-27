@@ -108,17 +108,76 @@ generation progress and 30m emergency ceiling; no partial output is accepted.
   `2a24418435acb65c3e07f9820ca13914f0a3a902efa7c07c11f39b72277a2e9e`.
   The earlier pre-admission-correction artifact is obsolete.
 
-## Controlled installation
+## Controlled installation and actual runtime
 
-Installation is being attempted through the existing safe local handover after
-the two-call controller restored normal scheduling. It uses only the unused
-approved drain allowance (4,867 seconds), a new verified private backup and
-strict desktop/native idle. It must not terminate active inference. Its owned
-pause restores on every exit. Actual installation/preservation outcome is
-recorded below after this operator exits; this document alone is not proof that
-port 8770 has updated.
+The existing safe local handover succeeded. Its update owner started at
+22:40:07.066672Z and restored scheduling at 23:25:31.130019Z, about 45m24s later.
+Only the unused approved drain allowance (4,867 seconds) was available; the
+operator did not interrupt inference. The old captured tick completed three
+natural requests: 2859 and 2860 reached their existing first-output deadlines;
+2861 completed normally. Strict desktop/native idle preceded backup and
+authenticated shutdown. No active child was killed and no backend was restarted.
 
-No public desktop release is authorized. External launcher self-recovery remains
-absent and was not implemented by this capacity repair. A clean natural canary
-baseline must use the final healthy, unpaused installed runtime, not the earlier
-HOLD period or the replay interval.
+Old request 2861 had 2,923 input tokens, 255.440 seconds prefill and 83.769
+seconds decoding, with 632.660 seconds request duration. The larger total is
+consistent with waiting behind cancelled native work; these component timings
+alone do not conclusively attribute every remaining second. The new admission
+boundary prevents a subsequent desktop request being sent until verified idle.
+
+The fresh ten-file, 11,384,349-byte private delivery backup verifies against its
+manifest. No old snapshot was restored over subsequent natural state. Independent
+checks at 23:25:44Z confirmed:
+
+- Port 8770 serves desktop 0.27.13 from the actual installed
+  `versions/0.27.13/app/server.js`, runner PID74136, launcher PID16040.
+- Exactly one launcher/runner chain; all 99 installed files match the signed
+  reviewed payload, not merely its version/build metadata.
+- Build source is d698b7948612238c8f2d684a71dd0ce12ca22e3e and the final
+  SHA-256 is 2a24418435acb65c3e07f9820ca13914f0a3a902efa7c07c11f39b72277a2e9e.
+- `paused:false`; all 27 profiles remain enabled/live. Protected profile fields,
+  settings, groups, credentials, importer workspace and retained theme receipts
+  match the delivery backup. Derived cache age and natural runtime advancement
+  are not mistaken for lost work. The legacy durable store remains byte-identical
+  with its one completed turn.
+- Exact writing-v3 IDs remain p_swb8djuqg1y4, p_7gc83gbxvjpc and
+  p_e4l36dfw9wrl. Theme canary remains shittyaskfeddit only; fixed quiet
+  assistance is on and population-aware assistance off.
+- LENO Ollama 0.32.15 PID43796 and native PID44088 are unchanged, as are Qwen
+  digest, 32,768 context, one slot, 1,024 batch/ubatch, four threads and 1 GiB
+  reusable-cache cap. Hosted/API/DELL worker/Cy were not modified.
+- The installer and replay controller exited with their pause restored. No
+  experimental inference helper remains active.
+
+Fourteen library-only assertions also passed against the actual installed
+payload, including input ceiling, tokenizer, unchanged timeouts, exact-body
+ledger bound, theme scope and WAIT construction. Final artifact hash, installed
+public-key ECDSA signature and minimum launcher 0.2.2 were reverified.
+
+At 23:26:06Z natural request 2862 (tavern_toilet_oracle) was already running with
+decisionEvidenceVersion 2, unchanged Qwen settings and 7,015 prompt characters
+plus 1,267 persona characters. This proves ordinary scheduling resumed into the
+new path. It then completed at 23:29:26.851Z: 2,135 actual input tokens,
+182.088 seconds prefill, 27.220 seconds decoding, 209.810 seconds Ollama total
+and 213.960 seconds request duration. First output arrived after 186.729
+seconds. Its valid selected comment proceeded into ordinary writing request
+2863, without a forced action or experimental call. This is live usable-primary
+completion evidence, not an inferred success merely from admission or proof of
+complete independent voting.
+
+No public desktop release occurred. External launcher self-recovery remains
+absent and was not implemented by this capacity repair.
+
+## Rollback and observation limits
+
+Use normal idle handover for any binary rollback, never terminate an active turn
+or restore an older private data snapshot over later natural activity. No new
+durable schema migration or hosted policy was introduced. Rolling back this
+desktop code restores the old oversized-input, captured-tick and native-drain
+limitations; retain the backup and exact build evidence.
+
+The two-case result supports controlled natural observation, not a guarantee for
+all profiles or future CPU contention. Missing independent votes remain an
+explicit limitation. Use 23:25:31.130019 GMT on 27 October 2026 as the new-build
+scheduling baseline, not the earlier HOLD periods or private replay interval.
+Normal production work should supply the next reliability evidence; no further
+experiment campaign or ecological tuning was started.
