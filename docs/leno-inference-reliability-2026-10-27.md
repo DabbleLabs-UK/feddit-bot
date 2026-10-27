@@ -19,6 +19,11 @@ time and exact input tokens where available, with zero unmatched requests.
 
 Representative cases:
 
+Within the 39 exactly telemetry-matched decision requests ending by the audit
+cutoff, 21 failures span 10 bots and have median input 11,537 tokens. Eighteen
+successes span 11 bots and have median input 3,693 tokens. Five bots appear in
+both groups. This subset is not mistaken for the whole native-log window.
+
 | Request | Input | Evidence |
 | --- | ---: | --- |
 | gif_warrant_bot,failed04:33:51 |10549 |97% input processed at1160.70s,then cancelled |
@@ -101,5 +106,35 @@ must establish the installed result. Byte preservation does not itself prove
 identical model attention or comprehension. No synthetic inference campaign is
 part of this repair.
 
-Final broad regression, signed-package and controlled local delivery evidence
-will be recorded after execution. No public release is authorized.
+## Final regression and package checks
+
+All 46 affected offline suites pass on eb0a34234c8988bdec1806a7f2fbfd3150b01758:
+3,958 explicitly counted checks, plus eight passing suites that omit counts.
+They cover provider timeouts/cancellation, exact evidence reconstruction,
+current themed first-look-v2 receipts, scheduler/durable replay, hosted budgets,
+continuation, turnover, quiet assistance, writing-canary isolation, reply
+continuity and Burst. All provider/network work in these fixtures is mocked.
+
+The first local 0.27.11 handover loaded numeric diagnostics but natural telemetry
+correctly exposed decisionEvidenceVersion=null. The production server had not
+passed placement to scheduler.start, so the desktop-only gate could not select
+compaction. The one-line startup wiring from the original reviewed change was
+restored in eb0a342; its new source-wiring regression fails before the fix and
+passes afterward. The real server-to-provider path was independently re-reviewed.
+The intermediate signed artifact is retained, not overwritten or published.
+
+The corrected local-only package is 0.27.12, built from eb0a342. Its SHA-256 is
+eb1ad2930257b8c6cd9a036227758d2d7f509d267eaf218262b1bf8d360897d1.
+ECDSA verification against the installed launcher's public key passes, minimum
+launcher is 0.2.2, and all 93 packaged files match source. Packaged reconstruction,
+reply-continuity, theme-scope and first-look fixtures pass. Local-update
+preservation passes nine checks and no-overwrite staging passes 13 checks on
+the final payload.
+
+The combined packaged-browser fixture is not green: it stops at the unrelated
+Naturalness snapshot-loading wait. The unchanged 0.27.10 package also fails to
+complete that fixture (with an additional browser-profile cleanup EBUSY).
+No UI/browser assertion was weakened and no claim of a full browser pass is made.
+
+No synthetic/model experiment, paid call, hosted deployment or public release
+is part of this repair. Controlled delivery and natural runtime evidence follow.
