@@ -142,7 +142,9 @@ internal static class RecoveryCheck
 
     internal static void ApplyRuntimeEnvironment(RecoveryConfig? config)
     {
-        if (config?.Enabled != true) return;
+        // External supervision can be disabled without changing the app's
+        // separately preserved rollout environment on its next manual start.
+        if (config is null) return;
         foreach (var item in config.RuntimeEnvironment)
         {
             var supplied = Environment.GetEnvironmentVariable(item.Key) ?? "";

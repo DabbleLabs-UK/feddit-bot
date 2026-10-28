@@ -67,6 +67,45 @@ internal static class RecoveryCoreTests
             Reject(() => store.WriteConfig(new RecoveryConfig { InstallRoot = install, Enabled = true }), "enabled recovery without pinned launcher hash");
             store.WriteConfig(new RecoveryConfig { InstallRoot = install, Enabled = true, LauncherSha256 = new string('a', 64) });
             Check(store.ReadConfig()?.Enabled == true, "enabled recovery pins the immutable launcher hash");
+            var rollout = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["FEDDIT_QUIET_CONVERSATIONS"] = "1",
+                ["FEDDIT_THEME_INTEREST_V1"] = "1",
+                ["FEDDIT_THEME_INTEREST_COMMUNITIES"] = "isolated-recovery-fixture",
+                ["FEDDIT_QUIET_POPULATION_V2"] = "",
+            };
+            var originalEnvironment = rollout.Keys.ToDictionary(name => name, Environment.GetEnvironmentVariable, StringComparer.Ordinal);
+            try
+            {
+                foreach (var enabled in new[] { true, false })
+                {
+                    foreach (var name in rollout.Keys) Environment.SetEnvironmentVariable(name, null);
+                    store.WriteConfig(new RecoveryConfig
+                    {
+                        InstallRoot = install,
+                        Enabled = enabled,
+                        LauncherSha256 = new string('a', 64),
+                        RuntimeEnvironment = rollout,
+                    });
+                    RecoveryCheck.ApplyRuntimeEnvironment(store.ReadConfig());
+                    foreach (var item in rollout)
+                        Check(Environment.GetEnvironmentVariable(item.Key) == (item.Value.Length == 0 ? null : item.Value),
+                            (enabled ? "enabled" : "disabled") + " supervision restores stored rollout field " + item.Key);
+                    Check(store.ReadConfig()?.Enabled == enabled, "normal startup does not change external supervision enablement");
+                    Environment.SetEnvironmentVariable("FEDDIT_QUIET_CONVERSATIONS", "0");
+                    Reject(() => RecoveryCheck.ApplyRuntimeEnvironment(store.ReadConfig()),
+                        (enabled ? "enabled" : "disabled") + " supervision refuses conflicting explicit rollout configuration");
+                    Check(Environment.GetEnvironmentVariable("FEDDIT_QUIET_CONVERSATIONS") == "0", "conflicting explicit rollout value is not overwritten");
+                }
+                RecoveryCheck.ApplyRuntimeEnvironment(null);
+                Check(Environment.GetEnvironmentVariable("FEDDIT_QUIET_CONVERSATIONS") == "0", "absent recovery config leaves manual environment unchanged");
+            }
+            finally
+            {
+                foreach (var item in originalEnvironment) Environment.SetEnvironmentVariable(item.Key, item.Value);
+            }
+            foreach (var item in originalEnvironment)
+                Check(Environment.GetEnvironmentVariable(item.Key) == item.Value, "test restores original process environment " + item.Key);
             Reject(() => store.WriteConfig(new RecoveryConfig { InstallRoot = install, RuntimeEnvironment = new() { ["SECRET"] = "not-allowed" } }), "unapproved environment");
             Reject(() => store.WriteConfig(new RecoveryConfig { InstallRoot = temporary }), "other installation");
             using (var held = store.TryAcquireLauncherLock())
