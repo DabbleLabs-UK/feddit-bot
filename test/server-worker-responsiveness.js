@@ -28,6 +28,8 @@ function fixture(options = {}) {
     return action === 'claim' ? { ...job, status: 'claimed' } : job;
   }]));
   const context = vm.createContext({ Buffer, jobQueue,
+    quietConversations: { status: () => { calls.push({ action: 'quiet-status' });
+      return { enabled: true, populationAware: true, evaluation: null, stale: true }; } },
     secrets: { getWorkerKey: () => 'fixture-key' },
     workerAuth: { authorised: (header, key) => header === 'Bearer ' + key },
     readBody: async (req) => req.body,
@@ -54,6 +56,17 @@ function fixture(options = {}) {
 }
 
 async function unitChecks() {
+  {
+    const h=fixture(), req=h.request(), res=h.response(); req.method='GET';
+    await h.handle(req,res,'/api/worker/quiet-status');
+    eq(res.statusCode,200,'private read-only quiet status is available behind worker auth');
+    eq(h.calls.map(c=>c.action),['quiet-status','response'],'status neither claims work nor samples providers');
+    eq(plain(res.body),{enabled:true,populationAware:true,evaluation:null,stale:true},'status contains only cached safe projection');
+    const denied=fixture(), bad=denied.request(), badResponse=denied.response(); bad.method='GET';bad.headers.authorization='Bearer wrong';
+    await denied.handle(bad,badResponse,'/api/worker/quiet-status');
+    eq(badResponse.statusCode,401,'unauthorised status request reveals no policy state');
+    eq(denied.calls.map(c=>c.action),['response'],'denied status does not access controller or queue');
+  }
   for (const action of ['complete', 'fail']) {
     const h = fixture(), res = h.response();
     await h.handle(h.request({ leaseToken: 'fixture-lease', result: { text: 'result' }, error: 'failed', retryable: false }),

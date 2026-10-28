@@ -115,6 +115,40 @@ eq(select([], { invalid: true }).kind, 'blocked', 'zero participation cannot hid
 eq(select([], latestFailed).kind, 'blocked', 'zero participation cannot hide failed capacity');
 eq(policy.selectPolicy([], undefined, at).kind, 'fallback', 'missing capacity and participation retain safe fixed fallback');
 eq(select([], samples()).kind, 'fallback', 'healthy capacity without participation proof retains fixed fallback');
+for (const age of [MINUTE, 31 * MINUTE, 7 * HOUR]) {
+  for (const size of [1, 2, 3, 4]) {
+    const slow = samples(11 * MINUTE, size).map((row) => ({
+      ...row, startedAt: row.startedAt - age, finishedAt: row.finishedAt - age,
+    }));
+    for (const profiles of [count(24), []]) {
+      eq(select(profiles, slow), { kind: 'blocked', reason: 'insufficient-measured-capacity' },
+        'known slow capacity cannot fall back through age, sample count or zero participants');
+    }
+  }
+}
+const oldFailure = [{ startedAt: at - 8 * HOUR - MINUTE, finishedAt: at - 8 * HOUR, status: 'failed' }];
+eq(select(count(24), oldFailure), { kind: 'blocked', reason: 'unrecovered-capacity-failure' },
+  'a retained latest failure still blocks after the six-hour observation window');
+eq(select([], oldFailure).reason, 'unrecovered-capacity-failure', 'zero participants cannot hide an old unrecovered failure');
+const oldTiedFailure = [...oldFailure, { ...oldFailure[0], status: 'completed' }];
+eq(select(count(24), oldTiedFailure).reason, 'unrecovered-capacity-failure', 'old tied failure remains fail-closed');
+eq(select(count(24), [...oldFailure, ...samples(MINUTE, 1)]).kind, 'fallback',
+  'later healthy ordinary success recovers failure without inventing sufficient scaling evidence');
+eq(select(count(24), [...oldFailure, ...samples()]).kind, 'scaled',
+  'later healthy ordinary successes recover an old failure for adaptive admission');
+const oldSlow = samples(11 * MINUTE, 4).map((row) => ({
+  ...row, startedAt: row.startedAt - 7 * HOUR, finishedAt: row.finishedAt - 7 * HOUR,
+}));
+eq(select(count(24), [...oldSlow, ...samples()]).p75RequestMs, MINUTE,
+  'recent ordinary successes supersede old slow evidence when measuring current cost');
+for (const age of [31 * MINUTE, 7 * HOUR]) {
+  const healthyOld = samples(MINUTE, 1).map((row) => ({
+    ...row, startedAt: row.startedAt - age, finishedAt: row.finishedAt - age,
+  }));
+  eq(select(count(24), healthyOld).kind, 'fallback', 'healthy old sparse evidence retains reviewed fixed fallback');
+}
+eq(select(count(24), [...oldFailure, { ...samples()[0], finishedAt: at + 1 }]).reason,
+  'invalid-capacity-evidence', 'all retained samples are validated before latest-failure classification');
 eq(select(count(24)).low > select(count(2)).low, true, 'population drop immediately lowers expectation');
 eq(select(count(6)).high - select(count(6)).low, 3, 'separate deterministic thresholds preserve hysteresis band');
 

@@ -34,7 +34,11 @@ creation-to-completion queue, execution and delivery time; local timings include
 the existing local provider lifecycle. Failed requests consume capacity too.
 Use the nearest-rank 75th percentile, not a model's advertised speed. A newest
 observed failed request (including a tied failure) suppresses assistance until
-ordinary successful work establishes recovery. Neither
+later ordinary successful work establishes recovery, even if the failure is
+older than six hours. Known cost uses recent samples when available, otherwise
+the retained valid samples. A p75 above ten minutes suppresses assistance before
+freshness, sample-count or participation fallback; old or sparse slow evidence
+must not make assistance more aggressive. Neither
 worker count nor multiple processes imply independent capacity. Mixed local and
 hosted lanes use fixed fallback rather than combine incomparable estimates.
 
@@ -116,6 +120,21 @@ holds; v2 turns still finish. Pre-v2 binaries must not read a v2 ledger or repla
 v2 turns. Never restore snapshots over later natural work.
 
 ## Scope and validation
+
+### Controlled rollout inspection
+
+The first rollout enables only the hosted runner. This implementation has no
+community gate: public quietness is site-wide and assistance may target any
+otherwise eligible community. LENO keeps the deployed fixed controller and its
+existing source, budget, rollout flags and external recovery unchanged.
+
+An authenticated GET to the existing worker-authority namespace at
+`/api/worker/quiet-status` returns the last naturally evaluated aggregate policy,
+signal age and bounds. It never polls a provider, refreshes evidence, loads the
+admission ledger or admits work. A cold process reports no evaluation, and stale
+evaluations are explicitly labelled. No profile IDs, credentials, source text or
+prompts are exposed. The ordinary scheduler still controls whether it reaches
+an evaluation or admission; reading diagnostics cannot force that boundary.
 
 This is opportunity control, not an engagement target. Models may WAIT/NIL;
 first-look v2, turnover-v1, direct/renewed continuity, voting, reply-continuity,

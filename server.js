@@ -807,6 +807,11 @@ async function handleApi(req, res, urlPath, query) {
     if (!workerAuth.authorised(req.headers.authorization, configuredKey)) {
       return sendJson(res, 401, { error: 'Worker authentication failed.' });
     }
+    // Read-only cached aggregates behind the existing private worker authority.
+    // This never samples a provider, refreshes public evidence or admits work.
+    if (method === 'GET' && urlPath === '/api/worker/quiet-status') {
+      return sendJson(res, 200, quietConversations.status());
+    }
     if (method !== 'POST') return sendJson(res, 405, { error: 'Method not allowed' });
 
     const body = await readBody(req);
