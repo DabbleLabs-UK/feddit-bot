@@ -11,15 +11,21 @@ internal sealed class RunnerSupervisor : IDisposable
     private readonly DesktopConfig _config;
     private readonly AppLog _log;
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(4) };
-    private readonly string _controlKey = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+    private string _controlKey = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+    private readonly RecoveryStore? _recovery;
+    private readonly Func<CancellationToken, Task>? _ensureProvider;
     private Process? _runner;
+    private ProcessIdentity? _runnerIdentity;
     private Process? _ollama;
 
-    public RunnerSupervisor(AppPaths paths, DesktopConfig config, AppLog log)
+    public RunnerSupervisor(AppPaths paths, DesktopConfig config, AppLog log, RecoveryStore? recovery = null,
+        Func<CancellationToken, Task>? ensureProvider = null)
     {
         _paths = paths;
         _config = config;
         _log = log;
+        _recovery = recovery;
+        _ensureProvider = ensureProvider;
     }
 
     public bool RunnerExited => _runner is null || _runner.HasExited;
@@ -27,12 +33,31 @@ internal sealed class RunnerSupervisor : IDisposable
 
     public async Task StartAsync(VersionPointer pointer, CancellationToken cancellationToken)
     {
+        if (_recovery is not null && _recovery.ReadIntent()?.DesiredRunning != true)
+            throw new InvalidOperationException("The application has an explicit saved stop request.");
         var payload = _paths.ResolvePayload(pointer);
         ValidatePayload(payload);
-        await EnsureOllamaAsync(payload, cancellationToken);
-
         var node = Path.Combine(_paths.InstallRoot, "runtime", "node", "node.exe");
         var server = Path.Combine(payload, "app", "server.js");
+        if (!RunnerExited) throw new InvalidOperationException("A live runner must be safely stopped before replacement.");
+        var prior = _recovery?.ReadSession();
+        if (prior?.Runner is not null && RecoveryIdentity.ValidateSession(prior, _paths.InstallRoot, server, _config.Port))
+        {
+            if (prior.Capability.Length != 64 || !prior.Capability.All(Uri.IsHexDigit))
+                throw new InvalidDataException("Owned runner has no valid private control capability.");
+            _runner = Process.GetProcessById(prior.Runner.Pid);
+            _controlKey = prior.Capability;
+            SaveSession(server);
+            if (!await WaitForHealthAsync(pointer.Version, TimeSpan.FromSeconds(45), cancellationToken))
+                throw new InvalidOperationException("The adopted runner is alive but its health remains unverified.");
+            _log.Write("Adopted the verified existing runner without starting a second child.");
+            return;
+        }
+        var listener = RecoveryIdentity.InspectLoopbackListener(_config.Port);
+        if (!listener.Known || listener.Pid is not null || RecoveryCheck.FindProcesses(node).Count != 0)
+            throw new InvalidOperationException("Runner ownership is ambiguous; no replacement was launched.");
+        if (_ensureProvider is not null) await _ensureProvider(cancellationToken);
+        else await EnsureOllamaAsync(payload, cancellationToken);
         var start = new ProcessStartInfo(node)
         {
             WorkingDirectory = Path.GetDirectoryName(server)!,
@@ -51,7 +76,38 @@ internal sealed class RunnerSupervisor : IDisposable
         start.Environment["FEDDIT_APP_VERSION"] = pointer.Version;
         start.Environment["OLLAMA_BASE"] = "http://127.0.0.1:11434";
 
+        if (_recovery is not null && _recovery.ReadIntent()?.DesiredRunning != true)
+            throw new InvalidOperationException("The application stop request arrived before child admission.");
         _runner = StartLoggedProcess(start, "runner");
+        // Retain the private launch capability before waiting for Windows to
+        // expose the newborn process image. Adoption still verifies the actual
+        // image/birth/listener independently, never this launch assertion alone.
+        var launcherIdentity = RecoveryIdentity.Capture(Environment.ProcessId);
+        _runnerIdentity = new ProcessIdentity { Pid = _runner.Id,
+            StartedAtUtc = new DateTimeOffset(_runner.StartTime.ToUniversalTime()), ExecutablePath = node,
+            SessionId = launcherIdentity.SessionId, UserSid = launcherIdentity.UserSid };
+        SaveSession(server, capture: false);
+        var identityDeadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_runner.HasExited) throw new InvalidOperationException("The new runner exited before identity verification.");
+            try
+            {
+                var identity = RecoveryIdentity.Capture(_runner.Id);
+                if (!RecoveryStore.SamePath(identity.ExecutablePath, node) ||
+                    identity.StartedAtUtc != _runnerIdentity.StartedAtUtc || identity.UserSid != launcherIdentity.UserSid)
+                    throw new InvalidOperationException("The launched runner identity did not match.");
+                _runnerIdentity = identity;
+                break;
+            }
+            catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidDataException)
+            {
+                if (DateTimeOffset.UtcNow >= identityDeadline) throw;
+                await Task.Delay(100, cancellationToken);
+            }
+        }
+        SaveSession(server, capture: false);
         if (!await WaitForHealthAsync(pointer.Version, TimeSpan.FromSeconds(45), cancellationToken))
             throw new InvalidOperationException("The bot runner did not become healthy after starting version " + pointer.Version + ".");
         _log.Write("Runner version " + pointer.Version + " is healthy.");
@@ -70,11 +126,16 @@ internal sealed class RunnerSupervisor : IDisposable
         {
             try
             {
+                if (!OwnsListener()) return false;
                 var json = await _http.GetStringAsync(BrowserUrl + "api/runtime-state", cancellationToken);
                 using var document = JsonDocument.Parse(json);
-                var busy = document.RootElement.TryGetProperty("busy", out var value) && value.GetBoolean();
+                if (!document.RootElement.TryGetProperty("busy", out var value) ||
+                    value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                    throw new InvalidDataException("Runner idle state was not explicitly established.");
+                var busy = value.GetBoolean();
                 if (!busy)
                 {
+                    if (!OwnsListener()) return false;
                     using var request = new HttpRequestMessage(HttpMethod.Post, BrowserUrl + "api/desktop/shutdown");
                     request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _controlKey);
                     using var response = await _http.SendAsync(request, cancellationToken);
@@ -95,12 +156,34 @@ internal sealed class RunnerSupervisor : IDisposable
         return false;
     }
 
-    public void StopFailedCandidate()
+    public async Task<bool> StopFailedCandidateAsync(CancellationToken cancellationToken)
     {
-        if (_runner is null || _runner.HasExited) return;
-        _log.Write("Stopping an unhealthy update candidate before rollback.");
-        _runner.Kill(true);
-        _runner.WaitForExit(10000);
+        if (RunnerExited) return true;
+        // Startup failure does not prove that scheduler/publication is idle.
+        return await StopWhenIdleAsync(TimeSpan.FromSeconds(5), cancellationToken);
+    }
+
+    public Task<bool> IsHealthyAsync(string version, CancellationToken cancellationToken) =>
+        !OwnsListener() ? Task.FromResult(false) : RecoveryCheck.HealthyAsync(_config.Port, version, cancellationToken);
+
+    private bool OwnsListener()
+    {
+        if (RunnerExited || _runnerIdentity is null || !RecoveryIdentity.ProcessMatches(_runnerIdentity,
+            Path.Combine(_paths.InstallRoot, "runtime", "node", "node.exe"))) return false;
+        var listener = RecoveryIdentity.InspectLoopbackListener(_config.Port);
+        return listener.Known && listener.LoopbackOnly && listener.Pid == _runner!.Id;
+    }
+
+    private void SaveSession(string server, bool capture = true)
+    {
+        if (capture) _runnerIdentity = _runner is not null ? RecoveryIdentity.Capture(_runner.Id) : null;
+        _recovery?.WriteSession(new RecoverySession
+        {
+            InstallRoot = _paths.InstallRoot,
+            Launcher = RecoveryIdentity.Capture(Environment.ProcessId),
+            Runner = _runnerIdentity,
+            ServerPath = server, Capability = _controlKey, UpdatedAt = DateTimeOffset.UtcNow,
+        });
     }
 
     private async Task EnsureOllamaAsync(string payload, CancellationToken cancellationToken)
@@ -164,7 +247,7 @@ internal sealed class RunnerSupervisor : IDisposable
                 var json = await _http.GetStringAsync(BrowserUrl + "api/runtime", cancellationToken);
                 using var document = JsonDocument.Parse(json);
                 var version = document.RootElement.GetProperty("appVersion").GetString();
-                if (version == expectedVersion) return true;
+                if (version == expectedVersion && OwnsListener()) return true;
             }
             catch (Exception error) when (ShouldLogAndRetry(error, cancellationToken))
             {

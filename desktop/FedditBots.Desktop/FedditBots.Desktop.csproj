@@ -8,7 +8,7 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <AssemblyName>FedditBots.Desktop</AssemblyName>
     <RootNamespace>DabbleLabs.FedditBots.Desktop</RootNamespace>
-    <Version>0.2.0</Version>
+    <Version>0.15.3</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>

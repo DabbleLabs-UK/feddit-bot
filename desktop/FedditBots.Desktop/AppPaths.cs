@@ -4,7 +4,7 @@ namespace DabbleLabs.FedditBots.Desktop;
 
 internal sealed class AppPaths
 {
-    public string InstallRoot { get; } = Path.GetFullPath(AppContext.BaseDirectory);
+    public string InstallRoot { get; }
     public string VersionsRoot { get; }
     public string CurrentFile { get; }
     public string PendingFile { get; }
@@ -15,14 +15,15 @@ internal sealed class AppPaths
     public string LogsRoot { get; }
     public string UpdatesRoot { get; }
 
-    public AppPaths()
+    public AppPaths(string? installRoot = null, string? userRoot = null)
     {
+        InstallRoot = Path.GetFullPath(installRoot ?? AppContext.BaseDirectory);
         VersionsRoot = Path.Combine(InstallRoot, "versions");
         CurrentFile = Path.Combine(InstallRoot, "current.json");
         PendingFile = Path.Combine(InstallRoot, "pending.json");
         ConfigFile = Path.Combine(InstallRoot, "desktop-config.json");
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        UserRoot = Path.Combine(local, "DabbleLabs", "FedditBots");
+        UserRoot = Path.GetFullPath(userRoot ?? Path.Combine(local, "DabbleLabs", "FedditBots"));
         DataRoot = Path.Combine(UserRoot, "data");
         ModelsRoot = Path.Combine(UserRoot, "models");
         LogsRoot = Path.Combine(UserRoot, "logs");

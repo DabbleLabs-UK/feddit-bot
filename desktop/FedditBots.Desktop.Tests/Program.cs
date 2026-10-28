@@ -3,7 +3,10 @@ using System.Security.Cryptography;
 using System.Text;
 using DabbleLabs.FedditBots.Desktop;
 
+if (await RecoveryIntegrationTests.TryRunFixtureAsync(args)) return;
 var checks = 0;
+checks += RecoveryCoreTests.Run();
+checks += await RecoveryIntegrationTests.RunAsync();
 void Check(bool condition, string message)
 {
     if (!condition) throw new Exception("FAIL: " + message);

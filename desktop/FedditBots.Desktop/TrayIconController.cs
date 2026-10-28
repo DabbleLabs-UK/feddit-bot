@@ -79,6 +79,12 @@ internal sealed class TrayIconController : IDisposable
         _started.Dispose();
     }
 
+    public void SetStopping(bool stopping)
+    {
+        var context = _applicationContext;
+        if (context is not null) _uiContext?.Post(_ => context.SetStopping(stopping), null);
+    }
+
     private sealed class TrayApplicationContext : ApplicationContext
     {
         private readonly NotifyIcon _icon;
@@ -92,8 +98,16 @@ internal sealed class TrayIconController : IDisposable
             openItem.Click += (_, _) => TryOpen(openDashboard);
             exitItem.Click += (_, _) =>
             {
-                exitApplication();
-                ExitThread();
+                try
+                {
+                    exitApplication();
+                    SetStopping(true);
+                }
+                catch
+                {
+                    MessageBox.Show("The stop request could not be saved. Feddit Bots has not been stopped.",
+                        "Feddit Bots", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
             };
             _menu.Items.Add(openItem);
             _menu.Items.Add(new ToolStripSeparator());
@@ -124,6 +138,8 @@ internal sealed class TrayIconController : IDisposable
                     MessageBoxIcon.Error);
             }
         }
+
+        public void SetStopping(bool stopping) => _icon.Text = stopping ? "Feddit Bots - stopping safely" : "Feddit Bots";
 
         protected override void ExitThreadCore()
         {
