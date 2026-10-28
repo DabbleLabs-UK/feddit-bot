@@ -109,6 +109,52 @@ try {
   throws(() => store.createProfile({ themeInterestState: { version: 999 } }), { code: 'THEME_INTEREST_BOOKKEEPING_PENDING' });
   throws(() => store.createProfile({ simulationState: { themeInterestState: { version: 999 } } }), { code: 'THEME_INTEREST_BOOKKEEPING_PENDING' });
 
+  const phrases = require('../lib/theme-phrase-motif');
+  const phraseProfile = store.createProfile({ refName: 'phrase-store-test', persona: 'Same private character' });
+  const phraseEvent = (id, at, author, sourceKey, kind = 'exposure') => ({
+    id, at, kind, sourceKey, threadKey: 't3_501', community: 'shittyaskfeddit', author,
+    features: [], identityVersion: 3, motifs: [], proposals: ['milt~gable'],
+  });
+  const historicalV2 = { ...event('historical-v2', 4000), identityVersion: 2, motifs: ['glopspray'] };
+  store.recordThemeInterest(phraseProfile.id, [historicalV2]);
+  const firstPhrase = phraseEvent('phrase-first', 4100, 'bot_a', 't3_501');
+  const firstPhraseState = store.recordThemeInterest(phraseProfile.id, [firstPhrase]);
+  eq(firstPhraseState.events.at(-1), firstPhrase, 'version-three proposals persist without being approved');
+  eq(phrases.local(phrases.snapshot(firstPhraseState, 4100), 'shittyaskfeddit'), [], 'one independent encounter stays pending on disk');
+  const stalePhraseProfile = store.getProfile(phraseProfile.id);
+  const ownPhrase = phraseEvent('phrase-own', 4200, 'reader', 't1_503', 'participation');
+  const ownPhraseState = store.recordThemeInterest(phraseProfile.id, [ownPhrase]);
+  eq(phrases.local(phrases.snapshot(ownPhraseState, 4200), 'shittyaskfeddit'), [], 'own publication cannot provide second independent corroboration');
+  eq(phrases.proposed(phrases.snapshot(ownPhraseState, 4200), 'shittyaskfeddit'), ['milt~gable'], 'own alias remains pending across storage');
+  store.updateProfile(phraseProfile.id, stalePhraseProfile, { allowContinuity: true });
+  eq(store.getThemeInterestState(phraseProfile.id), ownPhraseState, 'stale profile editing cannot overwrite later pending phrase evidence');
+  const secondPhrase = phraseEvent('phrase-second', 4300, 'bot_b', 't1_502');
+  const corroborated = store.recordThemeInterest(phraseProfile.id, [secondPhrase]);
+  eq(phrases.local(phrases.snapshot(corroborated, 4300), 'shittyaskfeddit'), ['milt~gable'], 'two distinct external authors and public sources corroborate stored phrase');
+  const approvedUse = { ...phraseEvent('phrase-approved-use', 4400, 'reader', 't1_504', 'participation'),
+    motifs: ['milt~gable'], proposals: [] };
+  const phraseLive = store.recordThemeInterest(phraseProfile.id, [approvedUse]);
+  eq(phraseLive.events.at(-1).motifs, ['milt~gable'], 'approved phrase identity persists on subsequent own participation');
+  eq(phraseLive.events.find(item => item.id === historicalV2.id), historicalV2, 'new phrase receipts never reinterpret historical version-two receipt');
+  eq(store.getThemeInterestState(phraseProfile.id, { simulation: true }).events, [], 'live phrase discovery does not leak into rehearsal');
+  const phrasePrivateKey = 'r3_' + 'b'.repeat(64);
+  const phrasePrivate = { ...phraseEvent('phrase-private-own', 4500, 'reader', phrasePrivateKey, 'participation'),
+    threadKey: phrasePrivateKey };
+  throws(() => store.recordThemeInterest(phraseProfile.id, [phrasePrivate]), { code: 'THEME_INTEREST_BOOKKEEPING_PENDING' });
+  eq(store.getThemeInterestState(phraseProfile.id), phraseLive, 'rejected private source cannot mutate live phrase state');
+  const phraseRehearsal = store.recordThemeInterest(phraseProfile.id, [phrasePrivate], { simulation: true });
+  eq(phraseRehearsal.events, [phrasePrivate], 'private own phrase proposal remains valid only in rehearsal');
+  eq(phrases.local(phrases.snapshot(phraseRehearsal, 4500), 'shittyaskfeddit'), [], 'private own publication cannot invent independent readership');
+  eq(store.getThemeInterestState(phraseProfile.id), phraseLive, 'rehearsal phrase bookkeeping preserves live corroborated state');
+  delete require.cache[storePath];
+  store = require(storePath);
+  eq(store.getThemeInterestState(phraseProfile.id), phraseLive, 'restart reloads version-three proposals and approved phrase receipts exactly');
+  eq(store.getThemeInterestState(phraseProfile.id, { simulation: true }), phraseRehearsal, 'restart preserves isolated private rehearsal phrase state');
+  eq(phrases.local(phrases.snapshot(store.getThemeInterestState(phraseProfile.id), 4500), 'shittyaskfeddit'),
+    ['milt~gable'], 'restart reconstructs bot-local corroboration without backfill');
+  eq(store.getThemeInterestState(phraseProfile.id).events.find(item => item.id === historicalV2.id), historicalV2,
+    'restart leaves historical version-two identity and receipt payload unchanged');
+
   const privateKey = 'r3_' + 'a'.repeat(64);
   const privateEvent = { ...event('rehearsal-new-root', 4000), kind: 'participation', sourceKey: privateKey, threadKey: privateKey };
   const privateState = themes.record(undefined, [privateEvent]);
