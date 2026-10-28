@@ -1,0 +1,40 @@
+'use strict';
+// Retained public fixture, pinned offline tokenizer, no provider or live data.
+const assert = require('node:assert/strict');
+const context = require('../lib/theme-context');
+const theme = require('../lib/theme-interest');
+const budget = require('../lib/desktop-decision-budget');
+const tokenizer = require('../lib/desktop-tokenizer');
+const { candidate } = require('../bin/replay-theme-phrase');
+const fixture = require('./fixtures/theme-motif-milt-gable.json');
+let checks = 0;
+const eq = (a,b,message) => { assert.deepEqual(a,b,message); checks++; };
+const ok = (value,message) => { assert.ok(value,message); checks++; };
+const scope = { version:1, communities:['shittyaskfeddit'] };
+const at = Date.UTC(2026,9,27,4,10);
+const root = fixture.sources.find(s=>s.key==='t3_892');
+const reply = fixture.sources.find(s=>s.key==='t1_2311');
+const offered = context.decorate({candidates:[candidate(root,1),candidate(reply,2)],voteCandidates:[]},undefined,at,'real-pair',scope,3);
+const receipts = context.exposure(offered,{valid:true,candidates:offered.candidates,votes:[]},'reader');
+const state = theme.record(undefined,receipts);
+const small = {...candidate(fixture.sources.find(s=>s.key==='t1_2319'),1),action:'comment',candidateType:'ordinary_comment'};
+const hugeBody = 'Distinct complete public evidence about a different matter. '.repeat(300);
+const large = {id:'C2',action:'comment',candidateType:'ordinary_post',context:hugeBody,
+ target:{key:'t3_900',postId:900,author:'another',feddit:'shittyaskfeddit',replyBranch:{post:{title:'A different matter',body:hugeBody}}}};
+const menu = context.decorate({candidates:[small,large],voteCandidates:[]},state,at+1,'next',scope,3);
+const before = JSON.stringify(menu);
+ok(menu.candidates[0].themeInterest?.offeredHint,'locally corroborated phrase can supply the unchanged optional cue');
+const system='Identity: a dry clerk. Preserve uncertainty, model choice and WAIT. Never force a callback.';
+const packed=budget.construct({system,candidates:menu.candidates,voteCandidates:[],decisionAt:at+1,
+ countRequest:tokenizer.countRequest});
+eq(packed.inputLimit,2400,'exact existing desktop input ceiling remains 2400');
+eq(packed.inputTokens,tokenizer.countRequest(system,packed.prompt),'entire actual initial request is exactly measured');
+ok(packed.inputTokens+budget.REPAIR_RESERVE_TOKENS<=2400,'initial request retains the unchanged repair margin');
+ok(tokenizer.countRequest(system,packed.repair)+budget.REPAIR_RESERVE_TOKENS<=2400,'repair request obeys the same ceiling');
+eq(packed.candidates.map(c=>c.id),['C1'],'small complete candidate remains offered');
+eq(packed.deferredCandidateIds,['C2'],'oversized other candidate is deferred whole, not truncated');
+ok(packed.prompt.includes('Lexical familiarity:'),'same bounded qualitative cue survives exact budgeting');
+ok(!packed.prompt.includes('milt~gable')&&!packed.prompt.includes('"pending"'),'private proposal identities are not suggestions to repeat');
+eq(JSON.stringify(menu),before,'constructing a decision does not mutate discovery, source facts or candidate state');
+eq(state.events.length,2,'no inference, vote, publication or synthetic encounter was added');
+console.log('theme phrase desktop budget: '+checks+' checks passed; input='+packed.inputTokens+' tokens');
