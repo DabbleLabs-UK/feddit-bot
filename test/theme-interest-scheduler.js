@@ -128,8 +128,8 @@ async function run() {
     try {
       const runtime = h.scheduler(), turn = await admit(h, runtime);
       eq(turn.input.themeInterestVersion, 1, 'explicit flag freezes theme v1 for new ordinary turns');
-      eq(turn.input.themeIdentityVersion, 2, 'new ordinary turns freeze independent stable motif identity');
-      eq(turn.input.themeMotifIdentity.version, 2, 'admission freezes local known motif names');
+      eq(turn.input.themeIdentityVersion, 3, 'new ordinary turns freeze independent corroborated motif discovery');
+      eq(turn.input.themeMotifIdentity.version, 3, 'admission freezes bot-local approved and pending motif identity');
       eq(turn.input.themeInterestScope, { version: 1, communities: ['general'] }, 'new admission freezes explicit canary community contract');
       eq(turn.input.firstContactVersion, 2, 'first-look v2 unchanged');
       eq(turn.input.ordinaryCandidateVersion, 1, 'turnover-v1 unchanged');
@@ -254,8 +254,33 @@ async function run() {
       eq(h.writes, [], 'unsupported scope cannot publish');
     } finally { h.cleanup(); }
   }
+  {
+    const h = fixture('frozen-v2-replay', { enabled: true }); seed(h);
+    try {
+      const legacy = require('../lib/theme-motif');
+      const frozen = legacy.snapshot(interest.normalize(store.getThemeInterestState(h.id)), h.now());
+      const turn = h.turnStore.create({ profileId: h.id, profile: store.getProfile(h.id), rehearsal: false,
+        trigger: 'scheduled', input: { mode: 'capabilities', decisionContractVersion: 2, continuationVersion: 2,
+          ordinaryCandidateVersion: 1, hostedDecisionBudgetVersion: budget.VERSION, firstContactVersion: 2,
+          themeInterestVersion: 1, themeInterestScope: { version: 1, communities: ['general'] },
+          themeIdentityVersion: 2, themeMotifIdentity: frozen, choices: [{ key: 'reply' }] } }).turn;
+      const runtime = h.scheduler(); runtime.reconcileDurableTurns(); await settle(24);
+      const admitted = h.turnStore.get(turn.id);
+      eq(admitted.input.themeIdentityVersion, 2, 'legacy v2 admission retains original frozen version');
+      eq(admitted.checkpoints['opportunity-candidates'].themeInterestContext.identity, frozen,
+        'v2 descriptor reconstructs exactly, without pending proposal reinterpretation');
+      const request = JSON.stringify(admitted.generations[0].request);
+      const restarted = h.restartRuntime(); restarted.scheduler.reconcileDurableTurns(); await settle(18);
+      eq(JSON.stringify(restarted.turnStore.get(turn.id).generations[0].request), request,
+        'in-flight v2 request is byte-identical across restart on v3-capable source');
+      await finish(h, runtime, admitted);
+      ok(evidence(h).every(event => event.identityVersion === 2 && !('proposals' in event)),
+        'old v2 turns write only frozen old receipts');
+    } finally { h.cleanup(); }
+  }
   for (const identity of [{ themeIdentityVersion: 99 }, { themeIdentityVersion: 2 },
-    { themeIdentityVersion: 2, themeMotifIdentity: { version: 99, anchors: [] } }]) {
+    { themeIdentityVersion: 2, themeMotifIdentity: { version: 99, anchors: [] } },
+    { themeIdentityVersion: 3 }, { themeIdentityVersion: 3, themeMotifIdentity: { version: 2, anchors: [] } }]) {
     const h = fixture('unknown-frozen-identity-' + identity.themeIdentityVersion, { enabled: true });
     try {
       const turn = h.turnStore.create({ profileId: h.id, profile: store.getProfile(h.id), rehearsal: false,
