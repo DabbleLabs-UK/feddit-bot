@@ -79,6 +79,14 @@ At 11:08:55 the runner is healthy, and one naturally admitted reply turn
 decision is still in progress, so no outcome or post-repair failure rate is
 claimed. No work was forced to obtain this record.
 
+At 11:12:29 the same natural turn has completed a valid initial primary decision
+without provider error or repair inference. Its one-attempt writing job is now
+claimed normally; final publication/output-boundary outcome is pending. The
+runner remains active with zero restarts. A separate cheap native metadata GET
+confirms Ollama 0.34.1. This is evidence of normal execution, not a measured
+population-wide validity improvement or proof this individual decision needed
+terminal-marker decoding.
+
 Worker deployment remains `d91884cb46dd5cc052623223d5a3a3fba170b562`; actual Windows
 worker PID 14512 remains alive and handles claims. The WSL health receipt inspected
 under `/home/user/.local/state/feddit-worker/health.json` is stale since 24 October
