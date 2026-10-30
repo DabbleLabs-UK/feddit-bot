@@ -30,13 +30,16 @@ async function prepare(h, legacy = false) {
   if (legacy) {
     h.turnStore.create({ profileId: h.profiles[0].id, profile: structuredClone(h.profiles[0]), rehearsal: false,
       trigger: 'scheduled', input: { mode: 'capabilities', choices: [{ key: 'reply' }],
-        decisionContractVersion: 2, continuationVersion: 2, replyContinuityVersion: 1 } });
+        decisionContractVersion: 2, continuationVersion: 2, replyContinuityVersion: 1,
+        ...(['output-v1','envelope-zero'].includes(legacy) ? { hostedOutputVersion: 1 } : {}),
+        ...(legacy === 'envelope-zero' ? { hostedDecisionEnvelopeVersion: 0 } : {}) } });
     runtime.reconcileDurableTurns();
   } else await runtime.runTick();
   await settle(14);
   const t = h.turnStore.activeForProfile(h.profiles[0].id);
   assert(t, JSON.stringify(h.logs)); checks++;
-  eq(t.input.hostedOutputVersion, legacy ? undefined : 1);
+  eq(t.input.hostedOutputVersion, ['output-v1','envelope-zero'].includes(legacy) ? 1 : legacy ? undefined : 1);
+  eq(t.input.hostedDecisionEnvelopeVersion, legacy === 'envelope-zero' ? 0 : legacy ? undefined : 1);
   const candidate = t.checkpoints['opportunity-candidates'].candidates.find(c => c.target?.commentId === h.targetId);
   assert(candidate); checks++;
   return { runtime, turnId: t.id, candidate, generation: t.generations[0] };
@@ -54,6 +57,68 @@ async function finish(h, started, text) {
   return h.turnStore.get(started.turnId);
 }
 async function main() {
+  for (const repair of ['missing-root-close', 'missing-votes-key-opening-quote']) {
+    const h = fixture();
+    try {
+      const s = await prepare(h), request = structuredClone(s.generation.request);
+      const json = JSON.stringify({choice:s.candidate.id,reason:'A relevant question.',votes:[]});
+      const raw = repair === 'missing-root-close' ? json.slice(0,-1) : json.replace(',"votes":',',votes":');
+      completeJob(h.queue,s.generation.jobId,raw+'|im_end|>');
+      s.runtime.reconcileDurableTurns(); await settle(14);
+      let t=h.turnStore.get(s.turnId);
+      eq(t.checkpoints['opportunity-decision'].valid,true);
+      eq(t.checkpoints['opportunity-decision'].envelopeRepair,repair);
+      eq(t.generations.length,2,'no extra repair inference for a complete recovered primary');
+      eq(t.generations[0].request,request,'same frozen request, model, output ceiling and token budget');
+      eq(t.generations[0].result.text,raw+'|im_end|>','raw evidence is never rewritten');
+      const restarted=h.restartRuntime();restarted.scheduler.reconcileDurableTurns();await settle(14);
+      eq(restarted.turnStore.get(t.id).checkpoints['opportunity-decision'].envelopeRepair,repair);
+      completeJob(restarted.queue,t.generations[1].jobId,prose);
+      restarted.scheduler.reconcileDurableTurns();await settle(14);
+      eq(restarted.turnStore.get(t.id).result.ok,true);eq(h.writes.length,1);
+      restarted.scheduler.reconcileDurableTurns();await settle(14);eq(h.writes.length,1);
+    } finally {h.cleanup();}
+  }
+  for (const legacy of ['output-v1','envelope-zero']) {
+    const h=fixture();
+    try {
+      const s=await prepare(h,legacy);
+      const raw=JSON.stringify({choice:s.candidate.id,reason:'A relevant question.',votes:[]}).slice(0,-1);
+      completeJob(h.queue,s.generation.jobId,raw+'|im_end|>');
+      s.runtime.reconcileDurableTurns();await settle(14);
+      let t=h.turnStore.get(s.turnId);eq(t.generations[1].request.kind,'scheduled-decision-retry');
+      t=await finish(h,s,raw+'|im_end|>');
+      eq(t.result.ok,false);eq(t.result.action,'failed');eq(h.writes.length,0);
+      eq(t.checkpoints['opportunity-decision-retry'].envelopeRepair,undefined,'deployed v1 turns replay without new interpretation');
+    }finally{h.cleanup();}
+  }
+  for(const usageKind of ['missing','at-limit']) {
+    const h=fixture();
+    try {
+      const s=await prepare(h);
+      const raw=JSON.stringify({choice:s.candidate.id,reason:'A relevant question.',votes:[]}).slice(0,-1);
+      for(let attempt=0;attempt<2;attempt++) {
+        const g=h.turnStore.get(s.turnId).generations.at(-1);
+        const claimed=h.queue.claim('worker-test',{model:'test-model'});eq(claimed.id,g.jobId);
+        h.queue.complete(g.jobId,'worker-test',{text:raw,provider:'ollama',model:'test-model',ms:50,
+          ...(usageKind==='at-limit'?{usage:{inputTokens:10,outputTokens:g.request.numPredict}}:{})});
+        s.runtime.reconcileDurableTurns();await settle(14);
+        const t=h.turnStore.get(s.turnId);
+        eq(t.checkpoints[attempt?'opportunity-decision-retry':'opportunity-decision'].valid,false);
+      }
+      const t=h.turnStore.get(s.turnId);
+      eq(t.generations.length,2);eq(t.result.action,'failed');eq(t.result.ok,false);eq(h.writes.length,0);
+    }finally{h.cleanup();}
+  }
+  {
+    const h=fixture();
+    try{
+      const t=h.turnStore.create({profileId:h.profiles[0].id,profile:structuredClone(h.profiles[0]),rehearsal:false,
+        trigger:'scheduled',input:{mode:'capabilities',choices:[{key:'reply'}],hostedDecisionEnvelopeVersion:99}}).turn;
+      h.scheduler().reconcileDurableTurns();await settle(14);
+      eq(h.turnStore.get(t.id).status,'blocked');eq(h.turnStore.get(t.id).generations.length,0);eq(h.writes.length,0);
+    }finally{h.cleanup();}
+  }
   {
     const h = fixture();
     try {
