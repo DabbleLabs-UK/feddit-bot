@@ -1849,6 +1849,7 @@ function renderControls() {
     const resource = state.pauseResources || {};
     if (resource.state === 'unloaded') rs.textContent = 'Paused - Feddit model released';
     else if (resource.state === 'draining') rs.textContent = 'Paused - finishing work';
+    else if (resource.state === 'releasing') rs.textContent = 'Paused - waiting for model release';
     else if (resource.state === 'held') rs.textContent = 'Paused - model retained';
     rs.title = resource.code || '';
   } else rs.title = '';

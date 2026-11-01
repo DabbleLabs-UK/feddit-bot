@@ -42,7 +42,7 @@ async function run() {
   await assert.rejects(provider.releasePausedModels(() => true)); checks++;
   eq(uses[0].releasePending, true); eq(provider.isBusy(), true);
   await assert.rejects(provider.generate({ leaseClient: null }), { code: 'BUSY' }); checks++;
-  eq((await provider.releasePausedModels(() => true)).state, 'draining');
+  eq((await provider.releasePausedModels(() => true)).state, 'releasing');
   // A fresh process restores the pending unload fence, even though slots would
   // report idle. Never resend an ambiguous unload or start inference on top.
   delete require.cache[require.resolve('../lib/providers/ollama')];
