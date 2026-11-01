@@ -1269,10 +1269,14 @@ async function loadLocalModelActivity() {
   state.localModelActivityLoading = true;
   try {
     state.localModelActivity = await api('/api/local-model-activity');
+    state.pauseResources = state.localModelActivity.pauseResources;
+    renderControls();
     renderLocalModelActivity();
   } catch {
     // The runner can briefly disappear while an automatic update switches it.
     state.localModelActivity = null;
+    state.pauseResources = null;
+    renderControls();
     renderLocalWorkingIndicators();
     renderHealthSummary('Local work status unavailable');
   } finally {
@@ -1841,6 +1845,13 @@ function renderControls() {
   $('#pauseBtn').className = paused ? 'primary' : '';
   const rs = $('#runState');
   rs.textContent = paused ? 'scheduler PAUSED' : 'scheduler RUNNING';
+  if (paused && state.placement === 'desktop') {
+    const resource = state.pauseResources || {};
+    if (resource.state === 'unloaded') rs.textContent = 'Paused - Feddit model released';
+    else if (resource.state === 'draining') rs.textContent = 'Paused - finishing work';
+    else if (resource.state === 'held') rs.textContent = 'Paused - model retained';
+    rs.title = resource.code || '';
+  } else rs.title = '';
   rs.className = 'badge ' + (paused ? 'off' : 'on');
   renderSpeedControl();
   renderBurstControl();

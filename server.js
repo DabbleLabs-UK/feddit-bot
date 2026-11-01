@@ -46,6 +46,7 @@ const { createCultureImporter } = require('./lib/culture-importer');
 const { createFetchLayerSource } = require('./lib/culture-importer/fetchlayer-source');
 const { createCultureImportUiSessions, CultureImportUiError } = require('./lib/culture-importer/ui-sessions');
 const { createDesktopCultureStageRoute } = require('./lib/culture-importer/desktop-staging');
+const { createPauseResources } = require('./lib/desktop-pause-resources');
 
 const ollama = providers.ollama; // the ollama provider (status/isBusy/generate)
 
@@ -697,6 +698,7 @@ function safeLocalGenerationActivity() {
   return {
     active: enrich(snapshot.active),
     recent: (snapshot.recent || []).map(enrich),
+    ...(PLACEMENT === 'desktop' ? { pauseResources: pauseResources.view() } : {}),
   };
 }
 
@@ -725,6 +727,7 @@ async function handleApi(req, res, urlPath, query) {
   if (method === 'GET' && urlPath === '/api/runtime-state') {
     return sendJson(res, 200, {
       busy: schedulerHandle.isBusy() || providers.ollamaBusy() || providers.deepseekInFlight() > 0 || providers.chatgptInFlight() > 0 || providers.claudeInFlight() > 0,
+      ...(PLACEMENT === 'desktop' ? { pauseResources: pauseResources.view() } : {}),
     });
   }
 
@@ -737,6 +740,7 @@ async function handleApi(req, res, urlPath, query) {
       return sendJson(res, 409, { error: 'The runner is currently generating or completing a bot action.' });
     }
     schedulerHandle.stop();
+    pauseResources.close();
     sendJson(res, 202, { ok: true });
     setImmediate(() => server.close());
     return;
@@ -1355,7 +1359,9 @@ async function handleApi(req, res, urlPath, query) {
       patch.monthlyCapUsd = Math.max(0, Number(body.monthlyCapUsd));
     }
     if (body.pricing && typeof body.pricing === 'object') patch.pricing = body.pricing;
-    return sendJson(res, 200, { settings: store.updateSettings(patch) });
+    const settings = store.updateSettings(patch);
+    if (PLACEMENT === 'desktop' && Object.hasOwn(patch, 'paused')) pauseResources.changed();
+    return sendJson(res, 200, { settings });
   }
 
   // GET /api/secret - deepseek key presence + redacted preview (NEVER the key).
@@ -2356,6 +2362,15 @@ burstController = burst.createController({
   log: (message) => console.log('[burst] ' + message),
 });
 burstController.begin();
+const pauseResources = createPauseResources({
+  enabled: PLACEMENT === 'desktop',
+  paused: () => store.getSettings().paused,
+  // Ollama checks/owns its existing single-flight gate inside releasePausedModels.
+  // Including it here would mistake the release's own lock for new bot work.
+  busy: () => schedulerHandle.isBusy() || providers.deepseekInFlight() > 0 ||
+    providers.chatgptInFlight() > 0 || providers.claudeInFlight() > 0,
+  release: allowed => ollama.releasePausedModels(allowed),
+});
 populationController.setScheduler(schedulerHandle);
 if (PLACEMENT === 'hosted') {
   const hostedPolicyTimer = setInterval(reconcileHostedProfiles, hostedPolicy.RECONCILE_INTERVAL_MS);
