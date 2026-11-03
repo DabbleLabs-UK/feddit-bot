@@ -4,6 +4,7 @@ param(
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'Programs\Feddit Bots'),
     [string]$UserRoot = (Join-Path $env:LOCALAPPDATA 'DabbleLabs\FedditBots'),
     [string]$LauncherSha256 = '',
+    [ValidateSet('0.15.3', '0.15.4')][string]$LauncherVersion = '0.15.3',
     [hashtable]$RuntimeEnvironment = @{},
     [switch]$ValidateOnly
 )
@@ -219,7 +220,7 @@ if (!(Same-Path $UserRoot (Join-Path $env:LOCALAPPDATA 'DabbleLabs\FedditBots'))
     throw 'The launcher uses the current user LocalAppData data root; a different UserRoot is unsupported.'
 }
 $launcher = Join-Path $InstallRoot 'FedditBots.Desktop.exe'
-$helper = Join-Path $InstallRoot 'tools\self-recovery\0.15.3\FedditBots.Recovery.exe'
+$helper = Join-Path $InstallRoot ('tools\self-recovery\' + $LauncherVersion + '\FedditBots.Recovery.exe')
 $privateDirectory = Join-Path $UserRoot 'supervision'
 $configPath = Join-Path $privateDirectory 'config.json'
 $intentPath = Join-Path $privateDirectory 'intent.json'
@@ -246,8 +247,8 @@ if ($Action -eq 'Install') {
             (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $LauncherSha256) {
             throw 'Installed launcher/helper does not match the approved hash.'
         }
-        if ([Diagnostics.FileVersionInfo]::GetVersionInfo($path).FileVersion -ne '0.15.3.0') {
-            throw 'The reviewed 0.15.3 launcher is required.'
+        if ([Diagnostics.FileVersionInfo]::GetVersionInfo($path).FileVersion -ne ($LauncherVersion + '.0')) {
+            throw 'The installed launcher version differs from the explicitly reviewed version.'
         }
     }
 }

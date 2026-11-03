@@ -16,6 +16,8 @@ InstallDir "$LOCALAPPDATA\Programs\Feddit Bots"
 RequestExecutionLevel user
 Unicode True
 SetCompress off
+!define MUI_ICON "..\branding\app.ico"
+!define MUI_UNICON "..\branding\app.ico"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
@@ -30,12 +32,13 @@ Section "Feddit Bots" MainSection
   File /r "${STAGE_DIR}\*.*"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   CreateDirectory "$SMPROGRAMS\Feddit Bots"
-  CreateShortcut "$SMPROGRAMS\Feddit Bots\Feddit Bots.lnk" "$INSTDIR\FedditBots.Desktop.exe" "--open-ui"
-  CreateShortcut "$DESKTOP\Feddit Bots.lnk" "$INSTDIR\FedditBots.Desktop.exe" "--open-ui"
+  CreateShortcut "$SMPROGRAMS\Feddit Bots\Feddit Bots.lnk" "$INSTDIR\FedditBots.Desktop.exe" "--open-ui" "$INSTDIR\FedditBots.Desktop.exe" 0
+  CreateShortcut "$DESKTOP\Feddit Bots.lnk" "$INSTDIR\FedditBots.Desktop.exe" "--open-ui" "$INSTDIR\FedditBots.Desktop.exe" 0
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Feddit Bots" '"$INSTDIR\FedditBots.Desktop.exe" --background'
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\FedditBots" "DisplayName" "Feddit Bots"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\FedditBots" "DisplayVersion" "${APP_VERSION}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\FedditBots" "Publisher" "DabbleLabs"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\FedditBots" "DisplayIcon" '"$INSTDIR\FedditBots.Desktop.exe",0'
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\FedditBots" "UninstallString" '"$INSTDIR\Uninstall.exe"'
 SectionEnd
 

@@ -88,6 +88,7 @@ internal sealed class TrayIconController : IDisposable
     private sealed class TrayApplicationContext : ApplicationContext
     {
         private readonly NotifyIcon _icon;
+        private readonly Icon _brandIcon;
         private readonly ContextMenuStrip _menu;
 
         public TrayApplicationContext(Action openDashboard, Action exitApplication)
@@ -113,10 +114,11 @@ internal sealed class TrayIconController : IDisposable
             _menu.Items.Add(new ToolStripSeparator());
             _menu.Items.Add(exitItem);
 
+            _brandIcon = AppBranding.CreateIcon();
             _icon = new NotifyIcon
             {
                 ContextMenuStrip = _menu,
-                Icon = SystemIcons.Application,
+                Icon = _brandIcon,
                 Text = "Feddit Bots",
                 Visible = true,
             };
@@ -145,6 +147,7 @@ internal sealed class TrayIconController : IDisposable
         {
             _icon.Visible = false;
             _icon.Dispose();
+            _brandIcon.Dispose();
             _menu.Dispose();
             base.ExitThreadCore();
         }

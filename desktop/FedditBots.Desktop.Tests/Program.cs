@@ -19,6 +19,12 @@ Check(!LaunchIntent.ShouldOpenInterface([]), "a background restart does not open
 Check(!LaunchIntent.ShouldOpenInterface(["--background"]), "Windows login startup does not open a browser");
 Check(TrayIconController.OpenMenuText == "Open bot dashboard", "the notification-area menu exposes the dashboard");
 Check(TrayIconController.ExitMenuText == "Exit Feddit Bots", "the notification-area menu offers a clean exit");
+using (var icon = AppBranding.CreateIcon())
+{
+    Check(icon.Width == 32 && icon.Height == 32, "the tray uses the bundled 32px brand icon");
+    Check(typeof(AppBranding).Assembly.GetManifestResourceNames().Contains(AppBranding.IconResource),
+        "branding is embedded and independent of the current directory");
+}
 
 using (var running = new CancellationTokenSource())
 {

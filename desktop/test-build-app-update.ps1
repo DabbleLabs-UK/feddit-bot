@@ -28,6 +28,9 @@ try {
         $names = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
         Assert-True ($names -contains "app/server.js") "package contains app/server.js"
         Assert-True ($names -contains "app/public/index.html") "package contains app/public/index.html"
+        foreach ($image in @('logo.png', 'app.ico', 'icon-32.png', 'apple-touch-icon.png')) {
+            Assert-True ($names -contains ('app/public/branding/' + $image)) "package contains brand image $image"
+        }
         foreach ($required in @("public-writing.js", "reply-branch.js", "continuation-guard.js", "discovery-receipt.js", "hosted-tokenizer.js", "hosted-tokenizer-data.json.gz", "hosted-tokenizer-unicode.json", "third-party/llama31/LICENSE.txt", "third-party/llama31/Notice.txt", "third-party/llama31/README.md", "third-party/llama31/llama.cpp-LICENSE.txt")) {
             Assert-True ($names -contains ("app/lib/" + $required)) "package includes required dependency/notice $required"
         }

@@ -62,6 +62,13 @@ try {
         throw
     }
     Check ($probe.Triggers.Count -eq 2 -and $probe.Settings.ExecutionTimeLimit -eq 'PT45S') 'short probe uses bounded minute and logon triggers'
+    $oldHelper = $helper
+    $helper = Join-Path $fixture 'tools/self-recovery/0.15.4/FedditBots.Recovery.exe'
+    $brandedProbe = New-RecoveryTask $true
+    Assert-OwnedTask ([pscustomobject]@{Definition=$brandedProbe}) $true
+    Check ($brandedProbe.Actions.Item(1).Path -eq $helper) 'branded launcher gets an explicit separate helper identity'
+    Reject { Assert-OwnedTask ([pscustomobject]@{Definition=$probe}) $true } 'old helper task cannot be silently overwritten by version upgrade'
+    $helper = $oldHelper
     Check (!$probe.Settings.WakeToRun -and $probe.Settings.RestartCount -eq 0 -and $probe.Settings.MultipleInstances -eq 2) 'no wake, scheduler retry storm or overlapping instance'
     $probe.Actions.Item(1).Path = 'C:\unrelated.exe'
     Reject { Assert-OwnedTask ([pscustomobject]@{Definition=$probe}) $true } 'unknown task action cannot be overwritten'

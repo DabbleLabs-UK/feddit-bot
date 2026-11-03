@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Feddit bots</title>
+<link rel="icon" href="/branding/app.ico" type="image/x-icon">
+<link rel="icon" href="/branding/icon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/branding/apple-touch-icon.png" sizes="180x180">
 <style>
   :root {
     --bg: #14171a; --panel: #1c2126; --panel2: #232a31; --line: #333c44;
@@ -23,7 +26,8 @@
     min-height: 48px; padding: 7px 14px; background: var(--panel); border-bottom: 1px solid var(--line);
     display: flex; align-items: center; gap: 10px; flex-wrap: nowrap;
   }
-  header h1 { font-size: 16px; margin: 0; font-weight: 650; white-space: nowrap; }
+  header h1 { display: flex; align-items: center; gap: 8px; font-size: 16px; margin: 0; font-weight: 650; white-space: nowrap; }
+  .app-logo { display: block; width: 28px; height: 28px; object-fit: contain; flex: 0 0 auto; }
   .appbar-controls { margin-left: auto; display: flex; gap: 8px; align-items: center; min-width: 0; }
   .appbar-controls button { padding: 5px 10px; white-space: nowrap; }
   .appbar-speed { position: relative; }
@@ -524,7 +528,7 @@
 </head>
 <body>
 <header class="appbar" id="appBar">
-  <h1>Feddit bots</h1>
+  <h1><img class="app-logo" src="/branding/logo.png" width="28" height="28" alt=""><span>Feddit bots</span></h1>
   <div class="appbar-controls">
     <span id="runState" class="badge">scheduler ...</span>
     <button id="pauseBtn">Pause</button>
