@@ -60,3 +60,7 @@ Installed 0.27.15, its launcher/recovery pins, saved pause, profiles and all oth
 private data remain untouched. No actual desktop/browser visual check was made;
 no hosted/public deployment, release or social/model traffic was triggered.
 Application and launcher builds are ready for a coordinated safe local handover.
+
+The owner subsequently approved and completed the local handover. See
+`app-branding-delivery-2026-11-03.md` for installed hashes, explicit Desktop and
+Start Menu shortcut icons, recovery repinning and preserved paused state.
