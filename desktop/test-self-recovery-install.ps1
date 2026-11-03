@@ -34,11 +34,16 @@ try {
     $acl = Get-Acl -LiteralPath $fixture
     Check $acl.AreAccessRulesProtected 'private directory does not inherit broader access'
     Check (@($acl.Access).Count -eq 2) 'only current user and SYSTEM granted access'
+    Set-PrivateAcl $fixture $true
+    $repeatedAcl = Get-Acl -LiteralPath $fixture
+    Check ($repeatedAcl.AreAccessRulesProtected -and @($repeatedAcl.Access).Count -eq 2) 'existing private directory can be repinned without audit privileges'
     $file = Join-Path $fixture 'intent.json'
     Write-PrivateJson $file ([ordered]@{schemaVersion=1; desiredRunning=$false; updatedAt=[DateTimeOffset]::UtcNow.ToString('O')})
     Write-PrivateJson $file ([ordered]@{schemaVersion=1; desiredRunning=$true; updatedAt=[DateTimeOffset]::UtcNow.ToString('O')}) -CreateOnly
     Check ((Read-PrivateJson $file).desiredRunning -eq $false) 'install cannot overwrite explicit manual stop'
     Check ((Get-Acl -LiteralPath $file).AreAccessRulesProtected) 'private intent ACL is protected'
+    Set-PrivateAcl $file $false
+    Check ((Read-PrivateJson $file).desiredRunning -eq $false) 'reapplying file access ACL leaves saved intent unchanged'
     Write-PrivateJson $file ([ordered]@{schemaVersion=2})
     Reject { Read-PrivateJson $file } 'unknown state schema rejected'
     $flags = @{ FEDDIT_QUIET_CONVERSATIONS='1'; FEDDIT_THEME_INTEREST_V1='1'; FEDDIT_THEME_INTEREST_COMMUNITIES='shittyaskfeddit'; FEDDIT_QUIET_POPULATION_V2='' }

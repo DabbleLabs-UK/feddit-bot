@@ -52,7 +52,15 @@ function Set-PrivateAcl([string]$Path, [bool]$Directory) {
         }
         $acl.AddAccessRule($rule)
     }
-    Set-Acl -LiteralPath $Path -AclObject $acl
+    # Persist only the access/owner sections changed above, as the launcher does.
+    # Set-Acl can request SeSecurityPrivilege on an existing private directory;
+    # installation neither reads nor changes its audit/SACL policy.
+    $entry = if ($Directory) { [IO.DirectoryInfo]::new($Path) } else { [IO.FileInfo]::new($Path) }
+    if ($PSVersionTable.PSEdition -eq 'Core') {
+        [IO.FileSystemAclExtensions]::SetAccessControl($entry, $acl)
+    } else {
+        $entry.SetAccessControl($acl)
+    }
 }
 
 function Read-PrivateJson([string]$Path) {
