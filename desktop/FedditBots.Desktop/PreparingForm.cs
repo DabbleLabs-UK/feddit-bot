@@ -6,10 +6,13 @@ namespace DabbleLabs.FedditBots.Desktop;
 internal sealed class PreparingForm : Form
 {
     private readonly Label _message;
+    private readonly Icon _brandIcon;
 
     public PreparingForm()
     {
         Text = "Feddit Bots";
+        _brandIcon = AppBranding.CreateIcon();
+        Icon = _brandIcon;
         Width = 470;
         Height = 155;
         StartPosition = FormStartPosition.CenterScreen;
@@ -58,5 +61,11 @@ internal sealed class PreparingForm : Form
             return;
         }
         Close();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+        if (disposing) _brandIcon.Dispose();
     }
 }

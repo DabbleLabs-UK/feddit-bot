@@ -25,6 +25,10 @@ using (var icon = AppBranding.CreateIcon())
     Check(typeof(AppBranding).Assembly.GetManifestResourceNames().Contains(AppBranding.IconResource),
         "branding is embedded and independent of the current directory");
 }
+using (var preparing = new PreparingForm())
+{
+    Check(preparing.Icon is { Width: 32, Height: 32 }, "the preparation window uses the brand icon too");
+}
 
 using (var running = new CancellationTokenSource())
 {
